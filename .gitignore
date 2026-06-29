@@ -72,3 +72,6 @@ audit_ht_master.py
 split_ht_master.py
 extract_papers.py
 AUDIT_REPORT.txt
+
+# Local Netlify folder
+.netlify

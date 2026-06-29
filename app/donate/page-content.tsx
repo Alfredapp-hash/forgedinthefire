@@ -32,10 +32,10 @@ export default function DonatePageContent() {
               100% of donations support survivor services
             </div>
             <h1 className="font-serif text-5xl sm:text-6xl font-bold text-cream-100 mb-6">
-              Support Human Trafficking Survivors in Cleveland, Ohio
+              Support Human Trafficking Survivors in Lorain County, Ohio
             </h1>
             <p className="text-xl text-cream-300/80 leading-relaxed max-w-2xl mx-auto">
-              Your generosity directly empowers survivors in Cleveland and Northeast Ohio 
+              Your generosity directly empowers survivors in Lorain County and Northeast Ohio 
               on their journey to healing, independence, and hope. Every dollar creates 
               real impact in our local community.
             </p>
@@ -152,7 +152,7 @@ export default function DonatePageContent() {
             <div className="text-center">
               <Button
                 size="lg"
-                className="bg-ember hover:bg-ember-600 px-12"
+                className="px-12"
                 onClick={handleDonate}
                 disabled={!selectedAmount && !customAmount}
               >

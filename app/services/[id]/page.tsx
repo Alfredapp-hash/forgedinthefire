@@ -244,8 +244,8 @@ export async function generateMetadata({ params }: ServicePageProps): Promise<Me
   }
 
   return generateMetaTags({
-    title: `${service.title} in Cleveland Ohio | Forged in the Fire`,
-    description: `${service.description} Available in Cleveland, Ohio and Northeast Ohio through Forged in the Fire.`,
+    title: `${service.title} in Lorain County Ohio | Forged in the Fire`,
+    description: `${service.description} Available in Lorain County, Ohio and Northeast Ohio through Forged in the Fire.`,
   });
 }
 

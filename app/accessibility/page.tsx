@@ -5,7 +5,7 @@ import { ORG } from '@/lib/constants';
 export const metadata: Metadata = generateMetaTags({
   title: 'Accessibility',
   description:
-    'Forged in the Fire is committed to digital accessibility for all users accessing human trafficking resources and survivor support in Cleveland and Northeast Ohio.',
+    'Forged in the Fire is committed to digital accessibility for all users accessing human trafficking resources and survivor support in Lorain County and Northeast Ohio.',
 });
 
 export default function AccessibilityPage() {

@@ -6,9 +6,9 @@ import { generateMetaTags } from '@/lib/utils';
 import { BookOpen, Download, FileText, Video, ExternalLink, ChevronRight } from 'lucide-react';
 
 export const metadata: Metadata = generateMetaTags({
-  title: 'Human Trafficking Resources Cleveland Ohio',
+  title: 'Human Trafficking Resources Lorain County Ohio',
   description:
-    'Free human trafficking resources for Cleveland and Northeast Ohio, including survivor support information, awareness education, prevention materials, and trusted hotline links.',
+    'Free human trafficking resources for Lorain County and Northeast Ohio, including survivor support information, awareness education, prevention materials, and trusted hotline links.',
 });
 
 const RESOURCES = [
@@ -54,11 +54,11 @@ export default function ResourcesPage() {
           <div className="max-w-4xl mx-auto text-center">
             <span className="text-ember font-medium mb-4 block">Knowledge is Power</span>
             <h1 className="font-serif text-5xl sm:text-6xl font-bold text-cream-100 mb-6">
-              Human Trafficking Resources for Cleveland and Northeast Ohio
+              Human Trafficking Resources for Lorain County and Northeast Ohio
             </h1>
             <p className="text-xl text-cream-300/80 leading-relaxed max-w-2xl mx-auto">
               Access educational materials, downloadable guides, and trusted external 
-              resources for human trafficking awareness and survivor support in Cleveland 
+              resources for human trafficking awareness and survivor support in Lorain County 
               and Northeast Ohio.
             </p>
           </div>
@@ -178,7 +178,7 @@ export default function ResourcesPage() {
                 We offer comprehensive training programs for professionals, organizations, and community groups 
                 seeking to better understand and respond to human trafficking.
               </p>
-              <Button asChild variant="outline" className="border-ember text-ember hover:bg-ember/10">
+              <Button asChild variant="outline">
                 <Link href="/services/community-education">Learn More About Training <ChevronRight className="ml-2 h-4 w-4" /></Link>
               </Button>
             </div>

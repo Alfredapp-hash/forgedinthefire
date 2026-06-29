@@ -41,7 +41,7 @@ export default function GetHelpPageContent() {
               If you are in immediate danger, call 911
             </div>
             <h1 className="font-serif text-5xl sm:text-6xl font-bold text-cream-100 mb-6">
-              Get Help for Human Trafficking in Cleveland, Ohio
+              Get Help for Human Trafficking in Lorain County, Ohio
             </h1>
             <p className="text-xl text-cream-300/80 leading-relaxed max-w-2xl mx-auto">
               You are not alone. Confidential support is available 24/7. 
@@ -56,11 +56,11 @@ export default function GetHelpPageContent() {
         <div className="container-wide section-padding">
           <div className="text-center max-w-3xl mx-auto">
             <h2 className="font-serif text-2xl font-bold text-cream-100 mb-4">
-              Support in Cleveland and Northeast Ohio
+              Support in Lorain County and Northeast Ohio
             </h2>
             <p className="text-cream-300/80 leading-relaxed">
               Forged in the Fire provides victim advocacy and support services for survivors 
-              of human trafficking in Cleveland, Cuyahoga County, and throughout Northeast Ohio. 
+              of human trafficking in Lorain County and throughout Northeast Ohio. 
               While we are not an emergency response organization, we work alongside survivors 
               to help them navigate systems, access resources, and build pathways to safety and healing.
             </p>
@@ -117,7 +117,7 @@ export default function GetHelpPageContent() {
           <div className="mt-16 pt-12 border-t border-steel-700">
             <div className="text-center max-w-3xl mx-auto mb-8">
               <h3 className="font-serif text-xl font-semibold text-cream-100 mb-3">
-                Ongoing Support Services in Cleveland
+                Ongoing Support Services in Lorain County
               </h3>
               <p className="text-cream-300/70">
                 Beyond immediate crisis support, we offer trauma-informed victim advocacy 
@@ -125,12 +125,12 @@ export default function GetHelpPageContent() {
               </p>
             </div>
             <div className="flex flex-col sm:flex-row justify-center gap-4">
-              <Button asChild variant="outline" className="border-healing text-healing hover:bg-healing/10">
+              <Button asChild variant="outline">
                 <Link href="/services/victim-advocacy">
                   Explore Victim Advocacy Services
                 </Link>
               </Button>
-              <Button asChild variant="ghost" className="text-cream-300 hover:text-healing hover:bg-healing/10">
+              <Button asChild variant="ghost">
                 <Link href="/resources">
                   View Human Trafficking Resources
                 </Link>
@@ -176,7 +176,7 @@ export default function GetHelpPageContent() {
                 Our advocates can work with you to create a personalized safety plan 
                 tailored to your unique situation and needs.
               </p>
-              <Button asChild variant="outline" className="border-healing text-healing hover:bg-healing/10">
+              <Button asChild variant="outline">
                 <Link href="/services/victim-advocacy">Learn About Advocacy <ChevronRight className="ml-2 h-4 w-4" /></Link>
               </Button>
             </div>
@@ -665,7 +665,7 @@ export default function GetHelpPageContent() {
                     <Button 
                       type="submit" 
                       size="lg" 
-                      className="w-full bg-ember hover:bg-ember-600"
+                      className="w-full"
                       disabled={isSubmitting}
                     >
                       {isSubmitting ? 'Sending...' : 'Send Message'}

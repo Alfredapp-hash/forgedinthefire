@@ -1,4 +1,16 @@
-import { ORG } from '@/lib/constants';
+import { GEO, ORG } from '@/lib/constants';
+
+const AREA_SERVED = {
+  '@type': 'Place' as const,
+  name: GEO.serviceArea,
+  containsPlace: [
+    { '@type': 'AdministrativeArea', name: GEO.county },
+    { '@type': 'City', name: GEO.largestCity },
+    { '@type': 'City', name: GEO.countySeat },
+    { '@type': 'AdministrativeArea', name: GEO.region },
+    { '@type': 'State', name: GEO.state },
+  ],
+};
 
 export function OrganizationStructuredData() {
   const structuredData = {
@@ -13,21 +25,12 @@ export function OrganizationStructuredData() {
     address: {
       '@type': 'PostalAddress',
       streetAddress: '15728 Lorain Ave, Unit 146',
-      addressLocality: 'Cleveland',
-      addressRegion: 'OH',
+      addressLocality: GEO.county,
+      addressRegion: GEO.stateAbbr,
       postalCode: '44111-5542',
       addressCountry: 'US',
     },
-    areaServed: {
-      '@type': 'Place',
-      name: 'Cleveland, Ohio and Northeast Ohio',
-      containsPlace: [
-        { '@type': 'City', name: 'Cleveland' },
-        { '@type': 'AdministrativeArea', name: 'Cuyahoga County' },
-        { '@type': 'AdministrativeArea', name: 'Northeast Ohio' },
-        { '@type': 'State', name: 'Ohio' },
-      ],
-    },
+    areaServed: AREA_SERVED,
     contactPoint: {
       '@type': 'ContactPoint',
       telephone: ORG.phone,
@@ -124,7 +127,7 @@ export function ServiceStructuredData({ name, description, url }: ServiceSchemaP
     },
     areaServed: {
       '@type': 'Place',
-      name: 'Cleveland, Ohio and Northeast Ohio',
+      name: GEO.serviceArea,
     },
   };
 

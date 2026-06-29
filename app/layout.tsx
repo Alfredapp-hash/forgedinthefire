@@ -5,7 +5,7 @@ import { Navbar } from '@/components/navbar';
 import { Footer } from '@/components/footer';
 import { QuickExit } from '@/components/quick-exit';
 import { OrganizationStructuredData, WebsiteStructuredData } from '@/components/structured-data';
-import { META_DEFAULTS, ORG } from '@/lib/constants';
+import { META_DEFAULTS, ORG, GEO } from '@/lib/constants';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -42,7 +42,7 @@ export const metadata: Metadata = {
         url: '/opengraph-image.jpeg',
         width: 1200,
         height: 630,
-        alt: 'Forged in the Fire - Human Trafficking Victim Advocacy in Cleveland Ohio',
+        alt: `Forged in the Fire - Human Trafficking Victim Advocacy in ${GEO.seoLocality}`,
       },
     ],
   },

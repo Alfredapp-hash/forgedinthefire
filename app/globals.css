@@ -121,6 +121,47 @@
     background-color: rgba(240, 247, 247, 0.8);
     backdrop-filter: blur(12px);
   }
+
+  /* Apple-style glass 3D buttons (PremiumButton pattern) */
+  @keyframes glass-btn-sweep {
+    0% {
+      transform: translateX(-140%);
+    }
+    100% {
+      transform: translateX(160%);
+    }
+  }
+
+  .glass-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .glass-btn-sweep-light::before {
+    background: linear-gradient(
+      108deg,
+      transparent 20%,
+      rgba(255, 255, 255, 0.16) 48%,
+      transparent 76%
+    );
+    animation: glass-btn-sweep 4s ease-in-out infinite;
+    animation-delay: 1.5s;
+  }
+
+  .glass-btn-sweep-warm::before {
+    background: linear-gradient(
+      108deg,
+      transparent 20%,
+      rgba(200, 164, 107, 0.14) 48%,
+      transparent 76%
+    );
+    animation: glass-btn-sweep 4s ease-in-out infinite;
+    animation-delay: 1.5s;
+  }
   
   /* Section padding */
   .section-padding {
@@ -240,6 +281,11 @@ html {
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
+  }
+
+  .glass-btn-sweep-light::before,
+  .glass-btn-sweep-warm::before {
+    animation: none !important;
   }
   
   *,

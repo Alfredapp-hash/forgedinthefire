@@ -16,9 +16,9 @@ import {
 } from 'lucide-react';
 
 export const metadata: Metadata = generateMetaTags({
-  title: 'About Forged in the Fire | Anti Trafficking Nonprofit Cleveland Ohio',
+  title: 'About Forged in the Fire | Anti Trafficking Nonprofit Lorain County Ohio',
   description:
-    "Meet Forged in the Fire, a Cleveland based anti human trafficking nonprofit serving survivors in Northeast Ohio through advocacy, education, mentorship, and survivor centered support.",
+    "Meet Forged in the Fire, a Lorain County based anti human trafficking nonprofit serving survivors in Northeast Ohio through advocacy, education, mentorship, and survivor centered support.",
 });
 
 const CREDENTIALS = [
@@ -76,7 +76,7 @@ export default function AboutPage() {
               About Us
             </span>
             <h1 className="font-serif text-5xl sm:text-6xl font-bold text-[#F6F0E8] mb-6 leading-tight">
-              About Forged in the Fire: Cleveland Anti Trafficking Nonprofit
+              About Forged in the Fire: Lorain County Anti Trafficking Nonprofit
             </h1>
             <p className="text-xl text-[#CDBDAF] leading-relaxed max-w-2xl mx-auto mb-4">
               Restoring hope. Rebuilding lives. Empowering survivors.
@@ -129,11 +129,11 @@ export default function AboutPage() {
               Our Location
             </span>
             <h2 className="font-serif text-3xl sm:text-4xl font-bold text-[#F6F0E8] mb-6">
-              Cleveland Based, Northeast Ohio Focused
+              Lorain County Based, Northeast Ohio Focused
             </h2>
             <p className="text-lg text-[#CDBDAF] leading-relaxed mb-6">
-              Forged in the Fire operates from Cleveland, Ohio, serving survivors and communities 
-              throughout Cuyahoga County and the greater Northeast Ohio region. Our location allows 
+              Forged in the Fire operates from Lorain County, Ohio, serving survivors and communities 
+              throughout Lorain County and the greater Northeast Ohio region. Our location allows 
               us to respond to the unique needs of urban, suburban, and rural communities facing 
               human trafficking and commercial sexual exploitation.
             </p>
@@ -172,7 +172,7 @@ export default function AboutPage() {
                     <div className="relative w-48 lg:w-56 rounded-2xl overflow-hidden shadow-[0_8px_40px_rgba(0,0,0,0.5)] border border-[#3A2A24]" style={{ aspectRatio: '1024 / 1536' }}>
                       <Image
                         src="/Founder-headshot.png"
-                        alt="Tracy Springford, Founder, President & CEO of Forged in the Fire, Cleveland victim advocate"
+                        alt="Tracy Springford, Founder, President & CEO of Forged in the Fire, Lorain County victim advocate"
                         fill
                         className="object-cover object-top"
                         sizes="(max-width: 1024px) 192px, 224px"

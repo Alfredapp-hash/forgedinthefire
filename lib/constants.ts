@@ -1,3 +1,18 @@
+// Geographic / local SEO constants (Lorain County, Ohio)
+export const GEO = {
+  county: 'Lorain County',
+  state: 'Ohio',
+  stateAbbr: 'OH',
+  region: 'Northeast Ohio',
+  countySeat: 'Elyria',
+  largestCity: 'Lorain',
+  label: 'Lorain County, Ohio',
+  serviceArea: 'Lorain County and Northeast Ohio',
+  seoLocality: 'Lorain County Ohio',
+  defaultJobLocation: 'Lorain County, OH',
+  seoKeywords: ['human trafficking advocacy', 'Lorain County Ohio', 'survivor support'],
+} as const;
+
 // Organization Constants
 export const ORG = {
   name: 'Forged in the Fire',
@@ -9,8 +24,8 @@ export const ORG = {
   vision:
     'A world where every survivor of commercial sex trafficking has the opportunity to heal, reclaim their freedom, and live with dignity and purpose.',
   founded: 2020,
-  location: 'United States',
-  address: '15728 Lorain Ave, Unit 146, Cleveland, OH 44111-5542',
+  location: GEO.label,
+  address: '15728 Lorain Ave, Unit 146, Lorain County, OH 44111-5542',
   email: 'tracys@forgedinthefireohio.org',
   phone: '1 216-202-0786',
 } as const;
@@ -331,6 +346,8 @@ export const META_DEFAULTS = {
     'nonprofit',
     'restoration',
     'healing',
+    'Lorain County Ohio',
+    'human trafficking advocacy Lorain County',
   ],
   authors: ['Forged in the Fire'],
   creator: 'Forged in the Fire',

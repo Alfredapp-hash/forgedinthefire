@@ -195,7 +195,7 @@ export function Footer() {
               ))}
             </div>
             <div className="text-sm text-[#B8A89A] text-center md:text-right">
-              <p className="mb-1">Serving Cleveland, Cuyahoga County, and Northeast Ohio</p>
+              <p className="mb-1">Serving Lorain County and Northeast Ohio</p>
               <p>
                 &copy; {currentYear} {ORG.name}. All rights reserved.
                 <span className="inline-flex items-center gap-1 ml-2">

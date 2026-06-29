@@ -34,12 +34,12 @@ export default function Error({
         </p>
         
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
-          <Button onClick={reset} variant="outline" className="border-[#8B5E3C] text-[#C8A46B] hover:bg-[#8B5E3C]/14 transition-all">
+          <Button onClick={reset} variant="outline">
             <RefreshCw className="w-4 h-4 mr-2" />
             Try again
           </Button>
           
-          <Button asChild className="bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8] shadow-[0_12px_40px_rgba(0,0,0,0.35)] hover:shadow-[0_12px_40px_rgba(30,107,115,0.25)] transition-all">
+          <Button asChild>
             <Link href="/">
               <Home className="w-4 h-4 mr-2" />
               Go home

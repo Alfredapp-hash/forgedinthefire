@@ -171,7 +171,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
                     <h3 className="font-playfair text-xl font-semibold text-cream-100 mb-4">
                       Take Action
                     </h3>
-                    <Button asChild className="bg-gold text-charcoal hover:bg-gold-600 font-semibold">
+                    <Button asChild className="font-semibold">
                       <Link href={post.cta.url}>{post.cta.text}</Link>
                     </Button>
                   </CardContent>
@@ -202,7 +202,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
                   Share this story
                 </span>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" className="border-charcoal-600 text-cream-100/70">
+                  <Button variant="outline" size="sm">
                     <Share2 className="w-4 h-4 mr-2" />
                     Share
                   </Button>
@@ -240,10 +240,10 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
               Your support helps us provide safe housing, trauma-informed care, and hope to survivors of human trafficking.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button asChild className="bg-teal hover:bg-teal-600 text-white">
+              <Button asChild>
                 <Link href="/donate">Donate Now</Link>
               </Button>
-              <Button asChild variant="outline" className="border-gold text-gold hover:bg-gold/10">
+              <Button asChild variant="outline">
                 <Link href="/volunteer">Become a Volunteer</Link>
               </Button>
             </div>

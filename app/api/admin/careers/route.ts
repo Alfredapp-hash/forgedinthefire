@@ -33,7 +33,7 @@ export async function POST(request: Request) {
       duties: body.duties?.trim() || '',
       requirements: body.requirements?.trim() || '',
       pay_range: body.pay_range?.trim() || '',
-      location: body.location?.trim() || 'Cleveland, OH',
+      location: body.location?.trim() || 'Lorain County, OH',
       active: body.active ?? true,
       sort_order: body.sort_order ?? 0,
     }

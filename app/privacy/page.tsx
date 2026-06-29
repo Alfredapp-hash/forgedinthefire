@@ -5,7 +5,7 @@ import { ORG } from '@/lib/constants';
 export const metadata: Metadata = generateMetaTags({
   title: 'Privacy Policy',
   description:
-    'Forged in the Fire privacy policy for Cleveland, Ohio. How we protect survivor information, data security practices, and confidentiality commitments.',
+    'Forged in the Fire privacy policy for Lorain County, Ohio. How we protect survivor information, data security practices, and confidentiality commitments.',
 });
 
 export default function PrivacyPage() {

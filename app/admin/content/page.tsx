@@ -97,7 +97,7 @@ export default async function ContentPage({
           <h1 className="text-2xl font-bold text-[#1E1714]">Content Manager</h1>
           <p className="text-sm text-[#8B5E3C]">Manage blog posts, stories, and site content.</p>
         </div>
-        <Button asChild className="bg-[#1E6B73] hover:bg-[#4C9AA3]">
+        <Button asChild >
           <Link href="/admin/content/new">
             <Plus className="w-4 h-4 mr-2" />
             New Content
@@ -224,7 +224,7 @@ export default async function ContentPage({
             </div>
             <h3 className="text-lg font-medium text-[#1E1714] mb-1">No content yet</h3>
             <p className="text-sm text-[#8B5E3C] mb-4">Get started by creating your first piece of content.</p>
-            <Button asChild className="bg-[#1E6B73] hover:bg-[#4C9AA3]">
+            <Button asChild >
               <Link href="/admin/content/new">
                 <Plus className="w-4 h-4 mr-2" />
                 Create Content

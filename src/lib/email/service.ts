@@ -86,7 +86,7 @@ function getEmailFooter(email: string, token?: string): string {
         <a href="${preferencesLink}" style="color: #1E6B73; text-decoration: none;">Manage Preferences</a>
       </p>
       <p style="margin: 16px 0 0 0; font-size: 11px; color: #9ca3af;">
-        ${ORG_NAME} | Cleveland, Ohio<br>
+        ${ORG_NAME} | Lorain County, Ohio<br>
         <a href="${BASE_URL}" style="color: #9ca3af; text-decoration: none;">${BASE_URL}</a>
       </p>
     </div>

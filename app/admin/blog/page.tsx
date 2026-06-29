@@ -201,7 +201,7 @@ export default async function BlogPage({
           <h1 className="text-2xl font-bold text-[#1E1714]">Blog Studio</h1>
           <p className="text-sm text-[#8B5E3C]">Create and manage blog posts, stories, and content.</p>
         </div>
-        <Button asChild className="bg-[#1E6B73] hover:bg-[#4C9AA3]">
+        <Button asChild >
           <Link href="/admin/blog/new">
             <Plus className="w-4 h-4 mr-2" />
             New Post
@@ -363,11 +363,11 @@ export default async function BlogPage({
             </p>
             <div className="flex items-center justify-center gap-3">
               {searchParams.search ? (
-                <Button asChild variant="outline" className="border-[#3A2A24]/20 text-[#8B5E3C]">
+                <Button asChild variant="outline">
                   <Link href="/admin/blog">Clear Search</Link>
                 </Button>
               ) : null}
-              <Button asChild className="bg-[#1E6B73] hover:bg-[#4C9AA3]">
+              <Button asChild >
                 <Link href="/admin/blog/new">
                   <Plus className="w-4 h-4 mr-2" />
                   Create Post

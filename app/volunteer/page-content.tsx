@@ -40,10 +40,10 @@ export default function VolunteerPage() {
               Join Our Community
             </span>
             <h1 className="font-serif text-5xl sm:text-6xl font-bold text-cream-100 mb-6">
-              Volunteer to Help Human Trafficking Survivors in Cleveland, Ohio
+              Volunteer to Help Human Trafficking Survivors in Lorain County, Ohio
             </h1>
             <p className="text-xl text-cream-300/80 leading-relaxed max-w-2xl mx-auto">
-              Your time and skills can transform lives in Cleveland and Northeast Ohio. 
+              Your time and skills can transform lives in Lorain County and Northeast Ohio. 
               Join our community of dedicated volunteers supporting local survivors on 
               their journey to healing.
             </p>
@@ -216,7 +216,7 @@ export default function VolunteerPage() {
                       <Label htmlFor="message">Why do you want to volunteer? *</Label>
                       <Textarea id="message" required rows={4} value={formState.message} onChange={(e) => setFormState({...formState, message: e.target.value})} />
                     </div>
-                    <Button type="submit" size="lg" className="w-full bg-ember hover:bg-ember-600" disabled={isSubmitting}>
+                    <Button type="submit" size="lg" className="w-full" disabled={isSubmitting}>
                       {isSubmitting ? 'Submitting...' : 'Submit Application'}
                       <Send className="ml-2 h-4 w-4" />
                     </Button>

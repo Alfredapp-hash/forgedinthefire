@@ -106,7 +106,7 @@ export default async function CareersPage() {
               <div className="p-6 bg-charcoal-700 rounded-xl border border-charcoal-600">
                 <h3 className="font-semibold text-cream-100 mb-2">Community Impact</h3>
                 <p className="text-sm text-cream-100/60">
-                  Be part of transformative change in Cleveland and beyond.
+                  Be part of transformative change in Lorain County and beyond.
                 </p>
               </div>
             </div>
@@ -126,10 +126,10 @@ export default async function CareersPage() {
               Reach out to learn about future opportunities or volunteer roles.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button asChild className="bg-teal hover:bg-teal-600 text-white">
+              <Button asChild >
                 <Link href="/contact">Contact Us</Link>
               </Button>
-              <Button asChild variant="outline" className="border-gold text-gold hover:bg-gold/10">
+              <Button asChild variant="outline">
                 <Link href="/volunteer">Explore Volunteering</Link>
               </Button>
             </div>
@@ -174,7 +174,7 @@ function JobCard({ job }: { job: JobPosition }) {
             </div>
           </div>
           <div className="flex-shrink-0">
-            <Button asChild className="bg-teal hover:bg-teal-600 text-white">
+            <Button asChild >
               <Link href={`/careers/${job.slug}`} className="flex items-center gap-2">
                 View Details
                 <ArrowRight className="w-4 h-4" />
@@ -201,10 +201,10 @@ function EmptyState() {
         in connecting with mission-aligned people. Please check back soon for new opportunities.
       </p>
       <div className="flex flex-col sm:flex-row gap-4 justify-center">
-        <Button asChild className="bg-teal hover:bg-teal-600 text-white">
+        <Button asChild >
           <Link href="/contact">Get in Touch</Link>
         </Button>
-        <Button asChild variant="outline" className="border-gold text-gold hover:bg-gold/10">
+        <Button asChild variant="outline">
           <Link href="/volunteer">Volunteer With Us</Link>
         </Button>
       </div>

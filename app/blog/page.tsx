@@ -65,7 +65,7 @@ function NewsletterSection() {
 
 export const metadata: Metadata = {
   title: 'Blog | Forged in the Fire',
-  description: 'Stories, resources, newsletters, and updates from Forged in the Fire, supporting survivors of human trafficking in Cleveland and Northeast Ohio.',
+  description: 'Stories, resources, newsletters, and updates from Forged in the Fire, supporting survivors of human trafficking in Lorain County and Northeast Ohio.',
   openGraph: {
     title: 'Blog | Forged in the Fire',
     description: 'Stories, resources, newsletters, and updates from Forged in the Fire.',
@@ -125,7 +125,7 @@ function BlogErrorState() {
             <p className="text-[#CDBDAF] mb-6">
               Please check back soon for survivor resources, organizational updates, and monthly newsletters.
             </p>
-            <Button asChild className="bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8]">
+            <Button asChild>
               <Link href="/">Return Home</Link>
             </Button>
           </div>
@@ -384,10 +384,10 @@ export default async function BlogPage({
               Your support helps us continue sharing stories of resilience, creating resources for survivors, and building a stronger community.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button asChild size="lg" className="bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8] px-8 shadow-lg shadow-[#1E6B73]/20">
+              <Button asChild size="lg" className="px-8">
                 <Link href="/donate">Support Our Mission</Link>
               </Button>
-              <Button asChild variant="outline" size="lg" className="border-[#CDBDAF]/30 text-[#CDBDAF] hover:bg-[#3A2A24] hover:text-[#F6F0E8] px-8">
+              <Button asChild variant="outline" size="lg" className="px-8">
                 <Link href="/volunteer">Get Involved</Link>
               </Button>
             </div>

@@ -165,7 +165,7 @@ export default async function SubscribersPage() {
           <Mail size={48} className="mx-auto mb-4 text-[#8B5E3C]/40" />
           <p className="font-semibold text-[#1E1714] mb-1 text-lg">No subscribers yet</p>
           <p className="text-sm text-[#8B5E3C] mb-4">Signups from the website subscribe form will appear here.</p>
-          <Button asChild className="bg-[#1E6B73] hover:bg-[#4C9AA3] text-white">
+          <Button asChild>
             <Link href="/">View Website</Link>
           </Button>
         </div>

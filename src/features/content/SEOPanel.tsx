@@ -250,7 +250,7 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
             onChange={(e) => handleChange({ 
               keywords: e.target.value.split(',').map(k => k.trim()).filter(Boolean)
             })}
-            placeholder="human trafficking advocacy, Cleveland Ohio, survivor support"
+            placeholder="human trafficking advocacy, Lorain County Ohio, survivor support"
             className="w-full border border-[#3A2A24]/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E6B73]/30"
           />
           <p className="text-xs text-[#8B5E3C] mt-1">

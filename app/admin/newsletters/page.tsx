@@ -90,7 +90,7 @@ export default async function NewslettersPage() {
             Create and send monthly updates using selected blog posts, community news, volunteer opportunities, and survivor support resources.
           </p>
         </div>
-        <Button asChild className="bg-[#1E6B73] hover:bg-[#4C9AA3]">
+        <Button asChild >
           <Link href="/admin/newsletters/new">
             <Plus className="w-4 h-4 mr-2" />
             Create Newsletter
@@ -153,7 +153,7 @@ export default async function NewslettersPage() {
             <p className="text-sm text-[#8B5E3C] mb-4">
               Create your first monthly newsletter to keep subscribers engaged.
             </p>
-            <Button asChild className="bg-[#1E6B73] hover:bg-[#4C9AA3]">
+            <Button asChild >
               <Link href="/admin/newsletters/new">
                 <Plus className="w-4 h-4 mr-2" />
                 Create First Newsletter

@@ -21,7 +21,7 @@ const EMPTY: Omit<JobPosition, 'id' | 'created_at' | 'updated_at'> = {
   duties: '', 
   requirements: '', 
   pay_range: '', 
-  location: 'Cleveland, OH', 
+  location: 'Lorain County, OH', 
   active: true, 
   sort_order: 0 
 }
@@ -211,10 +211,10 @@ export default function CareersClient({ initialPositions }: { initialPositions: 
               <label className="block text-xs font-semibold text-[#8B5E3C] mb-1">Location</label>
               <input
                 type="text"
-                value={editing.location ?? 'Cleveland, OH'}
+                value={editing.location ?? 'Lorain County, OH'}
                 onChange={(e) => setEditing((prev) => ({ ...prev, location: e.target.value }))}
                 className="w-full border border-[#3A2A24]/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E6B73]/30"
-                placeholder="e.g., Cleveland, OH"
+                placeholder="e.g., Lorain County, OH"
               />
             </div>
           </div>

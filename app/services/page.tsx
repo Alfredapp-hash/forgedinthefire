@@ -10,9 +10,9 @@ import {
 } from 'lucide-react';
 
 export const metadata: Metadata = generateMetaTags({
-  title: 'Human Trafficking Survivor Services Cleveland Ohio',
+  title: 'Human Trafficking Survivor Services Lorain County Ohio',
   description:
-    'Explore trauma informed survivor support services in Cleveland and Northeast Ohio, including victim advocacy, workforce development, mentorship, education, and reintegration support.',
+    'Explore trauma informed survivor support services in Lorain County and Northeast Ohio, including victim advocacy, workforce development, mentorship, education, and reintegration support.',
 });
 
 const serviceIcons: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -36,10 +36,10 @@ export default function ServicesPage() {
           <div className="max-w-4xl mx-auto text-center">
             <span className="font-medium mb-4 block" style={{ color: '#C8A46B' }}>Comprehensive Support</span>
             <h1 className="font-serif text-5xl sm:text-6xl font-bold mb-6" style={{ color: '#F6F0E8' }}>
-              Human Trafficking Survivor Support Services in Cleveland, Ohio
+              Human Trafficking Survivor Support Services in Lorain County, Ohio
             </h1>
             <p className="text-xl leading-relaxed max-w-3xl mx-auto" style={{ color: '#CDBDAF' }}>
-              Holistic, trauma-informed programs available in Cleveland, Ohio and throughout 
+              Holistic, trauma-informed programs available in Lorain County, Ohio and throughout 
               Northeast Ohio. Designed to meet survivors where they are and support them on 
               their journey to healing, independence, and hope.
             </p>
@@ -185,7 +185,6 @@ export default function ServicesPage() {
               <Button
                 asChild
                 size="lg"
-                className="bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8] shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
               >
                 <Link href="/get-help">
                   Get Help Now <ChevronRight className="ml-2 h-4 w-4" />
@@ -195,7 +194,6 @@ export default function ServicesPage() {
                 asChild
                 size="lg"
                 variant="outline"
-                className="border-[#8B5E3C] text-[#C8A46B] hover:bg-[#8B5E3C]/14"
               >
                 <Link href="/resources">
                   View Resources

@@ -229,7 +229,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
           <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-red-800 mb-2">Post Not Found</h2>
           <p className="text-red-700 mb-4">The post you're looking for doesn't exist or has been deleted.</p>
-          <Button asChild className="bg-[#1E6B73] hover:bg-[#4C9AA3]">
+          <Button asChild>
             <Link href="/admin/blog">Back to Blog</Link>
           </Button>
         </div>

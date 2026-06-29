@@ -188,7 +188,7 @@ export default async function JobDetailPage({ params }: JobPageProps) {
                       <Building2 className="w-4 h-4" />
                       <span className="text-xs uppercase tracking-wider font-medium">Location</span>
                     </div>
-                    <p className="text-cream-100 font-medium">{job.location || 'Cleveland, OH'}</p>
+                    <p className="text-cream-100 font-medium">{job.location || 'Lorain County, OH'}</p>
                   </div>
                   <div className="text-center md:text-left">
                     <div className="flex items-center justify-center md:justify-start gap-2 text-teal mb-2">

@@ -423,7 +423,7 @@ export default function EditContentPage({ params }: { params: Promise<{ id: stri
                   keywords: e.target.value.split(',').map(k => k.trim()).filter(Boolean)
                 }
               })}
-              placeholder="human trafficking advocacy, Cleveland Ohio, survivor support"
+              placeholder="human trafficking advocacy, Lorain County Ohio, survivor support"
               className="w-full border border-[#3A2A24]/20 rounded-lg px-3 py-2 text-[#1E1714] focus:outline-none focus:border-[#1E6B73]"
             />
             <p className="text-xs text-[#8B5E3C] mt-1">Separate keywords with commas</p>

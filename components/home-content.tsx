@@ -5,7 +5,6 @@ import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { HeroAnimation } from '@/components/hero-animation';
-import { MissionMomentCardV2 } from '@/components/mission-moment-card-v2';
 import { ORG, CORE_VALUES, SERVICES, IMPACT_STATS } from '@/lib/constants';
 import { 
   ArrowRight, 
@@ -45,68 +44,51 @@ const valueIcons: Record<string, React.ComponentType<{ className?: string }>> = 
 export function HomeContent() {
   return (
     <div className="min-h-screen">
-      {/* Hero Section - Cinematic Animation */}
-      <section className="relative min-h-screen">
+      {/* Hero Section */}
+      <section className="relative">
         <HeroAnimation>
-          <div className="container-wide section-padding pt-0 pb-8">
-            <div className="max-w-4xl mx-auto text-center">
-              {/* Tagline Badge - Staggered Fade Up */}
-              <motion.div
+          <div className="container-wide">
+            <div className="mx-auto max-w-3xl text-center">
+              <motion.h1
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.55, delay: 1.5, ease: [0.25, 0.1, 0.25, 1] }}
+                transition={{ duration: 0.6, delay: 0.35, ease: [0.25, 0.1, 0.25, 1] }}
+                className="mb-4 font-serif text-[1.75rem] font-bold leading-[1.2] tracking-tight text-[#F6F0E8] sm:text-4xl lg:text-[2.625rem]"
               >
-                <span className="inline-flex items-center gap-2 px-5 py-2.5 mb-4 text-sm font-medium text-[#C8A46B] bg-[#3A2A24]/80 rounded-full border border-[#8B5E3C]/30 backdrop-blur-sm">
-                  <Flame className="w-4 h-4" />
-                  Empowering Survivors Since 2020
-                </span>
-              </motion.div>
-              
-              {/* SEO H1 - Primary Heading */}
-              <motion.h1
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.7, delay: 1.7, ease: [0.25, 0.1, 0.25, 1] }}
-                className="font-serif text-4xl sm:text-5xl lg:text-6xl font-bold text-[#F6F0E8] mb-3 tracking-tight leading-tight"
-              >
-                Human Trafficking Victim Advocacy in Cleveland, Ohio
+                Human Trafficking Victim Advocacy in Lorain County, Ohio
               </motion.h1>
 
-              {/* Brand Headline - Visual Emphasis */}
-              <motion.p
-                initial={{ opacity: 0, y: 30 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.7, delay: 1.85, ease: [0.25, 0.1, 0.25, 1] }}
-                className="font-serif text-3xl sm:text-4xl lg:text-5xl font-bold text-[#F6F0E8] mb-3 tracking-tight leading-tight"
-              >
-                Restoring Hope.
-                <br />
-                <span className="text-[#4C9AA3]">Rebuilding Lives.</span>
-              </motion.p>
-              
-              {/* Mission Statement - Staggered Fade Up */}
               <motion.p
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.65, delay: 1.9, ease: [0.25, 0.1, 0.25, 1] }}
-                className="text-lg sm:text-xl text-[#CDBDAF] mb-5 max-w-2xl mx-auto leading-relaxed"
+                transition={{ duration: 0.6, delay: 0.45, ease: [0.25, 0.1, 0.25, 1] }}
+                className="mb-4 font-serif text-2xl font-bold leading-tight tracking-tight text-[#F6F0E8] sm:text-3xl lg:text-4xl"
+              >
+                Restoring Hope.{' '}
+                <span className="text-[#4C9AA3]">Rebuilding Lives.</span>
+              </motion.p>
+
+              <motion.p
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.55, delay: 0.55, ease: [0.25, 0.1, 0.25, 1] }}
+                className="mx-auto mb-7 max-w-xl text-base leading-relaxed text-[#CDBDAF] sm:text-lg"
               >
                 {ORG.mission}
               </motion.p>
-              
-              {/* CTA Buttons - Final Stagger */}
+
               <motion.div
-                initial={{ opacity: 0, y: 20 }}
+                initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.65, delay: 2.1, ease: [0.25, 0.1, 0.25, 1] }}
-                className="flex flex-col sm:flex-row items-center justify-center gap-4"
+                transition={{ duration: 0.55, delay: 0.65, ease: [0.25, 0.1, 0.25, 1] }}
+                className="flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4"
               >
-                <Button asChild size="lg" className="bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8] px-8 py-6 text-base shadow-[0_12px_40px_rgba(0,0,0,0.35)] hover:shadow-[0_12px_40px_rgba(30,107,115,0.25)] transition-all duration-300">
+                <Button asChild size="lg" className="px-8 py-6 text-base">
                   <Link href="/get-help">
                     Get Help Now <ArrowRight className="ml-2 h-5 w-5" />
                   </Link>
                 </Button>
-                <Button asChild size="lg" variant="outline" className="border-[#8B5E3C] text-[#C8A46B] hover:bg-[#8B5E3C]/14 px-8 py-6 text-base transition-all duration-300">
+                <Button asChild size="lg" variant="outline" className="px-8 py-6 text-base">
                   <a href="https://www.zeffy.com/en-US/donation-form/donate-to-change-lives-13754" target="_blank" rel="noopener noreferrer">
                     Support Our Mission <Heart className="ml-2 h-5 w-5" />
                   </a>
@@ -117,8 +99,8 @@ export function HomeContent() {
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                transition={{ duration: 0.6, delay: 2.4 }}
-                className="mt-6 flex flex-wrap items-baseline justify-center gap-x-6 gap-y-3 text-sm"
+                transition={{ duration: 0.5, delay: 0.8 }}
+                className="mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-3 text-sm"
               >
                 {/* 501(c)(3) Badge */}
                 <span className="flex flex-col items-center">
@@ -143,6 +125,18 @@ export function HomeContent() {
                 <span className="flex items-center gap-1.5 font-medium text-[#E8DCCF] drop-shadow-sm">
                   <HandHeart className="w-4 h-4 text-[#4C9AA3]" />
                   Trauma-Informed Care
+                </span>
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.9, ease: [0.25, 0.1, 0.25, 1] }}
+                className="mt-10 sm:mt-12"
+              >
+                <span className="inline-flex items-center gap-2 rounded-full border border-[#8B5E3C]/30 bg-[#3A2A24]/80 px-4 py-2 text-sm font-medium text-[#C8A46B] backdrop-blur-sm">
+                  <Flame className="h-4 w-4" />
+                  Empowering Survivors Since 2020
                 </span>
               </motion.div>
             </div>
@@ -174,19 +168,20 @@ export function HomeContent() {
         </div>
       </section>
 
-      {/* Local SEO Section - Serving Cleveland and Northeast Ohio */}
+      {/* Local SEO Section - Serving Lorain County and Northeast Ohio */}
       <section className="py-20 bg-[#2A1F1A] border-y border-[#3A2A24]">
         <div className="container-wide section-padding">
           <div className="max-w-3xl mx-auto text-center">
             <span className="text-[#C8A46B] font-medium mb-4 block tracking-wide uppercase text-sm">Our Community</span>
             <h2 className="font-serif text-3xl sm:text-4xl font-bold text-[#F6F0E8] mb-6 leading-tight">
-              Serving Cleveland, Cuyahoga County, and Northeast Ohio
+              Serving Lorain County and Northeast Ohio
             </h2>
             <p className="text-lg text-[#CDBDAF] leading-relaxed">
-              Forged in the Fire is based in Cleveland, Ohio and provides trauma-informed victim 
-              advocacy and survivor support throughout Cuyahoga County and the greater Northeast 
-              Ohio region. We are committed to meeting survivors where they are and walking 
-              alongside them on their journey toward healing, safety, and independence.
+              Forged in the Fire is based in Lorain County, Ohio and provides trauma-informed victim
+              advocacy and survivor support throughout Lorain County—including Lorain, Elyria, and
+              communities across the greater Northeast Ohio region. We are committed to meeting
+              survivors where they are and walking alongside them on their journey toward healing,
+              safety, and independence.
             </p>
           </div>
         </div>
@@ -195,52 +190,27 @@ export function HomeContent() {
       {/* Mission Section - Warm Human Connection */}
       <section className="py-24 bg-[#241B18]">
         <div className="container-wide section-padding">
-          <div className="grid lg:grid-cols-2 gap-16 items-center">
-            <div>
-              <span className="text-[#4C9AA3] font-medium mb-4 block tracking-wide uppercase text-sm">Our Mission</span>
-              <h2 className="font-serif text-4xl sm:text-5xl font-bold text-[#F6F0E8] mb-6 leading-tight">
-                Healing Through <span className="text-[#C8A46B]">Leadership</span>
-              </h2>
-              <p className="text-lg text-[#CDBDAF] mb-6 leading-relaxed">
-                We believe that survivors are the experts of their own experiences. Our approach centers 
-                on amplifying survivor voices, honoring their choices, and walking alongside them on 
-                their journey to healing and independence.
-              </p>
-              <p className="text-lg text-[#CDBDAF] mb-8 leading-relaxed">
-                Every service we provide is rooted in trauma-informed care, recognizing that healing 
-                is not linear and that each survivor&apos;s path is unique.
-              </p>
-              <div className="flex flex-col sm:flex-row gap-4">
-                <Button asChild variant="outline" className="border-[#1E6B73] text-[#4C9AA3] hover:bg-[#1E6B73]/20 transition-all duration-300">
-                  <Link href="/about">Learn Our Story <ChevronRight className="ml-2 h-4 w-4" /></Link>
-                </Button>
-                <Button asChild variant="ghost" className="text-[#CDBDAF] hover:text-[#4C9AA3] hover:bg-[#1E6B73]/10 transition-all duration-300">
-                  <Link href="/services/victim-advocacy">Explore Victim Advocacy Services</Link>
-                </Button>
-              </div>
-            </div>
-            <div className="relative">
-              <MissionMomentCardV2 />
-              
-              {/* External glow effects - refined and slimmer */}
-              <motion.div 
-                className="absolute -top-3 -right-3 w-20 h-20 rounded-full pointer-events-none"
-                style={{
-                  background: 'radial-gradient(circle, rgba(200,164,107,0.18) 0%, transparent 70%)',
-                  filter: 'blur(16px)',
-                }}
-                animate={{ opacity: [0.45, 0.65, 0.45] }}
-                transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}
-              />
-              <motion.div 
-                className="absolute -bottom-3 -left-3 w-24 h-24 rounded-full pointer-events-none"
-                style={{
-                  background: 'radial-gradient(circle, rgba(30,107,115,0.12) 0%, transparent 70%)',
-                  filter: 'blur(20px)',
-                }}
-                animate={{ opacity: [0.35, 0.55, 0.35] }}
-                transition={{ duration: 7, repeat: Infinity, ease: 'easeInOut', delay: 1.5 }}
-              />
+          <div className="mx-auto max-w-3xl">
+            <span className="text-[#4C9AA3] font-medium mb-4 block tracking-wide uppercase text-sm">Our Mission</span>
+            <h2 className="font-serif text-4xl sm:text-5xl font-bold text-[#F6F0E8] mb-6 leading-tight">
+              Healing Through <span className="text-[#C8A46B]">Leadership</span>
+            </h2>
+            <p className="text-lg text-[#CDBDAF] mb-6 leading-relaxed">
+              We believe that survivors are the experts of their own experiences. Our approach centers 
+              on amplifying survivor voices, honoring their choices, and walking alongside them on 
+              their journey to healing and independence.
+            </p>
+            <p className="text-lg text-[#CDBDAF] mb-8 leading-relaxed">
+              Every service we provide is rooted in trauma-informed care, recognizing that healing 
+              is not linear and that each survivor&apos;s path is unique.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4">
+              <Button asChild variant="outline">
+                <Link href="/about">Learn Our Story <ChevronRight className="ml-2 h-4 w-4" /></Link>
+              </Button>
+              <Button asChild variant="ghost">
+                <Link href="/services/victim-advocacy">Explore Victim Advocacy Services</Link>
+              </Button>
             </div>
           </div>
         </div>
@@ -322,7 +292,7 @@ export function HomeContent() {
           </div>
           
           <div className="text-center mt-12">
-            <Button asChild variant="outline" className="border-[#8B5E3C] text-[#C8A46B] hover:bg-[#8B5E3C]/14 transition-all duration-300">
+            <Button asChild variant="outline">
               <Link href="/services">View All Services <ArrowRight className="ml-2 h-4 w-4" /></Link>
             </Button>
           </div>

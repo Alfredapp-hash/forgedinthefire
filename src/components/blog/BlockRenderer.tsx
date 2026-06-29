@@ -144,17 +144,17 @@ function QuoteBlock({ block }: { block: { text: string; author?: string; role?: 
 }
 
 function CTABlock({ block }: { block: { text: string; url: string; style?: 'primary' | 'secondary' | 'outline' } }) {
-  const buttonVariants = {
-    primary: 'bg-teal text-white hover:bg-teal-600',
-    secondary: 'bg-gold text-charcoal hover:bg-gold-600',
-    outline: 'border-2 border-cream-100 text-cream-100 hover:bg-cream-100/10',
-  }
-  
+  const variantMap = {
+    primary: 'default',
+    secondary: 'secondary',
+    outline: 'outline',
+  } as const
+
   return (
     <div className="flex justify-center py-8">
       <Button
         asChild
-        className={buttonVariants[block.style || 'primary']}
+        variant={variantMap[block.style || 'primary']}
         size="lg"
       >
         <a href={block.url}>{block.text}</a>

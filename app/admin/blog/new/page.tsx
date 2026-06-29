@@ -244,7 +244,7 @@ export default function NewBlogPostPage() {
         seo: {
           title: seoTitle.trim() || title,
           description: seoDescription.trim(),
-          keywords: ['human trafficking advocacy', 'Cleveland Ohio', 'survivor support'],
+          keywords: ['human trafficking advocacy', 'Lorain County Ohio', 'survivor support'],
         }
       }
       

@@ -92,12 +92,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
                   key={index}
                   asChild
                   size="lg"
-                  variant={cta.variant}
-                  className={
-                    cta.variant === 'default'
-                      ? 'bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8] shadow-[0_12px_40px_rgba(0,0,0,0.35)]'
-                      : 'border-[#8B5E3C] text-[#C8A46B] hover:bg-[#8B5E3C]/14'
-                  }
+                  variant={cta.variant === 'default' ? 'default' : 'outline'}
                 >
                   <Link href={cta.href}>
                     {cta.label} <ArrowRight className="ml-2 h-4 w-4" />
@@ -373,7 +368,6 @@ export default function ServicePageContent({ service, content }: ServicePageCont
               <Button
                 asChild
                 size="lg"
-                className="bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8] shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
               >
                 <Link href="/contact">
                   <Mail className="mr-2 h-5 w-5" />
@@ -384,7 +378,6 @@ export default function ServicePageContent({ service, content }: ServicePageCont
                 asChild
                 size="lg"
                 variant="outline"
-                className="border-[#8B5E3C] text-[#C8A46B] hover:bg-[#8B5E3C]/14"
               >
                 <Link href="/get-help">
                   <Phone className="mr-2 h-5 w-5" />

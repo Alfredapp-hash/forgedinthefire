@@ -31,7 +31,7 @@ function generateDefaultSEO(title: string): SEOSettings {
   return {
     title: `${title} | Forged in the Fire`,
     description: '',
-    keywords: ['human trafficking advocacy', 'Cleveland Ohio', 'survivor support'],
+    keywords: ['human trafficking advocacy', 'Lorain County Ohio', 'survivor support'],
   }
 }
 

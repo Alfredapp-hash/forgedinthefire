@@ -29,10 +29,10 @@ export default function ContactPage() {
         <div className="container-wide section-padding">
           <div className="max-w-4xl mx-auto text-center">
             <h1 className="font-serif text-5xl sm:text-6xl font-bold text-cream-100 mb-6">
-              Contact Our Cleveland Victim Advocacy Team
+              Contact Our Lorain County Victim Advocacy Team
             </h1>
             <p className="text-xl text-cream-300/80 leading-relaxed max-w-2xl mx-auto">
-              Have questions about our victim advocacy services in Cleveland and Northeast Ohio? 
+              Have questions about our victim advocacy services in Lorain County and Northeast Ohio? 
               We&apos;d love to hear from you. For immediate help, please use the resources below.
             </p>
           </div>
@@ -137,7 +137,7 @@ export default function ContactPage() {
                         <Label htmlFor="message">Message *</Label>
                         <Textarea id="message" required rows={5} value={formState.message} onChange={(e) => setFormState({...formState, message: e.target.value})} />
                       </div>
-                      <Button type="submit" size="lg" className="w-full bg-ember hover:bg-ember-600" disabled={isSubmitting}>
+                      <Button type="submit" size="lg" className="w-full" disabled={isSubmitting}>
                         {isSubmitting ? 'Sending...' : 'Send Message'}
                         <Send className="ml-2 h-4 w-4" />
                       </Button>

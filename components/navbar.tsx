@@ -137,7 +137,6 @@ export function Navbar() {
               onClick={() => setIsSubscribeOpen(true)}
               variant="outline"
               size="sm"
-              className="border-[#1E6B73] text-[#4C9AA3] hover:bg-[#1E6B73]/10 hover:text-[#4C9AA3]"
             >
               <Mail className="w-4 h-4 mr-2" />
               Subscribe
@@ -146,7 +145,6 @@ export function Navbar() {
               asChild
               variant="default"
               size="sm"
-              className="bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8] shadow-[0_4px_20px_rgba(0,0,0,0.35)] hover:shadow-[0_4px_20px_rgba(30,107,115,0.3)]"
             >
               <Link href="/donate">Donate</Link>
             </Button>
@@ -222,7 +220,7 @@ export function Navbar() {
                     asChild
                     variant="outline"
                     size="lg"
-                    className="w-full border-[#8B5E3C] text-[#C8A46B] hover:bg-[#8B5E3C]/14"
+                    className="w-full"
                   >
                     <Link href="/get-help" onClick={() => setIsOpen(false)}>
                       Get Help Now
@@ -235,7 +233,7 @@ export function Navbar() {
                     }}
                     variant="outline"
                     size="lg"
-                    className="w-full border-[#1E6B73] text-[#4C9AA3] hover:bg-[#1E6B73]/10"
+                    className="w-full"
                   >
                     <Mail className="w-4 h-4 mr-2" />
                     Subscribe to Updates
@@ -244,7 +242,7 @@ export function Navbar() {
                     asChild
                     variant="default"
                     size="lg"
-                    className="w-full bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8] shadow-[0_4px_20px_rgba(0,0,0,0.35)]"
+                    className="w-full"
                   >
                     <Link href="/donate" onClick={() => setIsOpen(false)}>
                       Donate Today
