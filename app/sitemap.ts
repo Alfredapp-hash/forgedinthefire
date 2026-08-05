@@ -37,7 +37,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: 'weekly',
       priority: 1,
       images: [
-        `${baseUrl}/forged-logo.png`,
+        `${baseUrl}/brand/fitf-lockup.png`,
         `${baseUrl}/opengraph-image.jpeg`,
       ],
     },

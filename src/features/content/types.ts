@@ -5,7 +5,7 @@
 // STATUS & WORKFLOW
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ContentStatus = 'draft' | 'published' | 'archived'
+export type ContentStatus = 'draft' | 'scheduled' | 'published' | 'archived'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST TEMPLATES (Determines default blocks and layout)
@@ -40,24 +40,48 @@ export type ContentCategory =
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type ContentBlockType =
-  | 'hero'             // Title, subtitle, background image
-  | 'text'             // Rich text content
-  | 'imageText'        // Side-by-side image and text
-  | 'quote'            // Blockquote with attribution
-  | 'cta'              // Call-to-action button
-  | 'faq'              // Frequently asked questions
-  | 'gallery'          // Image gallery
-  | 'video'            // Embedded video
+  | 'hero'
+  | 'intro'
+  | 'heading'
+  | 'text'
+  | 'imageText'
+  | 'quote'
+  | 'testimonial'
+  | 'teamMember'
+  | 'cta'
+  | 'faq'
+  | 'checklist'
+  | 'quickAnswer'
+  | 'stats'
+  | 'gallery'
+  | 'video'
+  | 'divider'
+  | 'beforeAfter'
+  | 'contactForm'
+  | 'relatedResources'
+  | 'map'
 
 export type ContentBlock =
   | { type: 'hero'; data: { title: string; subtitle?: string; image?: string } }
+  | { type: 'intro'; data: { text: string } }
+  | { type: 'heading'; data: { text: string; level: 2 | 3 | 4 } }
   | { type: 'text'; data: { content: string } }
   | { type: 'imageText'; data: { image: string; imageAlt: string; imagePosition: 'left' | 'right'; title?: string; content: string } }
   | { type: 'quote'; data: { text: string; author?: string; role?: string } }
+  | { type: 'testimonial'; data: { text: string; author: string; role?: string; image?: string } }
+  | { type: 'teamMember'; data: { name: string; role: string; bio?: string; image?: string } }
   | { type: 'cta'; data: { text: string; url: string; style?: 'primary' | 'secondary' | 'outline' } }
   | { type: 'faq'; data: { items: { question: string; answer: string }[] } }
+  | { type: 'checklist'; data: { title?: string; items: { text: string; checked?: boolean }[] } }
+  | { type: 'quickAnswer'; data: { question: string; answer: string } }
+  | { type: 'stats'; data: { items: { value: string; label: string }[] } }
   | { type: 'gallery'; data: { images: { src: string; alt: string; caption?: string }[] } }
   | { type: 'video'; data: { url: string; title?: string; caption?: string } }
+  | { type: 'divider'; data: { style?: 'line' | 'dots' | 'space' } }
+  | { type: 'beforeAfter'; data: { beforeImage: string; afterImage: string; beforeLabel?: string; afterLabel?: string; caption?: string } }
+  | { type: 'contactForm'; data: { heading: string; description?: string; formType: 'contact' | 'volunteer' | 'donate' } }
+  | { type: 'relatedResources'; data: { title?: string; items: { title: string; url: string; description?: string }[] } }
+  | { type: 'map'; data: { heading?: string; address: string; embedUrl?: string } }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MEDIA
@@ -158,6 +182,7 @@ export type ContentItem = {
   updatedAt: string
   publishedAt?: string
   scheduledFor?: string
+  consentConfirmed?: boolean   // Required for impact-story posts
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

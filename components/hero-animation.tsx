@@ -1,34 +1,79 @@
 'use client';
 
-import { motion } from 'framer-motion';
 import { useEffect, useRef, useState } from 'react';
 import { HeroAmbientField } from '@/components/hero-ambient-field';
-import {
-  buildHeroBridgeFade,
-  buildHeroCopyBackdrop,
-  DEFAULT_PALETTE,
-  type VideoAmbientPalette,
-} from '@/lib/hero/video-ambient';
-import {
-  getMainVideoStyle,
-  getVideoMaskGradient,
-  HERO_VIDEO_LAYOUT,
-} from '@/lib/hero/video-layout';
+import { HeroCopy, HERO_HEADING_ID, type HeroCopyStage } from '@/components/hero-copy';
 
 interface HeroAnimationProps {
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }
 
-const HERO_VIDEO_SRC = '/hero-background.mp4';
+/** Intrinsic size of both hero videos; the cover transform is derived from it. */
+const VIDEO_WIDTH = 1280;
+const VIDEO_HEIGHT = 720;
+
+/** Cache-bust when swapping hero assets during iteration */
+const HERO_VIDEO_SRC = '/hero-background.mp4?v=seamless1';
+/**
+ * The loop clip is not simply the intro's tail: the anvil below the flame is a
+ * single frozen frame, re-lit per frame to keep breathing with the fire. See
+ * scripts/build-hero-loop.mjs. Compositing is baked into the asset rather than
+ * layered in CSS because both videos render with `object-fit: cover`, and a DOM
+ * plate would have to reproduce that cover scaling at every aspect ratio or the
+ * anvil would visibly mis-register.
+ */
+const HERO_LOOP_SRC = '/hero-flame-loop.mp4?v=staticanvil1';
+
+/**
+ * Where the intro hands off to the looping tail.
+ *
+ * The loop clip's first frame is source frame 349 of the intro, so handing off
+ * at exactly that timestamp puts both videos on the same content for the whole
+ * crossfade — there is nothing for the fade to reveal. Keep in sync with
+ * scripts/build-hero-loop.mjs if the loop window changes.
+ */
+const LOOP_HANDOFF_SECONDS = 349 / 24;
+
+/** Crossfade duration; mirrored by the opacity transition on the loop video. */
+const HANDOFF_MS = 450;
+
+/**
+ * Copy beats, in seconds of intro playback.
+ *
+ * Anchored to what is actually on screen rather than to round numbers, measured
+ * with scripts/analyze-intro-beats.mjs and scripts/analyze-intro-geometry.mjs.
+ */
+const COPY_BEATS = {
+  /** The shot's darkest stretch: frame luma starts at 1.4 and the droplet is still falling. */
+  DARK_IN: 0.6,
+  DARK_OUT: 2.6,
+  /** The droplet strikes the anvil around 2.1s; by here the fire has taken hold and is growing. */
+  FORGED_IN: 3.2,
+  FORGED_OUT: 6.8,
+  /**
+   * The heart finishes forming. It does not exist at all before 7.0s, reaches 90%
+   * of its final area at 8.25s and comes within 3% of it at 8.83s — so a 6s cue
+   * would have landed on a frame with no heart in it.
+   */
+  BRAND_IN: 8.8,
+} as const;
+
+function stageForTime(seconds: number): HeroCopyStage {
+  if (seconds >= COPY_BEATS.BRAND_IN) return 'brand';
+  if (seconds >= COPY_BEATS.FORGED_IN && seconds < COPY_BEATS.FORGED_OUT) return 'forged';
+  if (seconds >= COPY_BEATS.DARK_IN && seconds < COPY_BEATS.DARK_OUT) return 'dark';
+  return 'none';
+}
 
 export function HeroAnimation({ children }: HeroAnimationProps) {
   const visualRef = useRef<HTMLDivElement>(null);
   const videoStageRef = useRef<HTMLDivElement>(null);
-  const mainVideoRef = useRef<HTMLVideoElement>(null);
+  const introVideoRef = useRef<HTMLVideoElement>(null);
+  const loopVideoRef = useRef<HTMLVideoElement>(null);
   const [videoReady, setVideoReady] = useState(false);
+  const [loopActive, setLoopActive] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
-  const [copyBackdrop, setCopyBackdrop] = useState(buildHeroCopyBackdrop(DEFAULT_PALETTE));
-  const [bridgeFade, setBridgeFade] = useState(buildHeroBridgeFade(DEFAULT_PALETTE));
+  const [copyStage, setCopyStage] = useState<HeroCopyStage>('none');
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -38,102 +83,215 @@ export function HeroAnimation({ children }: HeroAnimationProps) {
     return () => mediaQuery.removeEventListener('change', updateMotionPreference);
   }, []);
 
+  // Reduced motion skips the staged narrative and rests on the final state at once.
   useEffect(() => {
-    const main = mainVideoRef.current;
-    if (!main || prefersReducedMotion) return;
+    if (prefersReducedMotion) setCopyStage('brand');
+  }, [prefersReducedMotion]);
 
-    const startPlayback = async () => {
+  // The copy must sit on the anvil, but `object-fit: cover` decides where the anvil
+  // lands on screen and that changes with the viewport's aspect ratio. Publish the
+  // cover transform so the overlay can address rows in the video's own coordinate
+  // space instead of guessing with percentages.
+  useEffect(() => {
+    const root = visualRef.current;
+    if (!root) return;
+
+    const apply = () => {
+      const { width, height } = root.getBoundingClientRect();
+      if (!width || !height) return;
+      const scale = Math.max(width / VIDEO_WIDTH, height / VIDEO_HEIGHT);
+      root.style.setProperty('--hero-cover-scale', String(scale));
+      root.style.setProperty('--hero-cover-top', `${(height - VIDEO_HEIGHT * scale) / 2}px`);
+    };
+
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, []);
+
+  // A cached video can reach `canplay` before React attaches its listener, which
+  // would strand the black hold overlay on top of a perfectly good frame. Read
+  // readyState directly and keep the events only as a cold-cache fallback.
+  useEffect(() => {
+    const intro = introVideoRef.current;
+    if (!intro || prefersReducedMotion) return;
+
+    const markReady = () => setVideoReady(true);
+    if (intro.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) markReady();
+
+    intro.addEventListener('loadeddata', markReady);
+    intro.addEventListener('canplay', markReady);
+    return () => {
+      intro.removeEventListener('loadeddata', markReady);
+      intro.removeEventListener('canplay', markReady);
+    };
+  }, [prefersReducedMotion]);
+
+  useEffect(() => {
+    const intro = introVideoRef.current;
+    const loop = loopVideoRef.current;
+    if (!intro || !loop || prefersReducedMotion) return;
+
+    let disposed = false;
+    let frameHandle = 0;
+    let handedOff = false;
+    let pauseIntroTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const revealLoop = () => {
+      if (disposed) return;
+      setLoopActive(true);
+      // The loop sits above the intro and fades in, so the intro stays opaque
+      // underneath for the whole crossfade and can only be retired afterwards.
+      pauseIntroTimer = setTimeout(() => {
+        if (!disposed) intro.pause();
+      }, HANDOFF_MS + 100);
+    };
+
+    const handOff = async () => {
+      if (handedOff) return;
+      handedOff = true;
       try {
-        main.currentTime = 0;
-        await main.play();
+        loop.currentTime = 0;
+        await loop.play();
+      } catch {
+        // Autoplay may be blocked until user interaction.
+      }
+      if (disposed) return;
+      // Wait for a painted frame so the fade never uncovers an empty element.
+      if (typeof loop.requestVideoFrameCallback === 'function') {
+        loop.requestVideoFrameCallback(() => revealLoop());
+      } else {
+        revealLoop();
+      }
+    };
+
+    // Beats are driven by the video's own clock, so buffering or a late start moves
+    // the copy with the footage instead of desyncing from it.
+    const syncCopy = (seconds: number) => {
+      const next = stageForTime(seconds);
+      setCopyStage((current) => (current === next ? current : next));
+    };
+
+    const watchIntro = () => {
+      if (disposed) return;
+      syncCopy(intro.currentTime);
+      if (!handedOff && intro.currentTime >= LOOP_HANDOFF_SECONDS) {
+        void handOff();
+      }
+      frameHandle = intro.requestVideoFrameCallback(watchIntro);
+    };
+
+    const startIntro = async () => {
+      try {
+        await intro.play();
       } catch {
         // Autoplay may be blocked until user interaction.
       }
     };
 
-    startPlayback();
+    void startIntro();
+
+    if (typeof intro.requestVideoFrameCallback === 'function') {
+      frameHandle = intro.requestVideoFrameCallback(watchIntro);
+    }
+    // Safety net for browsers without rVFC: never strand the hero on a still frame.
+    intro.addEventListener('ended', handOff);
+    // Coarser, but still the video's clock, so the beats survive a missing rVFC.
+    const handleTimeUpdate = () => syncCopy(intro.currentTime);
+    intro.addEventListener('timeupdate', handleTimeUpdate);
 
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible' && main.paused) {
-        void startPlayback();
-      }
+      if (document.visibilityState !== 'visible') return;
+      const target = handedOff ? loop : intro;
+      if (target.paused) void target.play().catch(() => {});
     };
-
     document.addEventListener('visibilitychange', handleVisibility);
-    return () => document.removeEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      disposed = true;
+      clearTimeout(pauseIntroTimer);
+      if (frameHandle && typeof intro.cancelVideoFrameCallback === 'function') {
+        intro.cancelVideoFrameCallback(frameHandle);
+      }
+      intro.removeEventListener('ended', handOff);
+      intro.removeEventListener('timeupdate', handleTimeUpdate);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   }, [prefersReducedMotion]);
 
   const showVideo = !prefersReducedMotion;
-  const videoMask = getVideoMaskGradient();
-
-  const handlePaletteChange = (palette: VideoAmbientPalette) => {
-    setBridgeFade(buildHeroBridgeFade(palette));
-    setCopyBackdrop(buildHeroCopyBackdrop(palette));
-  };
 
   return (
-    <div className="relative flex flex-col overflow-x-hidden bg-[#241B18]">
-      {/* Visual hero — video + ambient only; no copy overlaps this block */}
-      <div ref={visualRef} className="relative isolate w-full shrink-0 bg-black">
-        <HeroAmbientField
-          videoRef={mainVideoRef}
-          ambientRootRef={visualRef}
-          videoStageRef={videoStageRef}
-          active={showVideo && videoReady}
-          onPaletteChange={handlePaletteChange}
-        />
+    <section
+      ref={visualRef}
+      className="relative isolate h-[100dvh] min-h-[100svh] w-full overflow-hidden bg-black"
+      // Named by the wordmark itself rather than a literal aria-label, which would
+      // otherwise announce "Forged in the Fire" twice.
+      aria-labelledby={HERO_HEADING_ID}
+    >
+      <HeroAmbientField
+        videoRef={loopActive ? loopVideoRef : introVideoRef}
+        ambientRootRef={visualRef}
+        videoStageRef={videoStageRef}
+        active={showVideo && videoReady}
+      />
 
-        <div
-          className="relative z-[1] w-full overflow-hidden pb-0 pt-20 sm:pt-[5.25rem]"
-          aria-hidden={!showVideo}
-        >
-          {showVideo && (
-            <div
-              ref={videoStageRef}
-              className="relative w-full"
-              style={{ aspectRatio: `${HERO_VIDEO_LAYOUT.aspectRatio}` }}
+      {/* Full-viewport video plane */}
+      <div
+        ref={videoStageRef}
+        className="absolute inset-0 z-[1] bg-black"
+        aria-hidden={!showVideo}
+      >
+        {showVideo ? (
+          <>
+            <video
+              ref={introVideoRef}
+              autoPlay
+              muted
+              playsInline
+              preload="auto"
+              className={`absolute inset-0 h-full w-full object-cover object-center transition-opacity duration-[1200ms] ease-out ${
+                videoReady ? 'opacity-100' : 'opacity-0'
+              }`}
             >
-              <video
-                ref={mainVideoRef}
-                autoPlay
-                muted
-                loop
-                playsInline
-                preload="auto"
-                onCanPlay={() => setVideoReady(true)}
-                className={`absolute transition-opacity duration-[1000ms] ease-out ${
-                  videoReady ? 'opacity-100' : 'opacity-0'
-                }`}
-                style={{
-                  ...getMainVideoStyle(),
-                  WebkitMaskImage: videoMask,
-                  maskImage: videoMask,
-                }}
-              >
-                <source src={HERO_VIDEO_SRC} type="video/mp4" />
-              </video>
-            </div>
-          )}
-        </div>
+              <source src={HERO_VIDEO_SRC} type="video/mp4" />
+            </video>
 
-        {/* Bridge fade — palette-synced dissolve into copy backdrop */}
+            {/* Seamless tail; the browser loops this natively so nothing seeks. */}
+            <video
+              ref={loopVideoRef}
+              muted
+              loop
+              playsInline
+              preload="auto"
+              aria-hidden="true"
+              className={`absolute inset-0 h-full w-full object-cover object-center transition-opacity duration-[450ms] ease-linear ${
+                loopActive ? 'opacity-100' : 'opacity-0'
+              }`}
+            >
+              <source src={HERO_LOOP_SRC} type="video/mp4" />
+            </video>
+          </>
+        ) : null}
+
+        {/* Hold black until the frame is ready */}
         <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[min(34vh,300px)] transition-[background] duration-[3200ms] ease-out"
+          className={`pointer-events-none absolute inset-0 bg-black transition-opacity duration-[1200ms] ease-out ${
+            videoReady || !showVideo ? 'opacity-0' : 'opacity-100'
+          }`}
           aria-hidden="true"
-          style={{ background: bridgeFade }}
         />
       </div>
 
-      {/* All copy lives below the visual hero on a synced smooth backdrop */}
-      <motion.div
-        className="relative z-10 -mt-px shrink-0 px-4 pb-10 pt-8 transition-[background] duration-[3200ms] ease-out sm:px-6 sm:pb-14 sm:pt-10 lg:px-8"
-        style={{ background: copyBackdrop }}
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.7, delay: 0.15, ease: 'easeOut' }}
-      >
-        {children}
-      </motion.div>
-    </div>
+      <HeroCopy stage={loopActive ? 'brand' : copyStage} />
+
+      {/* Overlay slot for anything a caller wants above the copy */}
+      {children ? (
+        <div className="pointer-events-none absolute inset-0 z-[2] flex flex-col">
+          <div className="pointer-events-auto flex min-h-0 flex-1 flex-col">{children}</div>
+        </div>
+      ) : null}
+    </section>
   );
 }

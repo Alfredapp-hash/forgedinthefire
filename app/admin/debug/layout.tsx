@@ -14,7 +14,7 @@ export default async function DebugLayout({ children }: { children: React.ReactN
     if (!supabase) {
       return (
         <div className="p-8">
-          <h1 className="text-red-500 font-bold">Debug: No Supabase Client</h1>
+          <h1 className="text-[#8DEBFF] font-bold">Debug: No Supabase Client</h1>
           <pre className="mt-4 bg-gray-100 p-4 rounded">{JSON.stringify(debugInfo, null, 2)}</pre>
           {children}
         </div>
@@ -29,7 +29,7 @@ export default async function DebugLayout({ children }: { children: React.ReactN
     if (!user) {
       return (
         <div className="p-8">
-          <h1 className="text-red-500 font-bold">Debug: No User</h1>
+          <h1 className="text-[#8DEBFF] font-bold">Debug: No User</h1>
           <pre className="mt-4 bg-gray-100 p-4 rounded">{JSON.stringify(debugInfo, null, 2)}</pre>
           <Link href="/login" className="text-blue-500 underline">Go to Login</Link>
         </div>
@@ -51,7 +51,7 @@ export default async function DebugLayout({ children }: { children: React.ReactN
     
     return (
       <div className="p-8">
-        <h1 className="text-green-600 font-bold mb-4">Debug: Admin Layout</h1>
+        <h1 className="text-[#8DEBFF] font-bold mb-4">Debug: Admin Layout</h1>
         <pre className="bg-gray-100 p-4 rounded text-xs">{JSON.stringify(debugInfo, null, 2)}</pre>
         <div className="mt-8">
           {children}
@@ -65,8 +65,8 @@ export default async function DebugLayout({ children }: { children: React.ReactN
     
     return (
       <div className="p-8">
-        <h1 className="text-red-500 font-bold mb-4">Debug: ERROR</h1>
-        <pre className="bg-red-50 p-4 rounded text-xs overflow-auto">{JSON.stringify(debugInfo, null, 2)}</pre>
+        <h1 className="text-[#8DEBFF] font-bold mb-4">Debug: ERROR</h1>
+        <pre className="bg-[#8DEBFF]/15 p-4 rounded text-xs overflow-auto">{JSON.stringify(debugInfo, null, 2)}</pre>
       </div>
     )
   }

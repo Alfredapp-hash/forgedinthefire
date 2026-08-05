@@ -1,88 +1,70 @@
 'use client'
 
 import { useEffect, useRef, useCallback } from 'react'
+import type { ContentItem } from './types'
 
-/**
- * Autosave hook for content editing
- * 
- * Usage:
- * const { isSaving, lastSaved } = useAutosave(content, saveFunction, 3000)
- */
+export type SaveState = 'idle' | 'unsaved' | 'saving' | 'saved'
 
-export function useAutosave<T>(
-  data: T,
-  save: (data: T) => Promise<void>,
-  delay: number = 3000
-) {
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const lastSavedRef = useRef<Date | null>(null)
-  const isSavingRef = useRef(false)
+const LS_KEY = (id: string) => `forged_blog_draft_${id}`
 
-  const triggerSave = useCallback(async () => {
-    if (isSavingRef.current) return
-    
-    isSavingRef.current = true
-    try {
-      await save(data)
-      lastSavedRef.current = new Date()
-    } catch (err) {
-      console.error('Autosave failed:', err)
-    } finally {
-      isSavingRef.current = false
-    }
-  }, [data, save])
+export function saveLocalDraft(item: ContentItem) {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(LS_KEY(item.id), JSON.stringify({ item, savedAt: Date.now() }))
+  } catch { /* quota */ }
+}
 
-  useEffect(() => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current)
-    }
-
-    timeoutRef.current = setTimeout(() => {
-      triggerSave()
-    }, delay)
-
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current)
-      }
-    }
-  }, [data, delay, triggerSave])
-
-  // Save on unmount
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current)
-      }
-      // Final save attempt
-      if (!isSavingRef.current && lastSavedRef.current) {
-        triggerSave()
-      }
-    }
-  }, [triggerSave])
-
-  return {
-    isSaving: isSavingRef.current,
-    lastSaved: lastSavedRef.current,
-    saveNow: triggerSave,
+export function loadLocalDraft(id: string): { item: ContentItem; savedAt: number } | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(LS_KEY(id))
+    if (!raw) return null
+    return JSON.parse(raw)
+  } catch {
+    return null
   }
 }
 
-/**
- * Simple debounce hook for form inputs
- */
-export function useDebounce<T>(value: T, delay: number = 500): T {
-  const [debouncedValue, setDebouncedValue] = useState<T>(value)
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedValue(value)
-    }, delay)
-
-    return () => clearTimeout(timer)
-  }, [value, delay])
-
-  return debouncedValue
+export function clearLocalDraft(id: string) {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.removeItem(LS_KEY(id))
+  } catch { /* noop */ }
 }
 
-import { useState } from 'react'
+export function useAutosave(
+  item: ContentItem | null,
+  onSave: (item: ContentItem) => Promise<void>,
+  setSaveState: (s: SaveState) => void,
+  delayMs = 30000
+) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const latest = useRef(item)
+  useEffect(() => {
+    latest.current = item
+  }, [item])
+
+  const flush = useCallback(async () => {
+    if (!latest.current) return
+    setSaveState('saving')
+    saveLocalDraft(latest.current)
+    await onSave(latest.current)
+    setSaveState('saved')
+    clearLocalDraft(latest.current.id)
+    setTimeout(() => setSaveState('idle'), 2500)
+  }, [onSave, setSaveState])
+
+  useEffect(() => {
+    if (!item) return
+    setSaveState('unsaved')
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => {
+      void flush()
+    }, delayMs)
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+    }
+  }, [item, delayMs, flush, setSaveState])
+
+  return { flush }
+}

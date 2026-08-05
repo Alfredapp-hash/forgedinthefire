@@ -23,22 +23,22 @@ export default function ServicesPage() {
   return (
     <div className="min-h-screen">
       {/* Hero */}
-      <section className="pt-32 pb-20 relative overflow-hidden" style={{ background: '#1E1714' }}>
+      <section className="pt-32 pb-20 relative overflow-hidden" style={{ background: '#05070A' }}>
         {/* Subtle gradient overlay */}
         <div 
           className="absolute inset-0 pointer-events-none"
           style={{
-            background: 'linear-gradient(180deg, rgba(30,107,115,0.08) 0%, transparent 50%)',
+            background: 'linear-gradient(180deg, rgba(83, 214, 255,0.08) 0%, transparent 50%)',
           }}
         />
         
         <div className="container-wide section-padding relative z-10">
           <div className="max-w-4xl mx-auto text-center">
-            <span className="font-medium mb-4 block" style={{ color: '#C8A46B' }}>Comprehensive Support</span>
-            <h1 className="font-serif text-5xl sm:text-6xl font-bold mb-6" style={{ color: '#F6F0E8' }}>
+            <span className="font-medium mb-4 block" style={{ color: '#8DEBFF' }}>Comprehensive Support</span>
+            <h1 className="font-serif text-5xl sm:text-6xl font-bold mb-6" style={{ color: '#F6FAFC' }}>
               Human Trafficking Survivor Support Services in Lorain County, Ohio
             </h1>
-            <p className="text-xl leading-relaxed max-w-3xl mx-auto" style={{ color: '#CDBDAF' }}>
+            <p className="text-xl leading-relaxed max-w-3xl mx-auto" style={{ color: '#B8C4CF' }}>
               Holistic, trauma-informed programs available in Lorain County, Ohio and throughout 
               Northeast Ohio. Designed to meet survivors where they are and support them on 
               their journey to healing, independence, and hope.
@@ -48,7 +48,7 @@ export default function ServicesPage() {
       </section>
 
       {/* Services Grid */}
-      <section className="py-24 bg-[#1E1714]">
+      <section className="py-24 bg-transparent">
         <div className="container-wide section-padding">
           <div className="grid lg:grid-cols-2 gap-8">
             {SERVICES.map((service) => {
@@ -62,33 +62,33 @@ export default function ServicesPage() {
                   className={hasDetailPage ? 'group' : 'pointer-events-none'}
                 >
                   <Card 
-                    className={`bg-[#3A2A24] border-[rgba(216,203,190,0.08)] overflow-hidden h-full transition-all duration-300 ${
-                      hasDetailPage ? 'hover:shadow-[0_12px_40px_rgba(0,0,0,0.45)] hover:border-[#8B5E3C]/30' : ''
+                    className={`bg-[#1A232C] border-[rgba(39, 49, 59,0.08)] overflow-hidden h-full transition-all duration-300 ${
+                      hasDetailPage ? 'hover:shadow-forge hover:border-[#27313B]/30' : ''
                     }`}
-                    style={{ boxShadow: '0 8px 30px rgba(0,0,0,0.3)' }}
+                    style={{ boxShadow: '0 0 40px rgba(83,214,255,0.12)' }}
                   >
                     <CardContent className="p-0">
                       <div className="p-8">
                         <div className="flex items-start gap-4 mb-6">
                           <div 
                             className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0 transition-colors"
-                            style={{ background: 'rgba(200,164,107,0.1)' }}
+                            style={{ background: 'rgba(141, 235, 255,0.1)' }}
                           >
-                            <Icon className="h-7 w-7 text-[#C8A46B]" />
+                            <Icon className="h-7 w-7 text-[#8DEBFF]" />
                           </div>
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
                               <h2 
                                 className="font-serif text-2xl font-bold transition-colors"
-                                style={{ color: '#F6F0E8' }}
+                                style={{ color: '#F6FAFC' }}
                               >
                                 {service.title}
                               </h2>
                               {hasDetailPage && (
-                                <ArrowRight className="h-5 w-5 text-[#4C9AA3] opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
+                                <ArrowRight className="h-5 w-5 text-[#53D6FF] opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
                               )}
                             </div>
-                            <p style={{ color: '#CDBDAF' }}>{service.description}</p>
+                            <p style={{ color: '#B8C4CF' }}>{service.description}</p>
                           </div>
                         </div>
                         
@@ -97,15 +97,15 @@ export default function ServicesPage() {
                             <div key={index} className="flex items-center gap-3">
                               <div 
                                 className="w-1.5 h-1.5 rounded-full shrink-0"
-                                style={{ background: '#8B5E3C' }}
+                                style={{ background: '#A9B8C6' }}
                               />
-                              <span style={{ color: '#B8A89A' }}>{feature}</span>
+                              <span style={{ color: '#A9B8C6' }}>{feature}</span>
                             </div>
                           ))}
                         </div>
                         
                         {hasDetailPage && (
-                          <div className="flex items-center text-sm font-medium" style={{ color: '#4C9AA3' }}>
+                          <div className="flex items-center text-sm font-medium" style={{ color: '#53D6FF' }}>
                             Learn more 
                             <ChevronRight className="h-4 w-4 ml-1 group-hover:translate-x-1 transition-transform" />
                           </div>
@@ -121,15 +121,15 @@ export default function ServicesPage() {
       </section>
 
       {/* Trauma-Informed Approach */}
-      <section className="py-24" style={{ background: '#2A1F1A' }}>
+      <section className="py-24" style={{ background: '#151B22' }}>
         <div className="container-wide section-padding">
           <div className="max-w-4xl mx-auto">
             <div className="text-center mb-16">
-              <span className="font-medium mb-4 block" style={{ color: '#4C9AA3' }}>Our Method</span>
-              <h2 className="font-serif text-4xl font-bold mb-6" style={{ color: '#F6F0E8' }}>
+              <span className="font-medium mb-4 block" style={{ color: '#53D6FF' }}>Our Method</span>
+              <h2 className="font-serif text-4xl font-bold mb-6" style={{ color: '#F6FAFC' }}>
                 Trauma-Informed Care
               </h2>
-              <p className="text-lg" style={{ color: '#CDBDAF' }}>
+              <p className="text-lg" style={{ color: '#B8C4CF' }}>
                 Every service is delivered through a trauma-informed lens, ensuring survivors 
                 feel safe, empowered, and supported throughout their healing journey.
               </p>
@@ -148,13 +148,13 @@ export default function ServicesPage() {
                   key={index} 
                   className="border-0"
                   style={{ 
-                    background: '#241B18',
-                    boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
+                    background: '#11161C',
+                    boxShadow: '0 0 40px rgba(83,214,255,0.12)',
                   }}
                 >
                   <CardContent className="p-6">
-                    <h3 className="font-semibold mb-2" style={{ color: '#F6F0E8' }}>{item.title}</h3>
-                    <p className="text-sm" style={{ color: '#CDBDAF' }}>{item.desc}</p>
+                    <h3 className="font-semibold mb-2" style={{ color: '#F6FAFC' }}>{item.title}</h3>
+                    <p className="text-sm" style={{ color: '#B8C4CF' }}>{item.desc}</p>
                   </CardContent>
                 </Card>
               ))}
@@ -164,21 +164,21 @@ export default function ServicesPage() {
       </section>
 
       {/* CTA */}
-      <section className="py-24 relative overflow-hidden" style={{ background: '#181210' }}>
+      <section className="py-24 relative overflow-hidden" style={{ background: '#05070A' }}>
         {/* Subtle glow */}
         <div 
           className="absolute inset-0 pointer-events-none"
           style={{
-            background: 'radial-gradient(circle at 50% 50%, rgba(30,107,115,0.1) 0%, transparent 60%)',
+            background: 'radial-gradient(circle at 50% 50%, rgba(83, 214, 255,0.1) 0%, transparent 60%)',
           }}
         />
         
         <div className="container-wide section-padding relative z-10">
           <div className="max-w-3xl mx-auto text-center">
-            <h2 className="font-serif text-4xl font-bold mb-6" style={{ color: '#F6F0E8' }}>
+            <h2 className="font-serif text-4xl font-bold mb-6" style={{ color: '#F6FAFC' }}>
               Ready to Get Support?
             </h2>
-            <p className="text-xl mb-8" style={{ color: '#CDBDAF' }}>
+            <p className="text-xl mb-8" style={{ color: '#B8C4CF' }}>
               Our team is here to help you navigate available resources and find the right support for your needs.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">

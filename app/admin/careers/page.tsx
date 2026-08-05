@@ -16,9 +16,9 @@ export default async function AdminCareersPage() {
   if (!supabase) {
     return (
       <div className="p-8">
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-6">
-          <h2 className="text-amber-400 font-medium mb-2">Database Not Connected</h2>
-          <p className="text-amber-400/80 text-sm">
+        <div className="bg-[#53D6FF]/10 border border-[#53D6FF]/30 rounded-lg p-6">
+          <h2 className="text-[#8DEBFF] font-medium mb-2">Database Not Connected</h2>
+          <p className="text-[#8DEBFF]/80 text-sm">
             Supabase environment variables are missing. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.
           </p>
         </div>

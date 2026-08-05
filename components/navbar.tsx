@@ -31,7 +31,6 @@ export function Navbar() {
 
   // Hide navbar on admin routes - admin has its own sidebar navigation
   const isAdminRoute = pathname?.startsWith('/admin') || pathname?.startsWith('/login') || pathname?.startsWith('/unauthorized');
-  if (isAdminRoute) return null;
 
   useEffect(() => {
     const handleScroll = () => {
@@ -66,14 +65,21 @@ export function Navbar() {
     return pathname.startsWith(href);
   };
 
+  // Hooks must run unconditionally, so bail out only at render time.
+  if (isAdminRoute) return null;
+
   return (
     <>
       <header
         className={cn(
           'fixed top-0 left-0 right-0 z-40 transition-all duration-300',
+          // Transparent over the hero on "/" until scroll; everywhere else a
+          // near-invisible pane of blurred obsidian with a faint cyan hairline.
           isScrolled
-            ? 'bg-[#181210]/95 backdrop-blur-md shadow-[0_4px_20px_rgba(0,0,0,0.4)] border-b border-[#3A2A24]'
-            : 'bg-[#181210]/80 backdrop-blur-sm'
+            ? 'bg-[rgba(5,7,10,0.45)] backdrop-blur-[18px] border-b border-[rgba(83,214,255,0.08)]'
+            : pathname === '/'
+              ? 'bg-transparent'
+              : 'bg-[rgba(5,7,10,0.45)] backdrop-blur-[18px] border-b border-[rgba(83,214,255,0.08)]'
         )}
         role="banner"
       >
@@ -89,17 +95,20 @@ export function Navbar() {
             className="flex items-center gap-2.5 group shrink-0"
             aria-label="Forged in the Fire - Home"
           >
-            <div className="relative w-9 h-[52px] flex items-center justify-center">
-              <Image
-                src="/forged-logo.png"
-                alt="Forged in the Fire"
-                fill
-                className="object-contain transition-all duration-500 ease-out group-hover:scale-105"
-                priority
-                sizes="36px"
-              />
-            </div>
-            <span className="font-serif text-lg font-semibold text-[#F6F0E8] hidden sm:block whitespace-nowrap tracking-tight">
+            {/* The brand lockup is a square with baked-in type, so the navbar
+                uses only the anvil-and-flame mark; the wordmark beside it is
+                live text. Explicit intrinsic size prevents layout shift. */}
+            <Image
+              src="/brand/fitf-mark.png"
+              alt="Forged in the Fire"
+              width={36}
+              height={54}
+              className="h-[54px] w-9 shrink-0 object-contain transition-opacity duration-500 ease-out group-hover:opacity-90"
+              priority
+              sizes="36px"
+              quality={95}
+            />
+            <span className="font-serif text-lg font-semibold text-[#F6FAFC] hidden sm:block whitespace-nowrap tracking-tight">
               Forged in the Fire
             </span>
           </Link>
@@ -111,11 +120,14 @@ export function Navbar() {
                 key={link.href}
                 href={link.href}
                 className={cn(
-                  'relative px-3 py-2 text-[13px] font-medium transition-colors duration-200 rounded-md tracking-wide',
+                  // px-2 until xl: at 1024–1082px the nine links plus both CTAs
+                  // exceeded the row and flex-shrink squeezed the labels into
+                  // each other. Narrower padding keeps them on their own tracks.
+                  'relative shrink-0 whitespace-nowrap rounded-md px-1.5 py-2 text-[13px] font-medium tracking-wide transition-colors duration-200 xl:px-3',
                   isActive(link.href)
-                    ? 'text-[#4C9AA3]'
-                    : 'text-[#CDBDAF] hover:text-[#4C9AA3]',
-                  'priority' in link && link.priority && 'text-[#4C9AA3] font-semibold'
+                    ? 'text-[#53D6FF]'
+                    : 'text-[#B8C4CF] hover:text-[#53D6FF]',
+                  'priority' in link && link.priority && 'text-[#53D6FF] font-semibold'
                 )}
                 aria-current={isActive(link.href) ? 'page' : undefined}
               >
@@ -123,7 +135,7 @@ export function Navbar() {
                 {isActive(link.href) && (
                   <motion.span
                     layoutId="activeNav"
-                    className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 bg-[#4C9AA3] rounded-full"
+                    className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 bg-[#53D6FF] rounded-full"
                     transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                   />
                 )}
@@ -153,7 +165,7 @@ export function Navbar() {
           {/* Mobile Menu Button */}
           <button
             onClick={() => setIsOpen(!isOpen)}
-            className="lg:hidden p-2 text-[#CDBDAF] hover:text-[#4C9AA3] transition-colors"
+            className="lg:hidden p-2 text-[#B8C4CF] hover:text-[#53D6FF] transition-colors"
             aria-expanded={isOpen}
             aria-controls="mobile-menu"
             aria-label={isOpen ? 'Close menu' : 'Open menu'}
@@ -180,7 +192,7 @@ export function Navbar() {
             className="fixed inset-0 top-20 z-30 lg:hidden"
           >
             <div
-              className="absolute inset-0 bg-[#181210]/98 backdrop-blur-lg"
+              className="absolute inset-0 bg-[rgba(5,7,10,0.97)] backdrop-blur-lg"
               onClick={() => setIsOpen(false)}
             />
             <nav
@@ -201,8 +213,8 @@ export function Navbar() {
                       className={cn(
                         'block px-4 py-4 text-lg font-medium rounded-lg transition-colors',
                         isActive(link.href)
-                          ? 'bg-[#1E6B73]/20 text-[#4C9AA3]'
-                          : 'text-[#CDBDAF] hover:bg-[#1E6B73]/10 hover:text-[#4C9AA3]'
+                          ? 'bg-[#53D6FF]/20 text-[#53D6FF]'
+                          : 'text-[#B8C4CF] hover:bg-[#53D6FF]/10 hover:text-[#53D6FF]'
                       )}
                       aria-current={isActive(link.href) ? 'page' : undefined}
                       onClick={() => setIsOpen(false)}
@@ -214,7 +226,7 @@ export function Navbar() {
               </div>
 
               {/* Mobile CTA Section */}
-              <div className="mt-8 pt-8 border-t border-[#3A2A24]">
+              <div className="mt-8 pt-8 border-t border-[#1A232C]">
                 <div className="flex flex-col gap-3">
                   <Button
                     asChild
@@ -251,17 +263,17 @@ export function Navbar() {
                 </div>
 
                 {/* Emergency Info */}
-                <div className="mt-6 p-4 bg-[#3A2A24] rounded-lg border border-[#8B5E3C]/30">
-                  <p className="text-sm text-[#CDBDAF] font-medium mb-2">
+                <div className="mt-6 p-4 bg-[#1A232C] rounded-lg border border-[#27313B]/30">
+                  <p className="text-sm text-[#B8C4CF] font-medium mb-2">
                     National Human Trafficking Hotline
                   </p>
                   <a
                     href="tel:1-888-373-7888"
-                    className="text-lg font-bold text-[#C8A46B] hover:text-[#8B5E3C]"
+                    className="text-lg font-bold text-[#8DEBFF] hover:text-[#A9B8C6]"
                   >
                     1-888-373-7888
                   </a>
-                  <p className="text-xs text-[#B8A89A] mt-1">
+                  <p className="text-xs text-[#A9B8C6] mt-1">
                     Text &quot;BEFREE&quot; to 233733
                   </p>
                 </div>

@@ -98,7 +98,7 @@ export default function ResourcesPage() {
                               </div>
                               <div className="flex-1 min-w-0">
                                 <h4 className="font-semibold text-cream-100 mb-1 group-hover:text-ember transition-colors">{item.title}</h4>
-                                <p className="text-sm text-cream-300/70 mb-3">{item.desc}</p>
+                                <p className="text-sm text-silver-label mb-3">{item.desc}</p>
                                 <div className="flex items-center gap-2 text-xs text-ember">
                                   <Download className="h-3 w-3" />
                                   <span>{item.type}</span>
@@ -117,8 +117,8 @@ export default function ResourcesPage() {
                             </div>
                             <div className="flex-1 min-w-0">
                               <h4 className="font-semibold text-cream-100 mb-1">{item.title}</h4>
-                              <p className="text-sm text-cream-300/70 mb-3">{item.desc}</p>
-                              <div className="flex items-center gap-2 text-xs text-cream-300/40">
+                              <p className="text-sm text-silver-label mb-3">{item.desc}</p>
+                              <div className="flex items-center gap-2 text-xs text-silver-label">
                                 <Download className="h-3 w-3" />
                                 <span>Coming Soon</span>
                               </div>
@@ -158,7 +158,7 @@ export default function ResourcesPage() {
                   </div>
                   <div className="flex-1">
                     <h4 className="font-semibold text-cream-100 mb-1 group-hover:text-healing transition-colors">{resource.name}</h4>
-                    <p className="text-sm text-cream-300/70">{resource.desc}</p>
+                    <p className="text-sm text-silver-label">{resource.desc}</p>
                   </div>
                 </a>
               ))}

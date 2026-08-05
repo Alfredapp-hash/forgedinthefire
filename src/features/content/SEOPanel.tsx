@@ -111,9 +111,9 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
   }
 
   const getScoreColor = (score: number) => {
-    if (score >= 80) return 'text-emerald-600 bg-emerald-50 border-emerald-200'
-    if (score >= 60) return 'text-amber-600 bg-amber-50 border-amber-200'
-    return 'text-red-600 bg-red-50 border-red-200'
+    if (score >= 80) return 'text-[#8DEBFF] bg-[#8DEBFF]/15 border-[#8DEBFF]/30'
+    if (score >= 60) return 'text-[#8DEBFF] bg-[#53D6FF]/10 border-[#53D6FF]/30'
+    return 'text-[#8DEBFF] bg-[#8DEBFF]/15 border-[#8DEBFF]/35'
   }
 
   const getScoreLabel = (score: number) => {
@@ -132,14 +132,14 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
         <div className="flex items-center gap-3">
           <div className="relative w-14 h-14 flex-shrink-0">
             <svg viewBox="0 0 36 36" className="w-14 h-14 -rotate-90">
-              <circle cx="18" cy="18" r="15.9" fill="none" stroke="#e5e7eb" strokeWidth="3" />
+              <circle cx="18" cy="18" r="15.9" fill="none" stroke="#27313B" strokeWidth="3" />
               <circle 
                 cx="18" 
                 cy="18" 
                 r="15.9" 
                 fill="none" 
                 strokeWidth="3"
-                stroke={health.score >= 80 ? '#10b981' : health.score >= 60 ? '#f59e0b' : '#ef4444'}
+                stroke={health.score >= 80 ? '#53D6FF' : health.score >= 60 ? '#8DEBFF' : '#8DEBFF'}
                 strokeDasharray={`${health.score} ${100 - health.score}`}
                 strokeLinecap="round"
               />
@@ -158,8 +158,8 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
       </div>
 
       {/* Checks List */}
-      <div className="bg-[#f4f6f9] rounded-xl p-4 border border-[#3A2A24]/10">
-        <p className="text-xs font-semibold text-[#8B5E3C] uppercase tracking-wider mb-3">
+      <div className="bg-[#05070A] rounded-xl p-4 border border-[#27313B]">
+        <p className="text-xs font-semibold text-[#A9B8C6] uppercase tracking-wider mb-3">
           SEO Checklist
         </p>
         <div className="space-y-1.5">
@@ -167,18 +167,18 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
             <div key={check.id} className="flex items-center gap-2 text-sm">
               <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
                 check.ok 
-                  ? 'bg-emerald-100 text-emerald-700' 
+                  ? 'bg-[#8DEBFF]/15 text-[#8DEBFF]' 
                   : check.warn 
-                    ? 'bg-amber-100 text-amber-700'
-                    : 'bg-red-100 text-red-700'
+                    ? 'bg-[#53D6FF]/10 text-[#8DEBFF]'
+                    : 'bg-[#8DEBFF]/15 text-[#8DEBFF]'
               }`}>
                 {check.ok ? '✓' : check.warn ? '!' : '✗'}
               </span>
-              <span className={check.ok ? 'text-[#1E1714]' : 'text-[#8B5E3C]'}>
+              <span className={check.ok ? 'text-[#F6FAFC]' : 'text-[#A9B8C6]'}>
                 {check.label}
               </span>
               {check.value !== undefined && (
-                <span className="text-xs text-[#8B5E3C] ml-auto">
+                <span className="text-xs text-[#A9B8C6] ml-auto">
                   {check.value}
                 </span>
               )}
@@ -191,10 +191,10 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
       <div className="space-y-4">
         {/* SEO Title */}
         <div>
-          <label className="block text-sm font-medium text-[#1E1714] mb-1.5">
+          <label className="block text-sm font-medium text-[#F6FAFC] mb-1.5">
             SEO Title
             <span className={`text-xs ml-2 ${
-              titleLen > 65 ? 'text-red-500' : titleLen >= 30 ? 'text-emerald-600' : 'text-[#8B5E3C]'
+              titleLen > 65 ? 'text-[#8DEBFF]' : titleLen >= 30 ? 'text-[#8DEBFF]' : 'text-[#A9B8C6]'
             }`}>
               {titleLen} / 65
             </span>
@@ -204,22 +204,22 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
             value={seo.title || ''}
             onChange={(e) => handleChange({ title: e.target.value })}
             placeholder={`${item.title} | Forged in the Fire`}
-            className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E6B73]/30 ${
-              titleLen > 65 ? 'border-red-300' : 'border-[#3A2A24]/20'
+            className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30 ${
+              titleLen > 65 ? 'border-[#8DEBFF]/35' : 'border-[#27313B]'
             }`}
             maxLength={80}
           />
-          <p className="text-xs text-[#8B5E3C] mt-1">
+          <p className="text-xs text-[#A9B8C6] mt-1">
             Appears in search results and browser tabs. 30-65 characters recommended.
           </p>
         </div>
 
         {/* Meta Description */}
         <div>
-          <label className="block text-sm font-medium text-[#1E1714] mb-1.5">
+          <label className="block text-sm font-medium text-[#F6FAFC] mb-1.5">
             Meta Description
             <span className={`text-xs ml-2 ${
-              descLen > 160 ? 'text-red-500' : descLen >= 120 ? 'text-emerald-600' : 'text-[#8B5E3C]'
+              descLen > 160 ? 'text-[#8DEBFF]' : descLen >= 120 ? 'text-[#8DEBFF]' : 'text-[#A9B8C6]'
             }`}>
               {descLen} / 160
             </span>
@@ -229,19 +229,19 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
             onChange={(e) => handleChange({ description: e.target.value })}
             placeholder="Brief description of this content for search results..."
             rows={3}
-            className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E6B73]/30 resize-none ${
-              descLen > 160 ? 'border-red-300' : 'border-[#3A2A24]/20'
+            className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30 resize-none ${
+              descLen > 160 ? 'border-[#8DEBFF]/35' : 'border-[#27313B]'
             }`}
             maxLength={200}
           />
-          <p className="text-xs text-[#8B5E3C] mt-1">
+          <p className="text-xs text-[#A9B8C6] mt-1">
             Appears in search results. 120-160 characters recommended.
           </p>
         </div>
 
         {/* Keywords */}
         <div>
-          <label className="block text-sm font-medium text-[#1E1714] mb-1.5">
+          <label className="block text-sm font-medium text-[#F6FAFC] mb-1.5">
             Focus Keywords
           </label>
           <input
@@ -251,16 +251,16 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
               keywords: e.target.value.split(',').map(k => k.trim()).filter(Boolean)
             })}
             placeholder="human trafficking advocacy, Lorain County Ohio, survivor support"
-            className="w-full border border-[#3A2A24]/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E6B73]/30"
+            className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30"
           />
-          <p className="text-xs text-[#8B5E3C] mt-1">
+          <p className="text-xs text-[#A9B8C6] mt-1">
             Separate keywords with commas. These help with SEO focus.
           </p>
         </div>
 
         {/* Open Graph Title */}
         <div>
-          <label className="block text-sm font-medium text-[#1E1714] mb-1.5">
+          <label className="block text-sm font-medium text-[#F6FAFC] mb-1.5">
             Social Share Title (Open Graph)
           </label>
           <input
@@ -268,16 +268,16 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
             value={seo.ogTitle || ''}
             onChange={(e) => handleChange({ ogTitle: e.target.value })}
             placeholder={seo.title || item.title}
-            className="w-full border border-[#3A2A24]/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E6B73]/30"
+            className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30"
           />
-          <p className="text-xs text-[#8B5E3C] mt-1">
+          <p className="text-xs text-[#A9B8C6] mt-1">
             Title shown when shared on Facebook, LinkedIn, etc.
           </p>
         </div>
 
         {/* Open Graph Description */}
         <div>
-          <label className="block text-sm font-medium text-[#1E1714] mb-1.5">
+          <label className="block text-sm font-medium text-[#F6FAFC] mb-1.5">
             Social Share Description
           </label>
           <textarea
@@ -285,13 +285,13 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
             onChange={(e) => handleChange({ ogDescription: e.target.value })}
             placeholder={seo.description || item.excerpt}
             rows={2}
-            className="w-full border border-[#3A2A24]/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E6B73]/30 resize-none"
+            className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30 resize-none"
           />
         </div>
 
         {/* Canonical URL */}
         <div>
-          <label className="block text-sm font-medium text-[#1E1714] mb-1.5">
+          <label className="block text-sm font-medium text-[#F6FAFC] mb-1.5">
             Canonical URL
           </label>
           <input
@@ -299,22 +299,22 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
             value={seo.canonicalUrl || ''}
             onChange={(e) => handleChange({ canonicalUrl: e.target.value })}
             placeholder={`https://www.forgedinthefireohio.org/blog/${item.slug}`}
-            className="w-full border border-[#3A2A24]/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E6B73]/30"
+            className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30"
           />
         </div>
 
         {/* No Index */}
-        <div className="flex items-start gap-3 pt-4 border-t border-[#3A2A24]/10">
+        <div className="flex items-start gap-3 pt-4 border-t border-[#27313B]">
           <input
             type="checkbox"
             id="noIndex"
             checked={seo.noIndex || false}
             onChange={(e) => handleChange({ noIndex: e.target.checked })}
-            className="mt-0.5 rounded border-[#3A2A24]/20"
+            className="mt-0.5 rounded border-[#27313B]"
           />
-          <label htmlFor="noIndex" className="text-sm text-[#1E1714]">
+          <label htmlFor="noIndex" className="text-sm text-[#F6FAFC]">
             <span className="font-medium">Hide from search engines</span>
-            <span className="text-[#8B5E3C] block text-xs mt-0.5">
+            <span className="text-[#A9B8C6] block text-xs mt-0.5">
               Enable noindex to prevent this content from appearing in search results.
             </span>
           </label>

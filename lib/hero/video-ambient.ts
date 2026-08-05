@@ -10,17 +10,17 @@ export interface VideoAmbientPalette {
   base: Rgb;
 }
 
-export const HERO_PAGE_BG = '#241B18';
-export const HERO_PAGE_BG_RGB: Rgb = [36, 27, 24];
+export const HERO_PAGE_BG = '#000000';
+export const HERO_PAGE_BG_RGB: Rgb = [0, 0, 0];
 
 export const DEFAULT_PALETTE: VideoAmbientPalette = {
-  top: [6, 10, 11],
-  bottom: [32, 28, 26],
+  top: [0, 0, 0],
+  bottom: [0, 0, 0],
   left: [0, 0, 0],
   right: [0, 0, 0],
-  teal: [14, 25, 29],
-  warm: [45, 22, 24],
-  base: [18, 16, 15],
+  teal: [8, 18, 22],
+  warm: [28, 12, 14],
+  base: [0, 0, 0],
 };
 
 export function blendToPageBg(color: Rgb, amount: number): Rgb {

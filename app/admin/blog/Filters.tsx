@@ -27,10 +27,10 @@ export function Filters({ status, category, template }: FiltersProps) {
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-3 bg-white rounded-xl p-4 border border-[#3A2A24]/20">
+    <div className="flex flex-wrap items-center gap-3 bg-[#151B22] rounded-xl p-4 border border-[#27313B]">
       {/* Status Filter */}
       <div className="flex items-center gap-2">
-        <span className="text-sm font-medium text-[#8B5E3C]">Status:</span>
+        <span className="text-sm font-medium text-[#A9B8C6]">Status:</span>
         <div className="flex gap-1">
           {['all', ...statuses].map((s) => {
             const isActive = status === s || (!status && s === 'all')
@@ -46,8 +46,8 @@ export function Filters({ status, category, template }: FiltersProps) {
                 href={href}
                 className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
                   isActive
-                    ? 'bg-[#1E6B73] text-white'
-                    : 'text-[#8B5E3C] hover:bg-[#3A2A24]/10'
+                    ? 'bg-[#53D6FF] text-[#061016]'
+                    : 'text-[#A9B8C6] hover:bg-[#1A232C]/10'
                 }`}
               >
                 {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
@@ -57,13 +57,13 @@ export function Filters({ status, category, template }: FiltersProps) {
         </div>
       </div>
 
-      <div className="w-px h-6 bg-[#3A2A24]/20" />
+      <div className="w-px h-6 bg-[#1A232C]/20" />
 
       {/* Template Filter */}
       <div className="flex items-center gap-2">
-        <span className="text-sm font-medium text-[#8B5E3C]">Type:</span>
+        <span className="text-sm font-medium text-[#A9B8C6]">Type:</span>
         <select
-          className="text-sm border border-[#3A2A24]/20 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:border-[#1E6B73]"
+          className="text-sm border border-[#27313B] rounded-lg px-3 py-1.5 bg-[#151B22] focus:outline-none focus:border-[#53D6FF]"
           value={template || 'all'}
           onChange={handleTemplateChange}
         >
@@ -76,13 +76,13 @@ export function Filters({ status, category, template }: FiltersProps) {
         </select>
       </div>
 
-      <div className="w-px h-6 bg-[#3A2A24]/20" />
+      <div className="w-px h-6 bg-[#1A232C]/20" />
 
       {/* Category Filter */}
       <div className="flex items-center gap-2">
-        <span className="text-sm font-medium text-[#8B5E3C]">Category:</span>
+        <span className="text-sm font-medium text-[#A9B8C6]">Category:</span>
         <select
-          className="text-sm border border-[#3A2A24]/20 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:border-[#1E6B73]"
+          className="text-sm border border-[#27313B] rounded-lg px-3 py-1.5 bg-[#151B22] focus:outline-none focus:border-[#53D6FF]"
           value={category || 'all'}
           onChange={handleCategoryChange}
         >

@@ -5,6 +5,8 @@ import { Navbar } from '@/components/navbar';
 import { Footer } from '@/components/footer';
 import { QuickExit } from '@/components/quick-exit';
 import { OrganizationStructuredData, WebsiteStructuredData } from '@/components/structured-data';
+import AnalyticsGate from '@/components/analytics-gate';
+import { getSiteSettings } from '@/lib/site-settings';
 import { META_DEFAULTS, ORG, GEO } from '@/lib/constants';
 
 const inter = Inter({
@@ -64,11 +66,14 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const settings = await getSiteSettings()
+  const gaId = settings.google_analytics_id || process.env.NEXT_PUBLIC_GA_ID || ''
+
   return (
     <html
       lang="en"
@@ -79,7 +84,8 @@ export default function RootLayout({
         <OrganizationStructuredData />
         <WebsiteStructuredData />
       </head>
-      <body className="min-h-screen bg-charcoal text-cream-100 antialiased" suppressHydrationWarning>
+      {/* Background is owned by globals.css so the page radial gradient shows. */}
+      <body className="min-h-screen text-cream-100 antialiased" suppressHydrationWarning>
         <div className="relative flex min-h-screen flex-col">
           <Navbar />
           <main className="flex-1" id="main-content">
@@ -87,6 +93,7 @@ export default function RootLayout({
           </main>
           <Footer />
           <QuickExit />
+          <AnalyticsGate measurementId={gaId || undefined} />
         </div>
       </body>
     </html>

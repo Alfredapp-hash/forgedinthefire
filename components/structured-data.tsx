@@ -19,7 +19,7 @@ export function OrganizationStructuredData() {
     name: ORG.name,
     description: ORG.description,
     url: 'https://forgedinthefireohio.org',
-    logo: 'https://forgedinthefireohio.org/forged-logo.png',
+    logo: 'https://forgedinthefireohio.org/brand/fitf-lockup.png',
     email: ORG.email,
     telephone: ORG.phone,
     address: {

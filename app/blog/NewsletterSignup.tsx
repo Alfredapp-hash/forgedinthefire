@@ -111,12 +111,12 @@ export default function NewsletterSignup() {
           {/* Right side - Form */}
           <div className="lg:w-7/12">
             {status === 'success' ? (
-              <div className="flex items-start gap-4 p-6 bg-emerald-500/10 rounded-2xl border border-emerald-500/20">
-                <div className="w-12 h-12 rounded-full bg-emerald-500/20 flex items-center justify-center shrink-0">
-                  <CheckCircle className="w-6 h-6 text-emerald-400" />
+              <div className="flex items-start gap-4 p-6 bg-[#8DEBFF]/10 rounded-2xl border border-[#8DEBFF]/30">
+                <div className="w-12 h-12 rounded-full bg-[#8DEBFF]/10 flex items-center justify-center shrink-0">
+                  <CheckCircle className="w-6 h-6 text-[#8DEBFF]" />
                 </div>
                 <div>
-                  <p className="text-emerald-400 font-medium text-lg mb-1">You are Subscribed!</p>
+                  <p className="text-[#8DEBFF] font-medium text-lg mb-1">You are Subscribed!</p>
                   <p className="text-cream-100/70">{message}</p>
                   <button
                     onClick={() => setStatus('idle')}
@@ -134,7 +134,7 @@ export default function NewsletterSignup() {
                       htmlFor="newsletter-name" 
                       className="block text-cream-100/60 text-sm mb-2 font-medium"
                     >
-                      Name <span className="text-cream-100/30">(optional)</span>
+                      Name <span className="text-silver-label">(optional)</span>
                     </label>
                     <Input
                       id="newsletter-name"
@@ -142,7 +142,7 @@ export default function NewsletterSignup() {
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="Your name"
-                      className="bg-charcoal-900/50 border-charcoal-500 text-cream-100 placeholder:text-cream-100/25 focus:border-teal focus:ring-1 focus:ring-teal/50 h-12"
+                      className="bg-charcoal-900/50 border-charcoal-500 text-cream-100 placeholder:text-silver-label focus:border-teal focus:ring-1 focus:ring-teal/50 h-12"
                       disabled={status === 'loading'}
                     />
                   </div>
@@ -160,7 +160,7 @@ export default function NewsletterSignup() {
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder="you@example.com"
                       required
-                      className="bg-charcoal-900/50 border-charcoal-500 text-cream-100 placeholder:text-cream-100/25 focus:border-teal focus:ring-1 focus:ring-teal/50 h-12"
+                      className="bg-charcoal-900/50 border-charcoal-500 text-cream-100 placeholder:text-silver-label focus:border-teal focus:ring-1 focus:ring-teal/50 h-12"
                       disabled={status === 'loading'}
                       aria-describedby="newsletter-error"
                     />
@@ -168,9 +168,9 @@ export default function NewsletterSignup() {
                 </div>
 
                 {status === 'error' && (
-                  <div className="flex items-start gap-3 p-4 bg-red-500/10 rounded-xl border border-red-500/20">
-                    <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-                    <p id="newsletter-error" className="text-sm text-red-400">
+                  <div className="flex items-start gap-3 p-4 bg-[#8DEBFF]/10 rounded-xl border border-[#8DEBFF]/35">
+                    <AlertCircle className="w-5 h-5 text-[#8DEBFF] shrink-0 mt-0.5" />
+                    <p id="newsletter-error" className="text-sm text-[#8DEBFF]">
                       {message}
                     </p>
                   </div>

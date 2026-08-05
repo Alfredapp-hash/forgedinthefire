@@ -1,173 +1,187 @@
 import type { Config } from 'tailwindcss';
 
+/**
+ * "Forged Light" design system.
+ *
+ * Near-monochromatic: dark forged steel + glowing blue. The single warm colour
+ * anywhere on the site is the heart (#FF5B73) — nothing else may compete with it.
+ *
+ * Legacy brand families (forge / ember / flame / teal / healing / bronze / warm /
+ * cream / steel / charcoal / deep) are retained as *aliases* so existing markup keeps
+ * compiling, but every ramp now resolves into the steel-and-blue palette. A future
+ * palette change is a single edit here plus the token block in app/globals.css.
+ */
+
+// Raw brand values — the source of truth.
+const OBSIDIAN = '#05070A'; // page background
+const GUNMETAL = '#11161C'; // raised surface
+const STEEL = '#1A232C'; // card / panel
+const CARD = '#151B22'; // card per spec
+const DIVIDER = '#27313B'; // hairline
+const FORGED_BLUE = '#53D6FF'; // primary accent
+const FORGED_BLUE_HOVER = '#82E8FF';
+const ICE_BLUE = '#8DEBFF'; // bright accent / icons
+const ON_ACCENT = '#061016'; // text on a bright blue fill
+const WHITE = '#F6FAFC';
+const BODY = '#B8C4CF';
+const SILVER = '#A9B8C6';
+const LABEL = '#7C8B97';
+const HEART = '#FF5B73'; // sacred — heart only
+const HEART_TINT = '#FF5B73'; // kept as alias; functional states use ice blue
+
+/**
+ * The heart's own interior, sampled from the hero footage by
+ * scripts/sample-hero-palette.mjs rather than picked by eye. The heart is darkest at
+ * its centre and brightens toward its rim, so these run from the deep interior out.
+ * Quick Exit is drawn from this family, which is the single deliberate exception to
+ * "warm colour belongs to the heart alone" — it ties the escape affordance to the
+ * heart's meaning. Mirrored by the --heart-interior-* tokens in app/globals.css.
+ */
+const heartInterior = {
+  deep: '#6F0D12', // darkest quartile of the inner half
+  DEFAULT: '#950D12', // mean of the innermost 17% of the radius
+  lit: '#A91115', // median interior band
+  glow: '#DC262F', // mid-bright band
+  rim: '#E74D5B', // bright rim band
+};
+
+/**
+ * The colour of steel at working heat, from Planck's law via
+ * scripts/compute-heat-ramp.mjs. The footage has no incandescent source to sample —
+ * its flame is cyan and its only warm pixels are the heart's crimson — so the ramp is
+ * derived from blackbody radiation instead. Keyed by temperature in Kelvin, hottest
+ * first. Mirrored by the --heat-* tokens in app/globals.css.
+ */
+const heatRamp = {
+  core: '#FDF9F5', // white at working heat; relLum 0.952, same as WHITE
+  5600: '#FFEFE4', // near white, faintly warm
+  3300: '#FFC280', // pale amber
+  2700: '#FFAE59', // amber
+  2200: '#FF982F', // orange
+  1800: '#FF8100', // deep orange
+  1500: '#FF6A00', // forge red
+};
+
+/** Cool steel ramp, light -> dark. Shared by steel / charcoal / deep / bronze aliases. */
+const steelRamp = {
+  50: WHITE,
+  100: '#E4EBF1',
+  200: SILVER,
+  300: '#8C9CAA',
+  400: LABEL,
+  500: '#5C6B77',
+  600: '#39454F',
+  700: DIVIDER,
+  800: STEEL,
+  900: GUNMETAL,
+  950: OBSIDIAN,
+};
+
+/** Forged blue ramp, light -> dark. */
+const blueRamp = {
+  50: '#EAFAFF',
+  100: '#C9F3FF',
+  200: '#A6EBFF',
+  300: ICE_BLUE,
+  400: '#6FDFFF',
+  500: FORGED_BLUE,
+  600: '#33BEEB',
+  700: '#219EC6',
+  800: '#17789A',
+  900: '#10556E',
+  950: '#0A3446',
+};
+
 const config: Config = {
   darkMode: ['class'],
   content: [
     './pages/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
     './app/**/*.{js,ts,jsx,tsx,mdx}',
+    './src/**/*.{js,ts,jsx,tsx,mdx}',
     './content/**/*.{md,mdx}',
   ],
   theme: {
     extend: {
       colors: {
         // ============================================
-        // NEW BRAND SYSTEM - "Forged from hardship into hope"
+        // FORGED LIGHT — canonical names
         // ============================================
-        
-        // PRIMARY: Forge Teal Family
-        forge: {
-          DEFAULT: '#1E6B73',
-          50: '#F0F7F7',
-          100: '#D4E8E9',
-          200: '#B8D9DB',
-          300: '#8FC0C3',
-          400: '#5FA0A5',
-          500: '#3D858B',
-          600: '#1E6B73',  // Primary brand color
-          700: '#18565C',
-          800: '#0F4F57',  // Deep Flame Teal
-          900: '#0A3A40',
-          950: '#052629',
+        obsidian: OBSIDIAN,
+        gunmetal: GUNMETAL,
+        surface: {
+          DEFAULT: GUNMETAL,
+          raised: STEEL,
+          card: CARD,
+          sunken: '#0A0E13',
         },
-        
-        // WARM ACCENTS: Burnished Bronze & Walnut
-        bronze: {
-          DEFAULT: '#8B5E3C',
-          50: '#F9F6F3',
-          100: '#EDE4DB',
-          200: '#DECCB8',
-          300: '#CBAE8E',
-          400: '#B88A6E',
-          500: '#8B5E3C',  // Burnished Bronze
-          600: '#6E4B3A',  // Ember Brown
-          700: '#5B3A29',  // Warm Walnut
-          800: '#4A2F22',
-          900: '#382319',
-        },
-        
-        // NEUTRALS: Warm & Inviting
-        warm: {
-          ivory: '#FAF7F2',      // Warm Ivory
-          cream: '#F6F2EC',      // Soft Cream
-          sand: '#D8CBBE',       // Muted Sand
-          stone: '#A89B8C',      // Warm Stone
-          earth: '#6B5D4D',      // Earth Brown
-        },
-        
-        // SPECIAL HIGHLIGHTS
-        highlight: {
-          gold: '#C8A46B',       // Soft Gold Highlight
-          rose: '#B88A7A',       // Gentle Rose Clay
-          amber: '#D4A574',      // Warm Amber
-        },
-        
+        forged: { DEFAULT: FORGED_BLUE, hover: FORGED_BLUE_HOVER, on: ON_ACCENT, ...blueRamp },
+        ice: { DEFAULT: ICE_BLUE, ...blueRamp },
+        silver: { DEFAULT: SILVER, body: BODY, label: LABEL },
+        divider: DIVIDER,
+
+        /**
+         * The heart. Warm colour belongs to it, with one deliberate exception:
+         * `heart-interior-*` clothes Quick Exit, so the escape affordance carries the
+         * heart's own deep red rather than a generic alarm red.
+         */
+        heart: { DEFAULT: HEART, tint: HEART_TINT, interior: heartInterior },
+
+        /** Steel at working heat. Used for the hero's incandescent copy. */
+        heat: heatRamp,
+
         // ============================================
-        // CINEMATIC DARK PALETTE - Section Flow System
+        // LEGACY ALIASES — remapped onto Forged Light
         // ============================================
-        
-        // Deep darkness - Main site background
-        deep: {
-          DEFAULT: '#1E1714',
-          50: '#3A2A24',   // Elevated surfaces
-          100: '#2A1F1A',  // Alternate section
-          200: '#241B18',  // Secondary section
-          300: '#1E1714',  // Main background
-          400: '#181210',  // Footer/Nav
-        },
-        
-        // Warm text colors for dark backgrounds
-        text: {
-          primary: '#F6F0E8',   // Main text
-          secondary: '#CDBDAF', // Secondary text
-          muted: '#B8A89A',     // Muted text
-        },
-        
-        // UTILITY: Charcoal for text
-        charcoal: {
-          DEFAULT: '#1F1F1F',
-          50: '#F5F5F5',
-          100: '#E5E5E5',
-          200: '#D4D4D4',
-          300: '#A3A3A3',
-          400: '#737373',
-          500: '#525252',
-          600: '#404040',
-          700: '#2D2D2D',
-          800: '#1F1F1F',  // Main text
-          900: '#141414',
-        },
-        
-        // LEGACY COMPATIBILITY (mapped to new system)
-        ember: {
-          DEFAULT: '#1E6B73',
-          50: '#F0F7F7',
-          100: '#D4E8E9',
-          200: '#B8D9DB',
-          300: '#8FC0C3',
-          400: '#5FA0A5',
-          500: '#3D858B',
-          600: '#1E6B73',
-          700: '#18565C',
-          800: '#0F4F57',
-          900: '#0A3A40',
-        },
+        forge: { DEFAULT: FORGED_BLUE, ...blueRamp },
+        ember: { DEFAULT: FORGED_BLUE, ...blueRamp },
+        teal: { DEFAULT: FORGED_BLUE, deep: '#10556E', ...blueRamp },
         flame: {
-          DEFAULT: '#3D858B',
-          light: '#5FA0A5',
-          dark: '#18565C',
-          soft: '#B8D9DB',
+          DEFAULT: FORGED_BLUE,
+          light: ICE_BLUE,
+          dark: '#33BEEB',
+          soft: '#A6EBFF',
         },
-        healing: {
-          DEFAULT: '#8B5E3C',
-          50: '#F9F6F3',
-          100: '#EDE4DB',
-          200: '#DECCB8',
-          300: '#CBAE8E',
-          400: '#B88A6E',
-          500: '#8B5E3C',
-          600: '#6E4B3A',
-          700: '#5B3A29',
-          800: '#4A2F22',
-          900: '#382319',
+        healing: { DEFAULT: ICE_BLUE, ...blueRamp },
+        bronze: { DEFAULT: SILVER, ...steelRamp },
+        steel: { DEFAULT: DIVIDER, ...steelRamp },
+        charcoal: { DEFAULT: GUNMETAL, ...steelRamp },
+        deep: {
+          DEFAULT: OBSIDIAN,
+          50: STEEL,
+          100: CARD,
+          200: GUNMETAL,
+          300: OBSIDIAN,
+          400: '#080B0F',
+        },
+        warm: {
+          ivory: WHITE,
+          cream: '#E4EBF1',
+          sand: SILVER,
+          stone: LABEL,
+          earth: DIVIDER,
+        },
+        highlight: {
+          gold: ICE_BLUE,
+          amber: '#6FDFFF',
+          rose: HEART,
         },
         cream: {
-          DEFAULT: '#FAF7F2',
+          DEFAULT: WHITE,
           50: '#FFFFFF',
-          100: '#FAF7F2',
-          200: '#F6F2EC',
-          300: '#EDE4DB',
-          warm: '#FDF8F6',
+          100: WHITE,
+          200: '#E4EBF1',
+          300: BODY,
+          warm: WHITE,
         },
-        steel: {
-          DEFAULT: '#6B5D4D',
-          50: '#F9F6F3',
-          100: '#EDE4DB',
-          200: '#D8CBBE',
-          300: '#C4B5A5',
-          400: '#A89B8C',
-          500: '#8B7D6D',
-          600: '#6B5D4D',
-          700: '#52463B',
-          800: '#3D352C',
-          900: '#28241E',
+        text: {
+          primary: WHITE,
+          secondary: BODY,
+          muted: SILVER,
+          label: LABEL,
         },
-        teal: {
-          DEFAULT: '#1E6B73',
-          50: '#F0F7F7',
-          100: '#D4E8E9',
-          200: '#B8D9DB',
-          300: '#8FC0C3',
-          400: '#5FA0A5',
-          500: '#3D858B',
-          600: '#1E6B73',
-          700: '#18565C',
-          800: '#0F4F57',
-          900: '#0A3A40',
-          950: '#052629',
-          deep: '#0F4F57',
-        },
-        // ShadCN UI colors
+
+        // ShadCN UI tokens (driven by CSS custom properties in globals.css)
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
@@ -215,8 +229,11 @@ const config: Config = {
         'fade-in': 'fadeIn 0.5s ease-out',
         'fade-in-up': 'fadeInUp 0.6s ease-out',
         'fade-in-down': 'fadeInDown 0.6s ease-out',
-        'glow-pulse': 'glowPulse 3s ease-in-out infinite',
-        'ember-float': 'emberFloat 6s ease-in-out infinite',
+        // Ambient pulses echo the hero flame: slow 7s breathing, never a flash.
+        'glow-pulse': 'glowPulse 7s ease-in-out infinite',
+        'ambient-pulse': 'ambientPulse 7s ease-in-out infinite',
+        'ember-float': 'emberFloat 8s ease-in-out infinite',
+        'particle-drift': 'particleDrift 26s linear infinite',
         'slow-spin': 'spin 20s linear infinite',
       },
       keyframes: {
@@ -233,34 +250,57 @@ const config: Config = {
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
         glowPulse: {
-          '0%, 100%': { opacity: '0.4' },
-          '50%': { opacity: '0.8' },
+          '0%, 100%': { opacity: '0.45' },
+          '50%': { opacity: '0.85' },
+        },
+        ambientPulse: {
+          '0%, 100%': { opacity: '0.35', transform: 'scale(1)' },
+          '50%': { opacity: '0.7', transform: 'scale(1.04)' },
         },
         emberFloat: {
-          '0%, 100%': { transform: 'translateY(0) scale(1)', opacity: '0.6' },
-          '50%': { transform: 'translateY(-10px) scale(1.05)', opacity: '1' },
+          '0%, 100%': { transform: 'translateY(0) scale(1)', opacity: '0.55' },
+          '50%': { transform: 'translateY(-8px) scale(1.03)', opacity: '0.9' },
+        },
+        // ~7px/sec drift over a 180px travel.
+        particleDrift: {
+          '0%': { transform: 'translate3d(0,0,0)', opacity: '0' },
+          '12%': { opacity: '0.5' },
+          '88%': { opacity: '0.5' },
+          '100%': { transform: 'translate3d(14px,-180px,0)', opacity: '0' },
         },
       },
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
         'gradient-conic': 'conic-gradient(from 180deg at 50% 50%, var(--tw-gradient-stops))',
-        // Brand gradients
-        'forge-glow': 'linear-gradient(135deg, rgba(30, 107, 115, 0.08) 0%, rgba(61, 133, 139, 0.03) 50%, transparent 100%)',
-        'bronze-glow': 'linear-gradient(135deg, rgba(139, 94, 60, 0.08) 0%, rgba(184, 138, 110, 0.03) 50%, transparent 100%)',
-        'warm-ivory': 'linear-gradient(180deg, #FAF7F2 0%, #F6F2EC 100%)',
-        'forge-radial': 'radial-gradient(circle at 50% 50%, rgba(30, 107, 115, 0.06) 0%, transparent 70%)',
-        'ember-ambient': 'radial-gradient(ellipse at 30% 20%, rgba(139, 94, 60, 0.04) 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, rgba(30, 107, 115, 0.04) 0%, transparent 50%)',
+        // Brand gradients — cold light emerging from darkness.
+        'forge-glow':
+          'linear-gradient(135deg, rgba(83,214,255,0.10) 0%, rgba(83,214,255,0.03) 50%, transparent 100%)',
+        'bronze-glow':
+          'linear-gradient(135deg, rgba(141,235,255,0.08) 0%, rgba(141,235,255,0.02) 50%, transparent 100%)',
+        'warm-ivory': `linear-gradient(180deg, ${GUNMETAL} 0%, ${OBSIDIAN} 100%)`,
+        'forge-radial': 'radial-gradient(circle at 50% 50%, rgba(83,214,255,0.07) 0%, transparent 70%)',
+        'ember-ambient':
+          'radial-gradient(ellipse at 30% 20%, rgba(83,214,255,0.05) 0%, transparent 50%), radial-gradient(ellipse at 70% 80%, rgba(141,235,255,0.04) 0%, transparent 50%)',
+        'page-forge': `radial-gradient(circle at top, #102433, ${OBSIDIAN} 70%)`,
+        // Glowing horizon, not a line.
+        'divider-glow':
+          'linear-gradient(90deg, transparent, rgba(83,214,255,0.35), transparent)',
       },
       boxShadow: {
-        'forge': '0 0 40px rgba(30, 107, 115, 0.15)',
-        'forge-sm': '0 0 20px rgba(30, 107, 115, 0.1)',
-        'bronze': '0 0 40px rgba(139, 94, 60, 0.12)',
-        'warm': '0 4px 20px rgba(107, 93, 77, 0.06)',
-        'warm-lg': '0 8px 40px rgba(107, 93, 77, 0.08)',
-        'card': '0 2px 12px rgba(30, 107, 115, 0.06)',
-        'card-hover': '0 8px 30px rgba(30, 107, 115, 0.1)',
-        'soft': '0 4px 20px rgba(0, 0, 0, 0.04)',
-        'soft-lg': '0 8px 40px rgba(0, 0, 0, 0.06)',
+        // Everything glows; nothing darkens. Glow alpha never exceeds 0.15.
+        forge: '0 0 40px rgba(83,214,255,0.12)',
+        'forge-sm': '0 0 20px rgba(83,214,255,0.10)',
+        glow: '0 0 40px rgba(83,214,255,0.12)',
+        'glow-sm': '0 0 18px rgba(83,214,255,0.09)',
+        'glow-lg': '0 0 64px rgba(83,214,255,0.14)',
+        rim: '0 0 0 1px rgba(83,214,255,0.28), 0 0 32px rgba(83,214,255,0.12)',
+        bronze: '0 0 40px rgba(141,235,255,0.10)',
+        warm: '0 0 20px rgba(83,214,255,0.08)',
+        'warm-lg': '0 0 40px rgba(83,214,255,0.10)',
+        card: '0 0 18px rgba(83,214,255,0.07)',
+        'card-hover': '0 0 40px rgba(83,214,255,0.13)',
+        soft: '0 0 20px rgba(83,214,255,0.06)',
+        'soft-lg': '0 0 40px rgba(83,214,255,0.09)',
       },
       transitionDuration: {
         '400': '400ms',
@@ -269,8 +309,8 @@ const config: Config = {
         '1000': '1000ms',
       },
       transitionTimingFunction: {
-        'calm': 'cubic-bezier(0.4, 0, 0.2, 1)',
-        'gentle': 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+        calm: 'cubic-bezier(0.4, 0, 0.2, 1)',
+        gentle: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
       },
     },
   },

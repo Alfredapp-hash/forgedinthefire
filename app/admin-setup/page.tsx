@@ -178,36 +178,36 @@ SELECT email, role, created_at FROM admin_users ORDER BY email;`
 
   const getIcon = (status: CheckResult['status']) => {
     switch (status) {
-      case 'success': return <CheckCircle className="w-5 h-5 text-green-500" />
-      case 'error': return <XCircle className="w-5 h-5 text-red-500" />
+      case 'success': return <CheckCircle className="w-5 h-5 text-[#8DEBFF]" />
+      case 'error': return <XCircle className="w-5 h-5 text-[#8DEBFF]" />
       case 'info': return <User className="w-5 h-5 text-blue-500" />
-      default: return <AlertTriangle className="w-5 h-5 text-amber-500" />
+      default: return <AlertTriangle className="w-5 h-5 text-[#8DEBFF]" />
     }
   }
 
   return (
-    <div className="min-h-screen bg-[#1E1714] p-8">
+    <div className="min-h-screen p-8">
       <div className="max-w-3xl mx-auto">
         <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-2xl bg-[#C8A46B]/10 flex items-center justify-center mx-auto mb-4 border border-[#C8A46B]/30">
-            <Shield className="w-8 h-8 text-[#C8A46B]" />
+          <div className="w-16 h-16 rounded-2xl bg-[#53D6FF]/10 flex items-center justify-center mx-auto mb-4 border border-[#8DEBFF]/30">
+            <Shield className="w-8 h-8 text-[#8DEBFF]" />
           </div>
-          <h1 className="text-2xl font-bold text-[#F6F0E8] mb-2">Admin Setup Check</h1>
-          <p className="text-[#B8A89A]">Verify your admin authentication is configured correctly</p>
+          <h1 className="text-2xl font-bold text-[#F6FAFC] mb-2">Admin Setup Check</h1>
+          <p className="text-[#A9B8C6]">Verify your admin authentication is configured correctly</p>
         </div>
 
         <div className="space-y-4 mb-8">
           {checks.map((check, i) => (
-            <div key={i} className="bg-[#241B18] rounded-xl p-5 border border-[#3A2A24]">
+            <div key={i} className="bg-[#11161C] rounded-xl p-5 border border-[#27313B]">
               <div className="flex items-start gap-4">
                 {getIcon(check.status)}
                 <div className="flex-1">
-                  <h3 className="font-medium text-[#F6F0E8] mb-1">{check.name}</h3>
-                  <p className={`text-sm ${check.status === 'error' ? 'text-red-400' : check.status === 'success' ? 'text-green-400' : 'text-[#B8A89A]'}`}>
+                  <h3 className="font-medium text-[#F6FAFC] mb-1">{check.name}</h3>
+                  <p className={`text-sm ${check.status === 'error' ? 'text-[#8DEBFF]' : check.status === 'success' ? 'text-[#8DEBFF]' : 'text-[#A9B8C6]'}`}>
                     {check.message}
                   </p>
                   {check.details && (
-                    <p className="text-xs text-[#8B5E3C] mt-1">{check.details}</p>
+                    <p className="text-xs text-[#A9B8C6] mt-1">{check.details}</p>
                   )}
                 </div>
               </div>
@@ -216,17 +216,17 @@ SELECT email, role, created_at FROM admin_users ORDER BY email;`
         </div>
 
         {sqlScript && (
-          <div className="bg-[#241B18] rounded-xl border border-[#3A2A24] overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 bg-[#1E1714] border-b border-[#3A2A24]">
-              <Database className="w-4 h-4 text-[#C8A46B]" />
-              <span className="text-sm font-medium text-[#C8A46B]">Fix Script - Run in Supabase SQL Editor</span>
+          <div className="bg-[#11161C] rounded-xl border border-[#27313B] overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-3 bg-[#05070A] border-b border-[#27313B]">
+              <Database className="w-4 h-4 text-[#8DEBFF]" />
+              <span className="text-sm font-medium text-[#8DEBFF]">Fix Script - Run in Supabase SQL Editor</span>
             </div>
-            <pre className="p-4 text-xs text-[#CDBDAF] overflow-x-auto whitespace-pre-wrap font-mono">
+            <pre className="p-4 text-xs text-[#B8C4CF] overflow-x-auto whitespace-pre-wrap font-mono">
               {sqlScript}
             </pre>
             <button
               onClick={() => navigator.clipboard.writeText(sqlScript)}
-              className="w-full py-2 bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8] text-sm font-medium transition-colors"
+              className="w-full py-2 bg-[#53D6FF] hover:bg-[#82E8FF] text-[#061016] text-sm font-medium transition-colors"
             >
               Copy SQL to Clipboard
             </button>
@@ -234,36 +234,36 @@ SELECT email, role, created_at FROM admin_users ORDER BY email;`
         )}
 
         {debugInfo && (
-          <div className="mt-6 bg-[#241B18] rounded-xl border border-[#3A2A24] overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-3 bg-[#1E1714] border-b border-[#3A2A24]">
-              <Bug className="w-4 h-4 text-[#8B5E3C]" />
-              <span className="text-sm font-medium text-[#8B5E3C]">Debug Information</span>
+          <div className="mt-6 bg-[#11161C] rounded-xl border border-[#27313B] overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-3 bg-[#05070A] border-b border-[#27313B]">
+              <Bug className="w-4 h-4 text-[#A9B8C6]" />
+              <span className="text-sm font-medium text-[#A9B8C6]">Debug Information</span>
             </div>
-            <div className="p-4 text-xs text-[#B8A89A] font-mono space-y-2">
+            <div className="p-4 text-xs text-[#A9B8C6] font-mono space-y-2">
               <div>
-                <span className="text-[#8B5E3C]">Expected Owner:</span>{' '}
-                <span className="text-[#CDBDAF]">{debugInfo.expectedOwnerEmail}</span>
+                <span className="text-[#A9B8C6]">Expected Owner:</span>{' '}
+                <span className="text-[#B8C4CF]">{debugInfo.expectedOwnerEmail}</span>
               </div>
               <div>
-                <span className="text-[#8B5E3C]">Signed In User:</span>{' '}
-                <span className="text-[#CDBDAF]">{debugInfo.signedInEmail || '(not signed in)'}</span>
+                <span className="text-[#A9B8C6]">Signed In User:</span>{' '}
+                <span className="text-[#B8C4CF]">{debugInfo.signedInEmail || '(not signed in)'}</span>
               </div>
               <div>
-                <span className="text-[#8B5E3C]">Matched Role:</span>{' '}
-                <span className="text-[#CDBDAF]">{debugInfo.matchedRole || '(none)'}</span>
+                <span className="text-[#A9B8C6]">Matched Role:</span>{' '}
+                <span className="text-[#B8C4CF]">{debugInfo.matchedRole || '(none)'}</span>
               </div>
-              <div className="pt-2 border-t border-[#3A2A24]">
-                <span className="text-[#8B5E3C]">All Admin Users in DB:</span>
+              <div className="pt-2 border-t border-[#27313B]">
+                <span className="text-[#A9B8C6]">All Admin Users in DB:</span>
                 {debugInfo.allAdminUsers && debugInfo.allAdminUsers.length > 0 ? (
                   <ul className="mt-2 space-y-1 ml-4">
                     {debugInfo.allAdminUsers.map((u, i) => (
-                      <li key={i} className="text-[#CDBDAF]">
+                      <li key={i} className="text-[#B8C4CF]">
                         • {u.email} ({u.role})
                       </li>
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-[#CDBDAF] ml-4 mt-1">(none found)</p>
+                  <p className="text-[#B8C4CF] ml-4 mt-1">(none found)</p>
                 )}
               </div>
             </div>
@@ -271,11 +271,11 @@ SELECT email, role, created_at FROM admin_users ORDER BY email;`
         )}
 
         <div className="mt-8 text-center space-y-2">
-          <a href="/login" className="text-[#C8A46B] hover:text-[#4C9AA3] text-sm">
+          <a href="/login" className="text-[#8DEBFF] hover:text-[#53D6FF] text-sm">
             → Go to Login
           </a>
           <br />
-          <a href="/" className="text-[#8B5E3C] hover:text-[#C8A46B] text-sm">
+          <a href="/" className="text-[#A9B8C6] hover:text-[#8DEBFF] text-sm">
             ← Back to Website
           </a>
         </div>

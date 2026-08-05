@@ -179,11 +179,18 @@ export async function deleteContentItem(id: string): Promise<boolean> {
   }
 }
 
-export async function publishContentItem(id: string): Promise<ContentItem | null> {
-  return updateContentItem(id, { 
-    status: 'published', 
-    publishedAt: new Date().toISOString() 
-  })
+export async function publishContentItem(
+  id: string,
+  options?: { sendBlogNotification?: boolean }
+): Promise<ContentItem | null> {
+  const patch: Partial<ContentItem> = {
+    status: 'published',
+    publishedAt: new Date().toISOString(),
+  }
+  if (options?.sendBlogNotification !== undefined) {
+    patch.sendBlogNotification = options.sendBlogNotification
+  }
+  return updateContentItem(id, patch)
 }
 
 export async function unpublishContentItem(id: string): Promise<ContentItem | null> {

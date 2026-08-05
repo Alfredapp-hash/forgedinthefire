@@ -12,8 +12,9 @@ const badgeVariants = cva(
           "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
         secondary:
           "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        // Ink, not a fill — a filled warm badge would compete with the heart.
         destructive:
-          "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
+          "border-[rgba(141,235,255,0.45)] bg-[rgba(141,235,255,0.1)] text-ice hover:bg-[rgba(141,235,255,0.16)]",
         outline: "text-foreground",
       },
     },

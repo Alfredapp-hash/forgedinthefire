@@ -81,9 +81,9 @@ function getEmailFooter(email: string, token?: string): string {
         You are receiving this email because you subscribed to updates from ${ORG_NAME}.
       </p>
       <p style="margin: 0;">
-        <a href="${unsubscribeLink}" style="color: #1E6B73; text-decoration: none;">Unsubscribe</a>
+        <a href="${unsubscribeLink}" style="color: #0B6A88; text-decoration: none;">Unsubscribe</a>
         &nbsp;|&nbsp;
-        <a href="${preferencesLink}" style="color: #1E6B73; text-decoration: none;">Manage Preferences</a>
+        <a href="${preferencesLink}" style="color: #0B6A88; text-decoration: none;">Manage Preferences</a>
       </p>
       <p style="margin: 16px 0 0 0; font-size: 11px; color: #9ca3af;">
         ${ORG_NAME} | Lorain County, Ohio<br>
@@ -160,7 +160,7 @@ export function generateBlogNotificationEmail(
       </p>
       
       <div style="text-align: center; margin: 32px 0;">
-        <a href="${postUrl}" style="display: inline-block; background-color: #1E6B73; color: #ffffff; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 15px;">
+        <a href="${postUrl}" style="display: inline-block; background-color: #0B6A88; color: #ffffff; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 15px;">
           Read Full Post
         </a>
       </div>
@@ -203,10 +203,10 @@ export function generateNewsletterEmail(
           <a href="${postUrl}" style="color: #1E1714; text-decoration: none;">${post.title}</a>
         </h3>
         <p style="font-size: 14px; color: #4b5563; margin: 0 0 12px 0; line-height: 1.5;">
-          ${post.newsletterCategory ? `<span style="color: #1E6B73; font-weight: 500;">${post.newsletterCategory}</span> — ` : ''}
+          ${post.newsletterCategory ? `<span style="color: #0B6A88; font-weight: 500;">${post.newsletterCategory}</span> — ` : ''}
           ${post.excerpt}
         </p>
-        <a href="${postUrl}" style="color: #1E6B73; text-decoration: none; font-size: 14px; font-weight: 500;">
+        <a href="${postUrl}" style="color: #0B6A88; text-decoration: none; font-size: 14px; font-weight: 500;">
           Read more →
         </a>
       </div>
@@ -234,7 +234,7 @@ export function generateNewsletterEmail(
       ` : ''}
       
       <div style="text-align: center; margin: 32px 0;">
-        <a href="${BASE_URL}/blog" style="display: inline-block; background-color: #1E6B73; color: #ffffff; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 15px;">
+        <a href="${BASE_URL}/blog" style="display: inline-block; background-color: #0B6A88; color: #ffffff; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 15px;">
           View All Updates
         </a>
       </div>
@@ -283,7 +283,7 @@ export function generateWelcomeEmail(
       </ul>
       
       <div style="text-align: center; margin: 32px 0;">
-        <a href="${BASE_URL}" style="display: inline-block; background-color: #1E6B73; color: #ffffff; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 15px;">
+        <a href="${BASE_URL}" style="display: inline-block; background-color: #0B6A88; color: #ffffff; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 15px;">
           Visit Our Website
         </a>
       </div>

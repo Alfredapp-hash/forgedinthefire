@@ -2,28 +2,142 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   FORGED LIGHT — design tokens
+   Single source of truth for colour. Tailwind theme aliases in
+   tailwind.config.ts resolve to these same values.
+
+   Near-monochromatic: forged steel + glowing blue. The heart
+   (--heart) is the ONLY warm colour permitted anywhere.
+   ============================================================ */
 @layer base {
   :root {
-    /* Cinematic Dark Brand System */
-    --background: 15 18% 10%;           /* deep-300 #1E1714 */
-    --foreground: 35 30% 94%;           /* text-primary #F6F0E8 */
-    --card: 15 20% 13%;                /* deep-100 #2A1F1A */
-    --card-foreground: 35 30% 94%;
-    --popover: 15 18% 10%;
-    --popover-foreground: 35 30% 94%;
-    --primary: 184 57% 29%;             /* forge-600 #1E6B73 */
-    --primary-foreground: 35 30% 94%;
-    --secondary: 15 20% 14%;            /* deep-200 #241B18 */
-    --secondary-foreground: 35 30% 94%;
-    --muted: 15 18% 12%;
-    --muted-foreground: 30 20% 72%;     /* text-muted #B8A89A */
-    --accent: 25 40% 40%;               /* bronze-500 #8B5E3C */
-    --accent-foreground: 35 30% 94%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 35 30% 94%;
-    --border: 25 20% 25%;
-    --input: 25 20% 25%;
-    --ring: 184 57% 29%;                /* forge-600 */
+    /* -- raw brand ramp ------------------------------------- */
+    --obsidian: #05070a; /* page background       */
+    --gunmetal: #11161c; /* raised surface        */
+    --steel: #1a232c; /* panel                 */
+    --card-steel: #151b22; /* card                  */
+    --divider-steel: #27313b; /* hairline              */
+    --forged-blue: #53d6ff; /* primary accent        */
+    --forged-blue-hover: #82e8ff;
+    --ice-blue: #8debff; /* bright accent / icons */
+    --on-accent: #061016; /* ink on a blue fill    */
+    --white: #f6fafc;
+    --body-text: #b8c4cf;
+    --silver: #a9b8c6;
+    --label: #7c8b97;
+
+    /* The heart. Sacred. The only warm colour the site spends freely — with one
+       deliberate exception, Quick Exit, which borrows the heart's own deep
+       interior red so the escape affordance carries the heart's meaning. */
+    --heart: #ff5b73;
+    /* Deprecated alias — functional/error states use --ice-blue. */
+    --heart-tint: #ff5b73;
+
+    /* -- the heart's interior, sampled from the footage ------ */
+    /* scripts/sample-hero-palette.mjs, mid-loop frame of hero-flame-loop.mp4.
+       The heart is darkest at its centre and brightens toward its rim, so these
+       run from the deep interior outward. */
+    --heart-interior-deep: #6f0d12; /* darkest quartile of the inner half   */
+    --heart-interior: #950d12; /* mean of the innermost 17% of radius  */
+    --heart-interior-lit: #a91115; /* median interior band                 */
+    --heart-glow: #dc262f; /* mid-bright band                      */
+    --heart-rim: #e74d5b; /* bright rim band                      */
+
+    /* -- heat ramp: the colour of steel at working heat ------ */
+    /* Computed from Planck's law by scripts/compute-heat-ramp.mjs. The footage
+       holds no incandescent source to sample — its flame is cyan (the frame's
+       brightest pixels are blue-biased) and its only warm pixels are the heart's
+       crimson — so the ramp comes from blackbody radiation instead. Each stop is
+       the true colour of a blackbody at that temperature, which makes the glow's
+       falloff follow the sequence a cooling billet actually passes through. */
+    --heat-core: #fdf9f5; /* white at working heat; relLum 0.952  */
+    --heat-5600: #ffefe4; /* near white, faintly warm             */
+    --heat-3300: #ffc280; /* pale amber                           */
+    --heat-2700: #ffae59; /* amber                                */
+    --heat-2200: #ff982f; /* orange                               */
+    --heat-1800: #ff8100; /* deep orange                          */
+    --heat-1500: #ff6a00; /* forge red                            */
+
+    /* Hot metal is white at the centre because that is where it is hottest, so
+       the core stays near-white and only the falloff carries hue: a tight hot
+       edge, then successively wider and cooler layers. The 1px 5600K edge is
+       what keeps the letterform crisp inside its own bloom, which is the
+       difference between glowing steel and a generic outer glow.
+
+       The falloff is deliberately short. Real hot metal has an intense halo right
+       at the surface that dies off fast; a wide radius reads as a page-wide wash
+       instead of light coming off the letters. So the intensity lives in the first
+       two pixels and nothing travels past ~17px. Alphas are high where the radii
+       are small, which is what keeps the core genuinely hot after the cut.
+
+       Display sizes carry the full ramp. Small sizes cannot: even a modest bloom
+       clogs their counters and swallows the strokes, so they take a tighter hot
+       edge and keep the dark separation that holds them off the steel's specular
+       highlights. */
+    --heat-glow-display:
+      0 0 1px rgba(255, 239, 228, 0.98), 0 0 2px rgba(255, 194, 128, 0.9),
+      0 0 5px rgba(255, 174, 89, 0.58), 0 0 10px rgba(255, 152, 47, 0.34),
+      0 0 17px rgba(255, 129, 0, 0.2);
+    --heat-glow-narrative:
+      0 0 1px rgba(255, 239, 228, 0.98), 0 0 2px rgba(255, 194, 128, 0.86),
+      0 0 4px rgba(255, 174, 89, 0.52), 0 0 8px rgba(255, 152, 47, 0.3),
+      0 0 14px rgba(255, 129, 0, 0.17);
+    /* Warm layers stop at 4px and the dark ones start at 10px, so the halo stays
+       warm where it is visible instead of compositing orange over black into mud. */
+    --heat-glow-small:
+      0 0 1px rgba(255, 239, 228, 0.95), 0 0 2px rgba(255, 194, 128, 0.75),
+      0 0 4px rgba(255, 152, 47, 0.42), 0 1px 2px rgba(0, 0, 0, 0.85),
+      0 0 10px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 0, 0, 0.55);
+    /* The outermost heat, as a field rather than a shadow, so it can breathe by
+       compositing opacity instead of repainting a blur every frame. It is scoped to
+       the wordmark's own text box — see hero-copy.tsx — and kept close, because this
+       layer is what previously spread the glow across the page. Using a field rather
+       than a duplicated text layer also avoids putting the wordmark's string into the
+       DOM twice, which would double the h1 for search engines and for anything
+       reading the section's accessible name. */
+    --heat-bloom-field: radial-gradient(
+      ellipse at center,
+      rgba(255, 174, 89, 0.17) 0%,
+      rgba(255, 152, 47, 0.11) 34%,
+      rgba(255, 129, 0, 0.05) 58%,
+      rgba(255, 106, 0, 0) 80%
+    );
+
+    /* -- glows (never exceed 15% alpha) --------------------- */
+    --glow-soft: 0 0 20px rgba(83, 214, 255, 0.09);
+    --glow: 0 0 40px rgba(83, 214, 255, 0.12);
+    --glow-strong: 0 0 64px rgba(83, 214, 255, 0.14);
+    --rim: 0 0 0 1px rgba(83, 214, 255, 0.28), 0 0 32px rgba(83, 214, 255, 0.12);
+
+    /* -- surfaces & motion --------------------------------- */
+    --page-gradient: radial-gradient(circle at top, #102433, #05070a 70%);
+    --nav-bg: rgba(5, 7, 10, 0.45);
+    --nav-border: rgba(83, 214, 255, 0.08);
+    --ambient-cycle: 7s;
+
+    /* -- ShadCN semantic tokens (HSL channels) -------------- */
+    --background: 216 33% 3%; /* obsidian            */
+    --foreground: 200 50% 98%; /* white               */
+    --card: 212 24% 11%; /* #151B22             */
+    --card-foreground: 200 50% 98%;
+    --popover: 213 24% 9%; /* gunmetal            */
+    --popover-foreground: 200 50% 98%;
+    --primary: 194 100% 66%; /* forged blue         */
+    --primary-foreground: 203 57% 5%; /* #061016     */
+    --secondary: 210 26% 14%; /* steel               */
+    --secondary-foreground: 200 50% 98%;
+    --muted: 213 24% 9%;
+    --muted-foreground: 209 20% 72%; /* silver        */
+    --accent: 191 100% 78%; /* ice blue            */
+    --accent-foreground: 203 57% 5%;
+    /* Deliberately NOT red: a desaturated tint of the heart, used as ink
+       (text / border / icon) and never as a filled surface. */
+    --destructive: 351 100% 77%;
+    --destructive-foreground: 203 57% 5%;
+    --border: 210 20% 19%; /* divider steel       */
+    --input: 210 20% 19%;
+    --ring: 191 100% 78%; /* ice blue focus ring */
     --radius: 0.75rem;
   }
 }
@@ -32,20 +146,27 @@
   * {
     @apply border-border;
   }
-  
+
   html {
     scroll-behavior: smooth;
+    background-color: var(--obsidian);
   }
-  
+
   body {
-    background-color: #1E1714;
-    color: #F6F0E8;
+    /* Not flat black — the page emerges from darkness so the hero can be the
+       emotional centrepiece. */
+    background-color: var(--obsidian);
+    background-image: var(--page-gradient);
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    color: var(--white);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings: 'rlig' 1, 'calt' 1;
   }
-  
-  /* Reduced motion support */
+
+  /* Trauma-informed: motion is opt-out at the root, and ambient/particle
+     layers are additionally gated below. */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -56,41 +177,44 @@
       scroll-behavior: auto !important;
     }
   }
-  
-  /* Focus visible styles for accessibility */
+
+  /* Focus ring: ice blue rather than forged blue, so it stays visible on
+     blue-tinted surfaces. Paired with an obsidian offset for separation. */
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-forge-500;
+    outline: 2px solid var(--ice-blue);
+    outline-offset: 2px;
+    border-radius: 4px;
   }
-  
-  /* Selection styles */
+
   ::selection {
-    @apply bg-forge-100 text-forge-900;
+    background-color: rgba(83, 214, 255, 0.28);
+    color: var(--white);
   }
-  
+
   /* Brand accent utilities */
   .text-forge {
-    @apply text-forge-600;
+    color: var(--forged-blue);
   }
-  
+
   .text-bronze {
-    @apply text-bronze-500;
+    color: var(--silver);
   }
-  
+
   .bg-forge-subtle {
-    @apply bg-forge-50;
+    background-color: rgba(83, 214, 255, 0.06);
   }
-  
+
   .bg-bronze-subtle {
-    @apply bg-bronze-50;
+    background-color: rgba(141, 235, 255, 0.05);
   }
-  
+
   /* Gradient text utilities */
   .text-gradient-forge {
-    @apply bg-gradient-to-r from-forge-600 via-forge-500 to-forge-600 bg-clip-text text-transparent;
+    @apply bg-gradient-to-r from-forge-400 via-forge-300 to-forge-400 bg-clip-text text-transparent;
   }
-  
+
   .text-gradient-bronze {
-    @apply bg-gradient-to-r from-bronze-500 via-bronze-400 to-bronze-500 bg-clip-text text-transparent;
+    @apply bg-gradient-to-r from-ice-300 via-cream-100 to-ice-300 bg-clip-text text-transparent;
   }
 }
 
@@ -99,27 +223,108 @@
   .text-balance {
     text-wrap: balance;
   }
-  
-  /* Forge glow effect */
+
+  /* Glow effects — light, never shadow */
   .forge-glow {
-    box-shadow: 0 0 40px rgba(30, 107, 115, 0.2);
+    box-shadow: var(--glow);
   }
-  
-  /* Bronze glow effect */
+
   .bronze-glow {
-    box-shadow: 0 0 40px rgba(139, 94, 60, 0.15);
+    box-shadow: var(--glow-soft);
   }
-  
-  /* Glass effect - warm */
+
+  /* Section divider: a glowing horizon, not a line. */
+  .forge-divider {
+    height: 1px;
+    border: 0;
+    width: 100%;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(83, 214, 255, 0.35),
+      transparent
+    );
+  }
+
+  /* Card: dark steel that rises 4px into a cyan rim light on hover. */
+  .card-forged {
+    background-color: var(--card-steel);
+    border: 1px solid var(--divider-steel);
+    transition:
+      transform 320ms cubic-bezier(0.4, 0, 0.2, 1),
+      border-color 320ms cubic-bezier(0.4, 0, 0.2, 1),
+      box-shadow 320ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .card-forged:hover {
+    transform: translateY(-4px);
+    border-color: var(--forged-blue);
+    box-shadow: var(--glow);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card-forged:hover {
+      transform: none;
+    }
+  }
+
+  /* Glass surfaces — cold, not warm */
   .glass {
-    background-color: rgba(250, 247, 242, 0.9);
-    backdrop-filter: blur(12px);
+    background-color: rgba(17, 22, 28, 0.72);
+    backdrop-filter: blur(18px);
   }
-  
-  /* Glass forge variant */
+
   .glass-forge {
-    background-color: rgba(240, 247, 247, 0.8);
-    backdrop-filter: blur(12px);
+    background-color: rgba(5, 7, 10, 0.45);
+    backdrop-filter: blur(18px);
+  }
+
+  /* Ambient blue glow that breathes on a ~7s cycle, echoing the hero flame. */
+  .ambient-glow {
+    position: absolute;
+    pointer-events: none;
+    border-radius: 9999px;
+    background: radial-gradient(
+      circle,
+      rgba(83, 214, 255, 0.14) 0%,
+      transparent 70%
+    );
+    filter: blur(40px);
+    animation: forgeAmbientPulse var(--ambient-cycle) ease-in-out infinite;
+  }
+
+  /* Slow drifting particles (~7px/sec). */
+  .forge-particle {
+    position: absolute;
+    width: 2px;
+    height: 2px;
+    border-radius: 9999px;
+    background-color: rgba(141, 235, 255, 0.55);
+    pointer-events: none;
+    animation: forgeParticleDrift 26s linear infinite;
+  }
+
+  /* Faint blue ripple for cursor interactions. */
+  .forge-ripple {
+    position: absolute;
+    border-radius: 9999px;
+    pointer-events: none;
+    background: radial-gradient(
+      circle,
+      rgba(83, 214, 255, 0.22) 0%,
+      transparent 70%
+    );
+    animation: forgeRipple 900ms ease-out forwards;
+  }
+
+  /* Ambient decoration is meaningless without motion — remove it entirely
+     rather than freezing it in an arbitrary pose. */
+  @media (prefers-reduced-motion: reduce) {
+    .ambient-glow,
+    .forge-particle,
+    .forge-ripple {
+      display: none !important;
+    }
   }
 
   /* Apple-style glass 3D buttons (PremiumButton pattern) */
@@ -145,10 +350,10 @@
     background: linear-gradient(
       108deg,
       transparent 20%,
-      rgba(255, 255, 255, 0.16) 48%,
+      rgba(141, 235, 255, 0.14) 48%,
       transparent 76%
     );
-    animation: glass-btn-sweep 4s ease-in-out infinite;
+    animation: glass-btn-sweep 6s ease-in-out infinite;
     animation-delay: 1.5s;
   }
 
@@ -156,108 +361,206 @@
     background: linear-gradient(
       108deg,
       transparent 20%,
-      rgba(200, 164, 107, 0.14) 48%,
+      rgba(83, 214, 255, 0.12) 48%,
       transparent 76%
     );
-    animation: glass-btn-sweep 4s ease-in-out infinite;
+    animation: glass-btn-sweep 6s ease-in-out infinite;
     animation-delay: 1.5s;
   }
-  
+
   /* Section padding */
   .section-padding {
     @apply px-4 sm:px-6 lg:px-8 xl:px-16 2xl:px-24;
   }
-  
+
   /* Container max widths */
   .container-tight {
     @apply max-w-4xl mx-auto;
   }
-  
+
   .container-wide {
     @apply max-w-7xl mx-auto;
   }
-  
-  /* Forge underline animation */
+
+  /* Underline animations */
   .forge-underline {
     @apply relative;
   }
-  
+
   .forge-underline::after {
     content: '';
-    @apply absolute bottom-0 left-0 w-0 h-0.5 bg-forge-600 transition-all duration-500;
+    @apply absolute bottom-0 left-0 w-0 h-0.5 bg-forge-500 transition-all duration-500;
   }
-  
+
   .forge-underline:hover::after {
     @apply w-full;
   }
-  
-  /* Bronze underline animation */
+
   .bronze-underline {
     @apply relative;
   }
-  
+
   .bronze-underline::after {
     content: '';
-    @apply absolute bottom-0 left-0 w-0 h-0.5 bg-bronze-500 transition-all duration-500;
+    @apply absolute bottom-0 left-0 w-0 h-0.5 bg-ice-300 transition-all duration-500;
   }
-  
+
   .bronze-underline:hover::after {
     @apply w-full;
   }
-  
+
   /* Safe area padding for mobile */
   .safe-bottom {
     padding-bottom: env(safe-area-inset-bottom);
   }
-  
+
   .safe-top {
     padding-top: env(safe-area-inset-top);
   }
 }
 
-/* Quick Exit pulse animation — placed before reduced-motion block intentionally
-   so the global animation-duration: 0.01ms !important rule kills it for reduced-motion users */
-@keyframes quickExitPulse {
-  0%, 100% {
-    background-color: #C1121F;
-    box-shadow: 0 8px 30px rgba(0,0,0,0.4), 0 0 0 rgba(193, 18, 31, 0);
+@keyframes forgeAmbientPulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(1);
   }
   50% {
-    background-color: #D90429;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 18px rgba(217, 4, 41, 0.55);
+    opacity: 0.7;
+    transform: scale(1.04);
   }
 }
 
-.quick-exit-alert {
-  background-color: #C1121F;
-  color: #ffffff;
-  border: 0;
-  animation: quickExitPulse 1.6s ease-in-out infinite;
+@keyframes forgeParticleDrift {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.5;
+  }
+  88% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translate3d(14px, -180px, 0);
+    opacity: 0;
+  }
 }
 
-.quick-exit-alert:hover {
-  background-color: #9D0208;
-  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+@keyframes forgeRipple {
+  0% {
+    transform: scale(0.4);
+    opacity: 0.65;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+/* Quick Exit — safety-critical.
+   Calm and integrated rather than alarm-red, but deliberately still the most
+   *distinct* element on the page: it is the only control with a persistent
+   breathing cyan rim, it never scrolls away, and it inverts to a solid blue
+   fill on hover/focus. Placed before the reduced-motion block intentionally so
+   the global animation override stills the pulse for reduced-motion users. */
+/* Real hot metal does not sit at a fixed temperature, so the wordmark's outermost
+   heat rises and falls on the site's own ambient cycle. It animates opacity on a
+   duplicated glow layer, which the compositor can handle, rather than animating the
+   blurs themselves — repainting a 140px shadow every frame over a playing video is
+   not worth the effect. */
+.hero-heat-breathe {
+  animation: heroHeatBreathe var(--ambient-cycle) ease-in-out infinite;
+}
+
+@keyframes heroHeatBreathe {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Hold the bloom at its mean rather than removing it, so reduced-motion users
+     still get the hot-iron reading without the temperature change. */
+  .hero-heat-breathe {
+    animation: none;
+    opacity: 0.75;
+  }
+}
+
+@keyframes quickExitPulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(231, 77, 91, 0.45),
+      0 0 18px rgba(220, 38, 47, 0.22);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(231, 77, 91, 0.85),
+      0 0 30px rgba(220, 38, 47, 0.4);
+  }
+}
+
+/* Quick Exit wears the dark red from the middle of the heart, tying the escape
+   affordance to the heart's meaning.
+   
+   A deep red is inherently dark, so the fill alone reaches only ~2.2:1 against the
+   near-black page — short of the 3:1 WCAG 1.4.11 asks of a control's boundary. The
+   rim carries that contrast instead, drawn from the heart's brighter outer bands, so
+   the button's edge stays plainly visible without brightening the fill into the alarm
+   red the user does not want. Colour is never the only signal: it always carries the
+   words "Quick Exit" and an exit icon. */
+.quick-exit-alert {
+  background-color: var(--heart-interior);
+  color: var(--white);
+  border: 1px solid var(--heart-rim);
+  animation: quickExitPulse 2.4s ease-in-out infinite;
+}
+
+/* Brightens rather than scales, per the site's motion language. The fill steps out
+   to the heart's mid-bright band — a 2.5x jump in luminance, so the feedback is
+   unmistakable — while white text stays above AA on it. */
+.quick-exit-alert:hover,
+.quick-exit-alert:focus-visible {
+  background-color: var(--heart-glow);
+  color: var(--white);
+  border-color: #ff8f9b;
   animation: none;
 }
 
-/* Custom scrollbar - dark cinematic */
+/* Reduced-motion users lose the pulse, so give the resting state a permanently
+   stronger rim — discoverability must not depend on animation. */
+@media (prefers-reduced-motion: reduce) {
+  .quick-exit-alert {
+    box-shadow:
+      0 0 0 1px rgba(231, 77, 91, 0.85),
+      0 0 26px rgba(220, 38, 47, 0.32);
+  }
+}
+
+/* Custom scrollbar — forged steel */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #241B18;
+  background: #0a0e13;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #3A2A24;
+  background: #27313b;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #4A2F22;
+  background: #3a4753;
 }
 
 /* Print styles */
@@ -265,10 +568,11 @@
   .no-print {
     display: none !important;
   }
-  
+
   body {
     background: white;
-    color: #1F1F1F;
+    background-image: none;
+    color: #1f1f1f;
   }
 }
 
@@ -287,7 +591,7 @@ html {
   .glass-btn-sweep-warm::before {
     animation: none !important;
   }
-  
+
   *,
   *::before,
   *::after {

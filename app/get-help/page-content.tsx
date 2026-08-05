@@ -33,10 +33,10 @@ export default function GetHelpPageContent() {
   return (
     <div className="min-h-screen">
       {/* Hero - Crisis Warning */}
-      <section className="pt-32 pb-20 bg-gradient-to-b from-red-950/30 to-charcoal">
+      <section className="pt-32 pb-20 bg-gradient-to-b from-[#53D6FF]/10 to-charcoal">
         <div className="container-wide section-padding">
           <div className="max-w-4xl mx-auto text-center">
-            <div className="inline-flex items-center gap-2 px-4 py-2 mb-6 text-sm font-medium text-red-400 bg-red-950/30 rounded-full border border-red-800">
+            <div className="inline-flex items-center gap-2 px-4 py-2 mb-6 text-sm font-medium text-[#8DEBFF] bg-[rgba(83,214,255,0.1)] rounded-full border border-[rgba(83,214,255,0.35)]">
               <AlertTriangle className="h-4 w-4" />
               If you are in immediate danger, call 911
             </div>
@@ -97,11 +97,11 @@ export default function GetHelpPageContent() {
                         {hotline.phone}
                       </a>
                       {'sms' in hotline && hotline.sms && (
-                        <p className="text-sm text-cream-300/70 mb-2">
+                        <p className="text-sm text-silver-label mb-2">
                           Text &quot;{'text' in hotline ? hotline.text : 'HELP'}&quot; to {hotline.sms}
                         </p>
                       )}
-                      <p className="text-sm text-cream-300/60">{hotline.description}</p>
+                      <p className="text-sm text-silver-label">{hotline.description}</p>
                       <div className="flex items-center gap-2 mt-3 text-healing text-sm">
                         <Clock className="h-4 w-4" />
                         <span>Available {hotline.available}</span>
@@ -119,7 +119,7 @@ export default function GetHelpPageContent() {
               <h3 className="font-serif text-xl font-semibold text-cream-100 mb-3">
                 Ongoing Support Services in Lorain County
               </h3>
-              <p className="text-cream-300/70">
+              <p className="text-silver-label">
                 Beyond immediate crisis support, we offer trauma-informed victim advocacy 
                 and resources for survivors in Northeast Ohio.
               </p>
@@ -185,14 +185,14 @@ export default function GetHelpPageContent() {
       </section>
 
       {/* External Resources */}
-      <section className="py-24" style={{ background: '#1E1714' }}>
+      <section className="py-24" style={{ background: '#05070A' }}>
         <div className="container-wide section-padding">
           <div className="text-center max-w-3xl mx-auto mb-12">
-            <span className="font-medium mb-4 block" style={{ color: '#4C9AA3' }}>Additional Support</span>
-            <h2 className="font-serif text-3xl sm:text-4xl font-bold mb-4" style={{ color: '#F6F0E8' }}>
+            <span className="font-medium mb-4 block" style={{ color: '#53D6FF' }}>Additional Support</span>
+            <h2 className="font-serif text-3xl sm:text-4xl font-bold mb-4" style={{ color: '#F6FAFC' }}>
               Additional Resources
             </h2>
-            <p style={{ color: '#CDBDAF' }}>
+            <p style={{ color: '#B8C4CF' }}>
               Trusted organizations and support services available nationwide.
             </p>
           </div>
@@ -200,31 +200,31 @@ export default function GetHelpPageContent() {
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
             {/* National Human Trafficking Hotline */}
             <Card 
-              className="border-0 h-full transition-all duration-300 hover:shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
-              style={{ background: '#3A2A24', boxShadow: '0 8px 30px rgba(0,0,0,0.3)' }}
+              className="border-0 h-full transition-all duration-300 hover:shadow-forge"
+              style={{ background: '#1A232C', boxShadow: '0 0 40px rgba(83,214,255,0.12)' }}
             >
               <CardContent className="p-6 flex flex-col h-full">
                 <div className="flex items-start gap-3 mb-4">
                   <div 
                     className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ background: 'rgba(30,107,115,0.2)' }}
+                    style={{ background: 'rgba(83, 214, 255,0.2)' }}
                   >
-                    <Globe className="h-5 w-5 text-[#4C9AA3]" />
+                    <Globe className="h-5 w-5 text-[#53D6FF]" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-lg" style={{ color: '#F6F0E8' }}>
+                    <h3 className="font-semibold text-lg" style={{ color: '#F6FAFC' }}>
                       National Human Trafficking Hotline
                     </h3>
                   </div>
                 </div>
-                <p className="text-sm mb-4 flex-1" style={{ color: '#CDBDAF' }}>
+                <p className="text-sm mb-4 flex-1" style={{ color: '#B8C4CF' }}>
                   24/7 confidential support, crisis intervention, safety planning, and referrals for victims and survivors of trafficking.
                 </p>
                 <div className="space-y-2">
                   <Button 
                     asChild 
                     size="sm" 
-                    className="w-full bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8]"
+                    className="w-full bg-[#53D6FF] hover:bg-[#82E8FF] text-[#061016]"
                   >
                     <a 
                       href="https://humantraffickinghotline.org" 
@@ -241,7 +241,7 @@ export default function GetHelpPageContent() {
                       asChild 
                       variant="outline" 
                       size="sm" 
-                      className="flex-1 border-[#8B5E3C] text-[#C8A46B] hover:bg-[#8B5E3C]/14"
+                      className="flex-1 border-[#27313B] text-[#8DEBFF] hover:bg-[#1A232C]/15"
                     >
                       <a href="tel:18883737888" aria-label="Call National Human Trafficking Hotline">
                         <Phone className="mr-2 h-4 w-4" />
@@ -252,7 +252,7 @@ export default function GetHelpPageContent() {
                       asChild 
                       variant="outline" 
                       size="sm" 
-                      className="flex-1 border-[#8B5E3C] text-[#C8A46B] hover:bg-[#8B5E3C]/14"
+                      className="flex-1 border-[#27313B] text-[#8DEBFF] hover:bg-[#1A232C]/15"
                     >
                       <a href="sms:233733?body=BEFREE" aria-label="Text National Human Trafficking Hotline">
                         <MessageSquare className="mr-2 h-4 w-4" />
@@ -266,30 +266,30 @@ export default function GetHelpPageContent() {
 
             {/* Emergency Services */}
             <Card 
-              className="border-0 h-full transition-all duration-300 hover:shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
-              style={{ background: '#3A2A24', boxShadow: '0 8px 30px rgba(0,0,0,0.3)' }}
+              className="border-0 h-full transition-all duration-300 hover:shadow-forge"
+              style={{ background: '#1A232C', boxShadow: '0 0 40px rgba(83,214,255,0.12)' }}
             >
               <CardContent className="p-6 flex flex-col h-full">
                 <div className="flex items-start gap-3 mb-4">
                   <div 
                     className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ background: 'rgba(200,164,107,0.15)' }}
+                    style={{ background: 'rgba(141, 235, 255,0.15)' }}
                   >
-                    <AlertTriangle className="h-5 w-5 text-[#C8A46B]" />
+                    <AlertTriangle className="h-5 w-5 text-[#8DEBFF]" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-lg" style={{ color: '#F6F0E8' }}>
+                    <h3 className="font-semibold text-lg" style={{ color: '#F6FAFC' }}>
                       Emergency Assistance
                     </h3>
                   </div>
                 </div>
-                <p className="text-sm mb-4 flex-1" style={{ color: '#CDBDAF' }}>
+                <p className="text-sm mb-4 flex-1" style={{ color: '#B8C4CF' }}>
                   If you are in immediate danger or need urgent emergency assistance, call emergency services immediately.
                 </p>
                 <Button 
                   asChild 
                   size="lg" 
-                  className="w-full bg-[#8B5E3C] hover:bg-[#A67C52] text-[#F6F0E8]"
+                  className="w-full bg-[#8DEBFF] hover:bg-[#B6F3FF] text-[#061016] font-bold"
                 >
                   <a href="tel:911" aria-label="Call 911 for emergency assistance">
                     <Phone className="mr-2 h-5 w-5" />
@@ -301,30 +301,30 @@ export default function GetHelpPageContent() {
 
             {/* Ohio Attorney General */}
             <Card 
-              className="border-0 h-full transition-all duration-300 hover:shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
-              style={{ background: '#3A2A24', boxShadow: '0 8px 30px rgba(0,0,0,0.3)' }}
+              className="border-0 h-full transition-all duration-300 hover:shadow-forge"
+              style={{ background: '#1A232C', boxShadow: '0 0 40px rgba(83,214,255,0.12)' }}
             >
               <CardContent className="p-6 flex flex-col h-full">
                 <div className="flex items-start gap-3 mb-4">
                   <div 
                     className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ background: 'rgba(30,107,115,0.2)' }}
+                    style={{ background: 'rgba(83, 214, 255,0.2)' }}
                   >
-                    <MapPin className="h-5 w-5 text-[#4C9AA3]" />
+                    <MapPin className="h-5 w-5 text-[#53D6FF]" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-lg" style={{ color: '#F6F0E8' }}>
+                    <h3 className="font-semibold text-lg" style={{ color: '#F6FAFC' }}>
                       Ohio Human Trafficking Resources
                     </h3>
                   </div>
                 </div>
-                <p className="text-sm mb-4 flex-1" style={{ color: '#CDBDAF' }}>
+                <p className="text-sm mb-4 flex-1" style={{ color: '#B8C4CF' }}>
                   State-level trafficking awareness, reporting, victim assistance, and prevention resources.
                 </p>
                 <Button 
                   asChild 
                   size="sm" 
-                  className="w-full bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8]"
+                  className="w-full bg-[#53D6FF] hover:bg-[#82E8FF] text-[#061016]"
                 >
                   <a 
                     href="https://www.ohioattorneygeneral.gov/Individuals-and-Families/Victims/Human-Trafficking" 
@@ -341,31 +341,31 @@ export default function GetHelpPageContent() {
 
             {/* RAINN */}
             <Card 
-              className="border-0 h-full transition-all duration-300 hover:shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
-              style={{ background: '#3A2A24', boxShadow: '0 8px 30px rgba(0,0,0,0.3)' }}
+              className="border-0 h-full transition-all duration-300 hover:shadow-forge"
+              style={{ background: '#1A232C', boxShadow: '0 0 40px rgba(83,214,255,0.12)' }}
             >
               <CardContent className="p-6 flex flex-col h-full">
                 <div className="flex items-start gap-3 mb-4">
                   <div 
                     className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ background: 'rgba(200,164,107,0.15)' }}
+                    style={{ background: 'rgba(141, 235, 255,0.15)' }}
                   >
-                    <HeartPulse className="h-5 w-5 text-[#C8A46B]" />
+                    <HeartPulse className="h-5 w-5 text-[#8DEBFF]" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-lg" style={{ color: '#F6F0E8' }}>
+                    <h3 className="font-semibold text-lg" style={{ color: '#F6FAFC' }}>
                       RAINN Sexual Assault Support
                     </h3>
                   </div>
                 </div>
-                <p className="text-sm mb-4 flex-1" style={{ color: '#CDBDAF' }}>
+                <p className="text-sm mb-4 flex-1" style={{ color: '#B8C4CF' }}>
                   Confidential crisis support and resources for survivors of sexual violence and abuse.
                 </p>
                 <div className="space-y-2">
                   <Button 
                     asChild 
                     size="sm" 
-                    className="w-full bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8]"
+                    className="w-full bg-[#53D6FF] hover:bg-[#82E8FF] text-[#061016]"
                   >
                     <a 
                       href="https://www.rainn.org" 
@@ -381,7 +381,7 @@ export default function GetHelpPageContent() {
                     asChild 
                     variant="outline" 
                     size="sm" 
-                    className="w-full border-[#8B5E3C] text-[#C8A46B] hover:bg-[#8B5E3C]/14"
+                    className="w-full border-[#27313B] text-[#8DEBFF] hover:bg-[#1A232C]/15"
                   >
                     <a href="tel:18006564673" aria-label="Call RAINN National Sexual Assault Hotline">
                       <Phone className="mr-2 h-4 w-4" />
@@ -394,30 +394,30 @@ export default function GetHelpPageContent() {
 
             {/* SAMHSA */}
             <Card 
-              className="border-0 h-full transition-all duration-300 hover:shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
-              style={{ background: '#3A2A24', boxShadow: '0 8px 30px rgba(0,0,0,0.3)' }}
+              className="border-0 h-full transition-all duration-300 hover:shadow-forge"
+              style={{ background: '#1A232C', boxShadow: '0 0 40px rgba(83,214,255,0.12)' }}
             >
               <CardContent className="p-6 flex flex-col h-full">
                 <div className="flex items-start gap-3 mb-4">
                   <div 
                     className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ background: 'rgba(30,107,115,0.2)' }}
+                    style={{ background: 'rgba(83, 214, 255,0.2)' }}
                   >
-                    <Brain className="h-5 w-5 text-[#4C9AA3]" />
+                    <Brain className="h-5 w-5 text-[#53D6FF]" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-lg" style={{ color: '#F6F0E8' }}>
+                    <h3 className="font-semibold text-lg" style={{ color: '#F6FAFC' }}>
                       Mental Health & Crisis Support
                     </h3>
                   </div>
                 </div>
-                <p className="text-sm mb-4 flex-1" style={{ color: '#CDBDAF' }}>
+                <p className="text-sm mb-4 flex-1" style={{ color: '#B8C4CF' }}>
                   Mental health, substance use, and emotional crisis support resources available nationwide.
                 </p>
                 <Button 
                   asChild 
                   size="sm" 
-                  className="w-full bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8]"
+                  className="w-full bg-[#53D6FF] hover:bg-[#82E8FF] text-[#061016]"
                 >
                   <a 
                     href="https://www.samhsa.gov" 
@@ -434,31 +434,31 @@ export default function GetHelpPageContent() {
 
             {/* 988 Crisis Lifeline */}
             <Card 
-              className="border-0 h-full transition-all duration-300 hover:shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
-              style={{ background: '#3A2A24', boxShadow: '0 8px 30px rgba(0,0,0,0.3)' }}
+              className="border-0 h-full transition-all duration-300 hover:shadow-forge"
+              style={{ background: '#1A232C', boxShadow: '0 0 40px rgba(83,214,255,0.12)' }}
             >
               <CardContent className="p-6 flex flex-col h-full">
                 <div className="flex items-start gap-3 mb-4">
                   <div 
                     className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ background: 'rgba(200,164,107,0.15)' }}
+                    style={{ background: 'rgba(141, 235, 255,0.15)' }}
                   >
-                    <HeartPulse className="h-5 w-5 text-[#C8A46B]" />
+                    <HeartPulse className="h-5 w-5 text-[#8DEBFF]" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-lg" style={{ color: '#F6F0E8' }}>
+                    <h3 className="font-semibold text-lg" style={{ color: '#F6FAFC' }}>
                       988 Crisis Lifeline
                     </h3>
                   </div>
                 </div>
-                <p className="text-sm mb-4 flex-1" style={{ color: '#CDBDAF' }}>
+                <p className="text-sm mb-4 flex-1" style={{ color: '#B8C4CF' }}>
                   24/7 emotional crisis support for anyone experiencing emotional distress or mental health crisis.
                 </p>
                 <div className="space-y-2">
                   <Button 
                     asChild 
                     size="sm" 
-                    className="w-full bg-[#8B5E3C] hover:bg-[#A67C52] text-[#F6F0E8]"
+                    className="w-full bg-[#8DEBFF] hover:bg-[#B6F3FF] text-[#061016] font-bold"
                   >
                     <a href="tel:988" aria-label="Call or text 988 Crisis Lifeline">
                       <Phone className="mr-2 h-4 w-4" />
@@ -469,7 +469,7 @@ export default function GetHelpPageContent() {
                     asChild 
                     variant="outline" 
                     size="sm" 
-                    className="w-full border-[#8B5E3C] text-[#C8A46B] hover:bg-[#8B5E3C]/14"
+                    className="w-full border-[#27313B] text-[#8DEBFF] hover:bg-[#1A232C]/15"
                   >
                     <a 
                       href="https://988lifeline.org" 
@@ -487,31 +487,31 @@ export default function GetHelpPageContent() {
 
             {/* Domestic Violence Hotline */}
             <Card 
-              className="border-0 h-full transition-all duration-300 hover:shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
-              style={{ background: '#3A2A24', boxShadow: '0 8px 30px rgba(0,0,0,0.3)' }}
+              className="border-0 h-full transition-all duration-300 hover:shadow-forge"
+              style={{ background: '#1A232C', boxShadow: '0 0 40px rgba(83,214,255,0.12)' }}
             >
               <CardContent className="p-6 flex flex-col h-full">
                 <div className="flex items-start gap-3 mb-4">
                   <div 
                     className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ background: 'rgba(30,107,115,0.2)' }}
+                    style={{ background: 'rgba(83, 214, 255,0.2)' }}
                   >
-                    <Users className="h-5 w-5 text-[#4C9AA3]" />
+                    <Users className="h-5 w-5 text-[#53D6FF]" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-lg" style={{ color: '#F6F0E8' }}>
+                    <h3 className="font-semibold text-lg" style={{ color: '#F6FAFC' }}>
                       National Domestic Violence Hotline
                     </h3>
                   </div>
                 </div>
-                <p className="text-sm mb-4 flex-1" style={{ color: '#CDBDAF' }}>
+                <p className="text-sm mb-4 flex-1" style={{ color: '#B8C4CF' }}>
                   Support, safety planning, and confidential help for individuals experiencing abuse or violence.
                 </p>
                 <div className="space-y-2">
                   <Button 
                     asChild 
                     size="sm" 
-                    className="w-full bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8]"
+                    className="w-full bg-[#53D6FF] hover:bg-[#82E8FF] text-[#061016]"
                   >
                     <a 
                       href="https://www.thehotline.org" 
@@ -527,7 +527,7 @@ export default function GetHelpPageContent() {
                     asChild 
                     variant="outline" 
                     size="sm" 
-                    className="w-full border-[#8B5E3C] text-[#C8A46B] hover:bg-[#8B5E3C]/14"
+                    className="w-full border-[#27313B] text-[#8DEBFF] hover:bg-[#1A232C]/15"
                   >
                     <a href="tel:18007997233" aria-label="Call National Domestic Violence Hotline">
                       <Phone className="mr-2 h-4 w-4" />
@@ -540,30 +540,30 @@ export default function GetHelpPageContent() {
 
             {/* Missing & Exploited Children */}
             <Card 
-              className="border-0 h-full transition-all duration-300 hover:shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
-              style={{ background: '#3A2A24', boxShadow: '0 8px 30px rgba(0,0,0,0.3)' }}
+              className="border-0 h-full transition-all duration-300 hover:shadow-forge"
+              style={{ background: '#1A232C', boxShadow: '0 0 40px rgba(83,214,255,0.12)' }}
             >
               <CardContent className="p-6 flex flex-col h-full">
                 <div className="flex items-start gap-3 mb-4">
                   <div 
                     className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ background: 'rgba(200,164,107,0.15)' }}
+                    style={{ background: 'rgba(141, 235, 255,0.15)' }}
                   >
-                    <Baby className="h-5 w-5 text-[#C8A46B]" />
+                    <Baby className="h-5 w-5 text-[#8DEBFF]" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-lg" style={{ color: '#F6F0E8' }}>
+                    <h3 className="font-semibold text-lg" style={{ color: '#F6FAFC' }}>
                       Missing & Exploited Children Resources
                     </h3>
                   </div>
                 </div>
-                <p className="text-sm mb-4 flex-1" style={{ color: '#CDBDAF' }}>
+                <p className="text-sm mb-4 flex-1" style={{ color: '#B8C4CF' }}>
                   Support and reporting resources related to child exploitation and trafficking concerns.
                 </p>
                 <Button 
                   asChild 
                   size="sm" 
-                  className="w-full bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8]"
+                  className="w-full bg-[#53D6FF] hover:bg-[#82E8FF] text-[#061016]"
                 >
                   <a 
                     href="https://www.missingkids.org" 
@@ -582,15 +582,15 @@ export default function GetHelpPageContent() {
       </section>
 
       {/* Contact Form */}
-      <section className="py-24" style={{ background: '#2A1F1A' }}>
+      <section className="py-24" style={{ background: '#151B22' }}>
         <div className="container-wide section-padding">
           <div className="max-w-2xl mx-auto">
             <div className="text-center mb-12">
-              <span className="font-medium mb-4 block" style={{ color: '#C8A46B' }}>Reach Out</span>
-              <h2 className="font-serif text-4xl font-bold mb-4" style={{ color: '#F6F0E8' }}>
+              <span className="font-medium mb-4 block" style={{ color: '#8DEBFF' }}>Reach Out</span>
+              <h2 className="font-serif text-4xl font-bold mb-4" style={{ color: '#F6FAFC' }}>
                 Contact Our Team
               </h2>
-              <p style={{ color: '#CDBDAF' }}>
+              <p style={{ color: '#B8C4CF' }}>
                 Fill out this form and a member of our team will reach out to you within 24 hours.
                 All communications are confidential.
               </p>
@@ -672,7 +672,7 @@ export default function GetHelpPageContent() {
                       <Send className="ml-2 h-4 w-4" />
                     </Button>
 
-                    <p className="text-xs text-cream-300/50 text-center">
+                    <p className="text-xs text-silver-label text-center">
                       Your privacy is important to us. This form is secure and your information will be kept confidential.
                     </p>
                   </form>

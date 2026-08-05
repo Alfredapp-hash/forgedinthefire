@@ -94,23 +94,28 @@ export function scrollToElement(elementId: string, offset = 80) {
  * Quick exit functionality - clears history and redirects
  */
 export function quickEscape(): void {
-  // Clear local storage
-  if (typeof window !== 'undefined') {
+  if (typeof window === 'undefined') return;
+
+  try {
     localStorage.clear();
     sessionStorage.clear();
-    
-    // Attempt to clear history (limited by browser security)
-    try {
-      window.history.pushState({}, '', '/');
-      window.history.pushState({}, '', '/');
-      window.history.go(-(window.history.length - 1));
-    } catch {
-      // Fallback if history manipulation fails
-    }
-    
-    // Redirect to safe external site
-    window.location.href = 'https://weather.com';
+  } catch {
+    // Storage can be unavailable in private mode; leaving is still the priority.
   }
+
+  // Overwrite the visible URL first so the address bar never shows this site
+  // during the hand-off.
+  try {
+    window.history.replaceState({}, '', '/');
+  } catch {
+    // Non-fatal.
+  }
+
+  // location.replace (not .href) drops the current page from the session
+  // history, so Back does not return here. A history.go() rewind must NOT be
+  // used alongside this — it races the navigation and can strand the user on
+  // the site, which defeats the safety feature entirely.
+  window.location.replace('https://weather.com');
 }
 
 /**

@@ -40,14 +40,14 @@ export default function ServicePageContent({ service, content }: ServicePageCont
   const Icon = serviceIcons[service.icon] || Shield;
 
   return (
-    <div className="min-h-screen bg-[#1E1714]">
+    <div className="min-h-screen">
       {/* Hero Section */}
       <section className="pt-32 pb-20 relative overflow-hidden">
         {/* Background gradient */}
         <div 
           className="absolute inset-0 pointer-events-none"
           style={{
-            background: 'linear-gradient(180deg, rgba(30,107,115,0.08) 0%, transparent 50%)',
+            background: 'linear-gradient(180deg, rgba(83, 214, 255,0.08) 0%, transparent 50%)',
           }}
         />
         
@@ -61,21 +61,21 @@ export default function ServicePageContent({ service, content }: ServicePageCont
               <div className="inline-flex items-center gap-3 mb-6">
                 <div 
                   className="w-14 h-14 rounded-xl flex items-center justify-center"
-                  style={{ background: 'rgba(30,107,115,0.2)' }}
+                  style={{ background: 'rgba(83, 214, 255,0.2)' }}
                 >
-                  <Icon className="h-7 w-7 text-[#4C9AA3]" />
+                  <Icon className="h-7 w-7 text-[#53D6FF]" />
                 </div>
               </div>
               
-              <h1 className="font-serif text-4xl sm:text-5xl lg:text-6xl font-bold mb-4" style={{ color: '#F6F0E8' }}>
+              <h1 className="font-serif text-4xl sm:text-5xl lg:text-6xl font-bold mb-4" style={{ color: '#F6FAFC' }}>
                 {service.title}
               </h1>
               
-              <p className="text-xl sm:text-2xl mb-6" style={{ color: '#C8A46B' }}>
+              <p className="text-xl sm:text-2xl mb-6" style={{ color: '#8DEBFF' }}>
                 {content.subtitle}
               </p>
               
-              <p className="text-lg leading-relaxed max-w-3xl mx-auto" style={{ color: '#CDBDAF' }}>
+              <p className="text-lg leading-relaxed max-w-3xl mx-auto" style={{ color: '#B8C4CF' }}>
                 {content.intro}
               </p>
             </motion.div>
@@ -105,7 +105,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
       </section>
 
       {/* Full Service Overview */}
-      <section className="py-20" style={{ background: '#241B18' }}>
+      <section className="py-20" style={{ background: '#11161C' }}>
         <div className="container-wide section-padding">
           <div className="max-w-4xl mx-auto">
             <motion.h2
@@ -114,7 +114,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
               viewport={{ once: true }}
               transition={{ duration: 0.6 }}
               className="font-serif text-3xl sm:text-4xl font-bold mb-12 text-center"
-              style={{ color: '#F6F0E8' }}
+              style={{ color: '#F6FAFC' }}
             >
               About This Service
             </motion.h2>
@@ -128,7 +128,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
                   viewport={{ once: true }}
                   transition={{ duration: 0.6, delay: index * 0.1 }}
                   className="text-lg leading-relaxed"
-                  style={{ color: '#CDBDAF' }}
+                  style={{ color: '#B8C4CF' }}
                 >
                   {paragraph}
                 </motion.p>
@@ -139,7 +139,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
       </section>
 
       {/* What We Provide */}
-      <section className="py-20" style={{ background: '#1E1714' }}>
+      <section className="py-20" style={{ background: '#05070A' }}>
         <div className="container-wide section-padding">
           <div className="max-w-6xl mx-auto">
             <motion.h2
@@ -148,7 +148,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
               viewport={{ once: true }}
               transition={{ duration: 0.6 }}
               className="font-serif text-3xl sm:text-4xl font-bold mb-4 text-center"
-              style={{ color: '#F6F0E8' }}
+              style={{ color: '#F6FAFC' }}
             >
               What We Provide
             </motion.h2>
@@ -158,7 +158,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
               viewport={{ once: true }}
               transition={{ duration: 0.6, delay: 0.1 }}
               className="text-center mb-12 max-w-2xl mx-auto"
-              style={{ color: '#B8A89A' }}
+              style={{ color: '#A9B8C6' }}
             >
               Comprehensive support designed to meet survivors where they are and empower lasting change.
             </motion.p>
@@ -173,28 +173,28 @@ export default function ServicePageContent({ service, content }: ServicePageCont
                   transition={{ duration: 0.5, delay: index * 0.1 }}
                 >
                   <Card 
-                    className="h-full border-0 transition-all duration-300 hover:shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
+                    className="h-full border-0 transition-all duration-300 hover:shadow-forge"
                     style={{ 
-                      background: '#3A2A24',
-                      boxShadow: '0 8px 30px rgba(0,0,0,0.3)',
+                      background: '#1A232C',
+                      boxShadow: '0 0 40px rgba(83,214,255,0.12)',
                     }}
                   >
                     <CardContent className="p-6">
                       <div className="flex items-start gap-4">
                         <div 
                           className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                          style={{ background: 'rgba(30,107,115,0.2)' }}
+                          style={{ background: 'rgba(83, 214, 255,0.2)' }}
                         >
-                          <CheckCircle2 className="h-5 w-5 text-[#4C9AA3]" />
+                          <CheckCircle2 className="h-5 w-5 text-[#53D6FF]" />
                         </div>
                         <div>
                           <h3 
                             className="font-semibold text-lg mb-2"
-                            style={{ color: '#F6F0E8' }}
+                            style={{ color: '#F6FAFC' }}
                           >
                             {item.title}
                           </h3>
-                          <p style={{ color: '#CDBDAF' }}>
+                          <p style={{ color: '#B8C4CF' }}>
                             {item.description}
                           </p>
                         </div>
@@ -209,12 +209,12 @@ export default function ServicePageContent({ service, content }: ServicePageCont
       </section>
 
       {/* Why This Matters */}
-      <section className="py-20 relative overflow-hidden" style={{ background: '#241B18' }}>
+      <section className="py-20 relative overflow-hidden" style={{ background: '#11161C' }}>
         {/* Subtle background accent */}
         <div 
           className="absolute top-0 left-0 w-full h-full pointer-events-none"
           style={{
-            background: 'radial-gradient(ellipse at 50% 0%, rgba(139,94,60,0.08) 0%, transparent 50%)',
+            background: 'radial-gradient(ellipse at 50% 0%, rgba(83, 214, 255,0.08) 0%, transparent 50%)',
           }}
         />
         
@@ -226,7 +226,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
               viewport={{ once: true }}
               transition={{ duration: 0.6 }}
               className="font-serif text-3xl sm:text-4xl font-bold mb-4 text-center"
-              style={{ color: '#F6F0E8' }}
+              style={{ color: '#F6FAFC' }}
             >
               Why This Matters
             </motion.h2>
@@ -236,7 +236,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
               viewport={{ once: true }}
               transition={{ duration: 0.6, delay: 0.1 }}
               className="text-center mb-12 max-w-2xl mx-auto"
-              style={{ color: '#C8A46B' }}
+              style={{ color: '#8DEBFF' }}
             >
               Understanding the impact of this work on survivors, communities, and systemic change.
             </motion.p>
@@ -251,11 +251,11 @@ export default function ServicePageContent({ service, content }: ServicePageCont
                   transition={{ duration: 0.6, delay: index * 0.1 }}
                   className="p-6 rounded-xl"
                   style={{ 
-                    background: 'rgba(58,42,36,0.5)',
-                    borderLeft: '3px solid #8B5E3C',
+                    background: 'rgba(26, 35, 44,0.5)',
+                    borderLeft: '3px solid #A9B8C6',
                   }}
                 >
-                  <p className="text-lg leading-relaxed" style={{ color: '#CDBDAF' }}>
+                  <p className="text-lg leading-relaxed" style={{ color: '#B8C4CF' }}>
                     {paragraph}
                   </p>
                 </motion.div>
@@ -266,7 +266,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
       </section>
 
       {/* Trauma-Informed Approach */}
-      <section className="py-20" style={{ background: '#2A1F1A' }}>
+      <section className="py-20" style={{ background: '#151B22' }}>
         <div className="container-wide section-padding">
           <div className="max-w-6xl mx-auto">
             <motion.h2
@@ -275,7 +275,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
               viewport={{ once: true }}
               transition={{ duration: 0.6 }}
               className="font-serif text-3xl sm:text-4xl font-bold mb-4 text-center"
-              style={{ color: '#F6F0E8' }}
+              style={{ color: '#F6FAFC' }}
             >
               Our Trauma-Informed Approach
             </motion.h2>
@@ -285,7 +285,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
               viewport={{ once: true }}
               transition={{ duration: 0.6, delay: 0.1 }}
               className="text-center mb-12 max-w-2xl mx-auto"
-              style={{ color: '#B8A89A' }}
+              style={{ color: '#A9B8C6' }}
             >
               Every service is grounded in principles that honor survivor dignity, autonomy, and healing.
             </motion.p>
@@ -302,18 +302,18 @@ export default function ServicePageContent({ service, content }: ServicePageCont
                   <Card 
                     className="h-full border-0"
                     style={{ 
-                      background: '#241B18',
-                      boxShadow: '0 8px 30px rgba(0,0,0,0.25)',
+                      background: '#11161C',
+                      boxShadow: '0 0 40px rgba(83,214,255,0.12)',
                     }}
                   >
                     <CardContent className="p-6">
                       <h3 
                         className="font-semibold text-lg mb-3"
-                        style={{ color: '#4C9AA3' }}
+                        style={{ color: '#53D6FF' }}
                       >
                         {item.title}
                       </h3>
-                      <p style={{ color: '#CDBDAF' }}>
+                      <p style={{ color: '#B8C4CF' }}>
                         {item.description}
                       </p>
                     </CardContent>
@@ -326,11 +326,11 @@ export default function ServicePageContent({ service, content }: ServicePageCont
       </section>
 
       {/* Contact/CTA Section */}
-      <section className="py-20 relative overflow-hidden" style={{ background: '#181210' }}>
+      <section className="py-20 relative overflow-hidden" style={{ background: '#05070A' }}>
         <div 
           className="absolute inset-0 pointer-events-none"
           style={{
-            background: 'radial-gradient(circle at 50% 50%, rgba(30,107,115,0.1) 0%, transparent 60%)',
+            background: 'radial-gradient(circle at 50% 50%, rgba(83, 214, 255,0.1) 0%, transparent 60%)',
           }}
         />
         
@@ -342,7 +342,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
               viewport={{ once: true }}
               transition={{ duration: 0.6 }}
               className="font-serif text-3xl sm:text-4xl font-bold mb-6"
-              style={{ color: '#F6F0E8' }}
+              style={{ color: '#F6FAFC' }}
             >
               Take the Next Step
             </motion.h2>
@@ -352,7 +352,7 @@ export default function ServicePageContent({ service, content }: ServicePageCont
               viewport={{ once: true }}
               transition={{ duration: 0.6, delay: 0.1 }}
               className="text-lg mb-10 max-w-2xl mx-auto"
-              style={{ color: '#CDBDAF' }}
+              style={{ color: '#B8C4CF' }}
             >
               Whether you&apos;re seeking support, looking to partner, or want to contribute to this work, 
               we&apos;re here to connect with you.

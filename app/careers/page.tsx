@@ -42,7 +42,7 @@ export default async function CareersPage() {
   const jobs = await getActiveJobs()
 
   return (
-    <div className="min-h-screen bg-charcoal">
+    <div className="min-h-screen">
       {/* Hero Section */}
       <section className="relative py-16 md:py-24 bg-gradient-to-b from-charcoal to-charcoal-800">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
@@ -79,7 +79,7 @@ export default async function CareersPage() {
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-3xl mx-auto text-center">
             <div className="w-16 h-16 rounded-full bg-teal/20 flex items-center justify-center mx-auto mb-6">
-              <Heart className="w-8 h-8 text-teal" />
+              <Heart className="w-8 h-8 text-heart" />
             </div>
             <h2 className="font-playfair text-2xl md:text-3xl font-bold text-cream-100 mb-4">
               Why Work With Us?
@@ -191,7 +191,7 @@ function EmptyState() {
   return (
     <div className="max-w-2xl mx-auto text-center py-16">
       <div className="w-20 h-20 rounded-full bg-charcoal-700 flex items-center justify-center mx-auto mb-6">
-        <Briefcase className="w-10 h-10 text-cream-100/40" />
+        <Briefcase className="w-10 h-10 text-silver-label" />
       </div>
       <h2 className="font-playfair text-2xl font-bold text-cream-100 mb-4">
         No Open Positions Right Now

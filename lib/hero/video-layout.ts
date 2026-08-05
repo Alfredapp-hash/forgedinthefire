@@ -3,10 +3,10 @@ import type { CSSProperties } from 'react';
 /** Single source of truth for hero video geometry + placement */
 export const HERO_VIDEO_LAYOUT = {
   aspectRatio: 16 / 9,
-  bleedCss: '0.5in',
-  objectPosition: { x: 0.5, y: 0.38 },
-  scale: 1.08,
-  maskCenter: { x: 50, y: 38 },
+  bleedCss: '0.35in',
+  objectPosition: { x: 0.5, y: 0.45 },
+  scale: 1.04,
+  maskCenter: { x: 50, y: 42 },
 } as const;
 
 export const HERO_PLACEMENT = {
@@ -72,8 +72,8 @@ export function computeMainVideoDrawRect(
 export function getVideoMaskGradient(): string {
   const { maskCenter } = HERO_VIDEO_LAYOUT;
   return [
-    `linear-gradient(180deg, #000 0%, #000 52%, rgba(0,0,0,0.92) 68%, rgba(0,0,0,0.55) 82%, rgba(0,0,0,0.12) 94%, transparent 100%)`,
-    `radial-gradient(ellipse 165% 105% at ${maskCenter.x}% ${maskCenter.y}%, #000 62%, transparent 100%)`,
+    `linear-gradient(180deg, #000 0%, #000 58%, rgba(0,0,0,0.94) 74%, rgba(0,0,0,0.5) 88%, rgba(0,0,0,0.08) 96%, transparent 100%)`,
+    `radial-gradient(ellipse 170% 110% at ${maskCenter.x}% ${maskCenter.y}%, #000 68%, transparent 100%)`,
   ].join(', ');
 }
 

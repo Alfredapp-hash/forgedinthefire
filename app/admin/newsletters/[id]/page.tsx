@@ -47,9 +47,9 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
   if (!supabase) {
     return (
       <div className="max-w-4xl mx-auto p-8">
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-6">
-          <h2 className="text-amber-400 font-medium mb-2">Database Not Connected</h2>
-          <p className="text-amber-400/80 text-sm">
+        <div className="bg-[#53D6FF]/10 border border-[#53D6FF]/30 rounded-lg p-6">
+          <h2 className="text-[#8DEBFF] font-medium mb-2">Database Not Connected</h2>
+          <p className="text-[#8DEBFF]/80 text-sm">
             Supabase environment variables are missing. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.
           </p>
         </div>
@@ -247,7 +247,7 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-[#1E6B73]" />
+        <Loader2 className="w-8 h-8 animate-spin text-[#53D6FF]" />
       </div>
     )
   }
@@ -264,16 +264,16 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
         <div>
           <Link
             href="/admin/newsletters"
-            className="inline-flex items-center gap-2 text-sm text-[#8B5E3C] hover:text-[#C8A46B] transition-colors mb-2"
+            className="inline-flex items-center gap-2 text-sm text-[#A9B8C6] hover:text-[#8DEBFF] transition-colors mb-2"
           >
             <ArrowLeft className="w-4 h-4" />
             Back to Newsletters
           </Link>
-          <h1 className="text-2xl font-bold text-[#1E1714]">{newsletter.title}</h1>
-          <p className="text-sm text-[#8B5E3C]">
+          <h1 className="text-2xl font-bold text-[#F6FAFC]">{newsletter.title}</h1>
+          <p className="text-sm text-[#A9B8C6]">
             {new Date(newsletter.year, newsletter.month - 1).toLocaleString('en-US', { month: 'long', year: 'numeric' })}
             {isSent && (
-              <span className="ml-2 text-emerald-600">
+              <span className="ml-2 text-[#8DEBFF]">
                 • Sent {newsletter.sent_at && new Date(newsletter.sent_at).toLocaleDateString()}
               </span>
             )}
@@ -286,7 +286,7 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
               onClick={handleSave}
               disabled={saving}
               variant="outline"
-              className="border-[#3A2A24]/20"
+              className="border-[#27313B]"
             >
               {saving ? (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -301,11 +301,11 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
 
       {/* Email Config Warning */}
       {!emailConfigured && !isSent && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5" />
+        <div className="bg-[#53D6FF]/10 border border-[#53D6FF]/30 rounded-xl p-4 mb-6 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-[#8DEBFF] mt-0.5" />
           <div>
-            <p className="font-medium text-amber-800">Email delivery not configured</p>
-            <p className="text-sm text-amber-700 mt-1">
+            <p className="font-medium text-[#8DEBFF]">Email delivery not configured</p>
+            <p className="text-sm text-[#8DEBFF] mt-1">
               You can create and save drafts, but emails cannot be sent until an email provider is configured.
             </p>
           </div>
@@ -315,8 +315,8 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
       <div className="space-y-6">
         {/* Intro Message */}
         {!isSent && (
-          <div className="bg-white rounded-xl border border-[#3A2A24]/20 p-6">
-            <Label htmlFor="intro" className="block text-sm font-medium text-[#1E1714] mb-2">
+          <div className="bg-[#151B22] rounded-xl border border-[#27313B] p-6">
+            <Label htmlFor="intro" className="block text-sm font-medium text-[#F6FAFC] mb-2">
               Introduction Message
             </Label>
             <Textarea
@@ -327,33 +327,33 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
               rows={4}
               className="resize-none"
             />
-            <p className="text-xs text-[#8B5E3C] mt-2">
+            <p className="text-xs text-[#A9B8C6] mt-2">
               This appears at the top of the newsletter before the blog posts.
             </p>
           </div>
         )}
 
         {isSent && introMessage && (
-          <div className="bg-white rounded-xl border border-[#3A2A24]/20 p-6">
-            <Label className="block text-sm font-medium text-[#1E1714] mb-2">
+          <div className="bg-[#151B22] rounded-xl border border-[#27313B] p-6">
+            <Label className="block text-sm font-medium text-[#F6FAFC] mb-2">
               Introduction Message
             </Label>
-            <p className="text-[#CDBDAF] whitespace-pre-wrap">{introMessage}</p>
+            <p className="text-[#B8C4CF] whitespace-pre-wrap">{introMessage}</p>
           </div>
         )}
 
         {/* Selected Posts */}
-        <div className="bg-white rounded-xl border border-[#3A2A24]/20 p-6">
+        <div className="bg-[#151B22] rounded-xl border border-[#27313B] p-6">
           <div className="flex items-center justify-between mb-4">
-            <Label className="text-[#1E1714] font-medium">
+            <Label className="text-[#F6FAFC] font-medium">
               Selected Blog Posts ({selectedPosts.length})
             </Label>
           </div>
           
           {selectedPostData.length === 0 ? (
-            <div className="text-center py-8 bg-[#f4f6f9] rounded-lg">
-              <Mail className="w-8 h-8 text-[#8B5E3C]/40 mx-auto mb-2" />
-              <p className="text-sm text-[#8B5E3C]">
+            <div className="text-center py-8 bg-[#05070A] rounded-lg">
+              <Mail className="w-8 h-8 text-[#A9B8C6]/40 mx-auto mb-2" />
+              <p className="text-sm text-[#A9B8C6]">
                 No posts selected. Choose posts from the list below.
               </p>
             </div>
@@ -362,32 +362,32 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
               {selectedPostData.map((post, index) => (
                 <div
                   key={post.id}
-                  className="flex items-center gap-3 p-3 bg-[#f4f6f9] rounded-lg"
+                  className="flex items-center gap-3 p-3 bg-[#05070A] rounded-lg"
                 >
                   {!isSent && (
                     <>
-                      <GripVertical className="w-4 h-4 text-[#8B5E3C] cursor-move" />
+                      <GripVertical className="w-4 h-4 text-[#A9B8C6] cursor-move" />
                       <button
                         onClick={() => movePost(index, 'up')}
                         disabled={index === 0}
-                        className="text-[#8B5E3C] hover:text-[#1E6B73] disabled:opacity-30"
+                        className="text-[#A9B8C6] hover:text-[#53D6FF] disabled:opacity-30"
                       >
                         ↑
                       </button>
                       <button
                         onClick={() => movePost(index, 'down')}
                         disabled={index === selectedPostData.length - 1}
-                        className="text-[#8B5E3C] hover:text-[#1E6B73] disabled:opacity-30"
+                        className="text-[#A9B8C6] hover:text-[#53D6FF] disabled:opacity-30"
                       >
                         ↓
                       </button>
                     </>
                   )}
                   <div className="flex-1">
-                    <p className="font-medium text-[#1E1714]">{post.title}</p>
-                    <p className="text-sm text-[#8B5E3C]">
+                    <p className="font-medium text-[#F6FAFC]">{post.title}</p>
+                    <p className="text-sm text-[#A9B8C6]">
                       {post.featuredInNewsletter && (
-                        <span className="text-[#C8A46B] mr-2">★ Featured</span>
+                        <span className="text-[#8DEBFF] mr-2">★ Featured</span>
                       )}
                       {post.excerpt?.slice(0, 80)}...
                     </p>
@@ -395,7 +395,7 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
                   {!isSent && (
                     <button
                       onClick={() => togglePost(post.id)}
-                      className="text-[#8B5E3C] hover:text-red-500"
+                      className="text-[#A9B8C6] hover:text-[#8DEBFF]"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -408,19 +408,19 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
 
         {/* Available Posts */}
         {!isSent && (
-          <div className="bg-white rounded-xl border border-[#3A2A24]/20 p-6">
-            <Label className="block text-sm font-medium text-[#1E1714] mb-4">
+          <div className="bg-[#151B22] rounded-xl border border-[#27313B] p-6">
+            <Label className="block text-sm font-medium text-[#F6FAFC] mb-4">
               Available Posts (marked for newsletter)
             </Label>
             
             {posts.length === 0 ? (
-              <div className="text-center py-8 bg-[#f4f6f9] rounded-lg">
-                <p className="text-sm text-[#8B5E3C] mb-2">
+              <div className="text-center py-8 bg-[#05070A] rounded-lg">
+                <p className="text-sm text-[#A9B8C6] mb-2">
                   No posts marked for newsletter inclusion.
                 </p>
                 <Link
                   href="/admin/blog"
-                  className="text-[#1E6B73] hover:text-[#4C9AA3] text-sm font-medium"
+                  className="text-[#53D6FF] hover:text-[#53D6FF] text-sm font-medium"
                 >
                   Go to Blog Studio →
                 </Link>
@@ -432,19 +432,19 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
                   .map((post) => (
                     <label
                       key={post.id}
-                      className="flex items-start gap-3 p-3 rounded-lg hover:bg-[#f4f6f9] cursor-pointer"
+                      className="flex items-start gap-3 p-3 rounded-lg hover:bg-[#1A232C] cursor-pointer"
                     >
                       <input
                         type="checkbox"
                         checked={selectedPosts.includes(post.id)}
                         onChange={() => togglePost(post.id)}
-                        className="mt-1 rounded border-[#3A2A24]/20"
+                        className="mt-1 rounded border-[#27313B]"
                       />
                       <div className="flex-1">
-                        <p className="font-medium text-[#1E1714] text-sm">{post.title}</p>
-                        <p className="text-xs text-[#8B5E3C]">
+                        <p className="font-medium text-[#F6FAFC] text-sm">{post.title}</p>
+                        <p className="text-xs text-[#A9B8C6]">
                           {post.newsletterCategory && (
-                            <span className="text-[#1E6B73] mr-2">{post.newsletterCategory}</span>
+                            <span className="text-[#53D6FF] mr-2">{post.newsletterCategory}</span>
                           )}
                           {post.excerpt?.slice(0, 60)}...
                         </p>
@@ -458,8 +458,8 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
 
         {/* Closing Message */}
         {!isSent && (
-          <div className="bg-white rounded-xl border border-[#3A2A24]/20 p-6">
-            <Label htmlFor="closing" className="block text-sm font-medium text-[#1E1714] mb-2">
+          <div className="bg-[#151B22] rounded-xl border border-[#27313B] p-6">
+            <Label htmlFor="closing" className="block text-sm font-medium text-[#F6FAFC] mb-2">
               Closing Message
             </Label>
             <Textarea
@@ -470,42 +470,42 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
               rows={4}
               className="resize-none"
             />
-            <p className="text-xs text-[#8B5E3C] mt-2">
+            <p className="text-xs text-[#A9B8C6] mt-2">
               This appears at the bottom of the newsletter after all posts.
             </p>
           </div>
         )}
 
         {isSent && closingMessage && (
-          <div className="bg-white rounded-xl border border-[#3A2A24]/20 p-6">
-            <Label className="block text-sm font-medium text-[#1E1714] mb-2">
+          <div className="bg-[#151B22] rounded-xl border border-[#27313B] p-6">
+            <Label className="block text-sm font-medium text-[#F6FAFC] mb-2">
               Closing Message
             </Label>
-            <p className="text-[#CDBDAF] whitespace-pre-wrap">{closingMessage}</p>
+            <p className="text-[#B8C4CF] whitespace-pre-wrap">{closingMessage}</p>
           </div>
         )}
 
         {/* Test & Send */}
         {!isSent && (
-          <div className="bg-[#1E1714] rounded-xl border border-[#3A2A24] p-6">
-            <h3 className="text-lg font-bold text-[#C8A46B] mb-4">Send Newsletter</h3>
+          <div className="bg-[#05070A] rounded-xl border border-[#27313B] p-6">
+            <h3 className="text-lg font-bold text-[#8DEBFF] mb-4">Send Newsletter</h3>
             
             {/* Test Send */}
             <div className="mb-6">
-              <Label className="text-[#CDBDAF] mb-2 block">Send Test Email</Label>
+              <Label className="text-[#B8C4CF] mb-2 block">Send Test Email</Label>
               <div className="flex gap-2">
                 <Input
                   type="email"
                   value={testEmail}
                   onChange={(e) => setTestEmail(e.target.value)}
                   placeholder="your@email.com"
-                  className="bg-[#181210] border-[#3A2A24] text-[#F6F0E8] placeholder:text-[#8B5E3C]"
+                  className="bg-[#05070A] border-[#27313B] text-[#F6FAFC] placeholder:text-[#A9B8C6]"
                 />
                 <Button
                   onClick={handleSendTest}
                   disabled={sending || !testEmail}
                   variant="outline"
-                  className="border-[#3A2A24] text-[#C8A46B] hover:bg-[#3A2A24]"
+                  className="border-[#27313B] text-[#8DEBFF] hover:bg-[#1A232C]"
                 >
                   {sending ? (
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -517,21 +517,21 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
               </div>
               
               {sendResult && (
-                <div className={`mt-2 text-sm ${sendResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+                <div className={`mt-2 text-sm ${sendResult.success ? 'text-[#8DEBFF]' : 'text-[#8DEBFF]'}`}>
                   {sendResult.message}
                 </div>
               )}
             </div>
 
             {/* Send to All */}
-            <div className="border-t border-[#3A2A24] pt-4">
-              <p className="text-[#CDBDAF] text-sm mb-4">
+            <div className="border-t border-[#27313B] pt-4">
+              <p className="text-[#B8C4CF] text-sm mb-4">
                 This will send the newsletter to all subscribers who opted into the Monthly Newsletter.
               </p>
               <Button
                 onClick={handleSendToAll}
                 disabled={sending || !emailConfigured || selectedPosts.length === 0}
-                className="bg-[#1E6B73] hover:bg-[#4C9AA3] text-white"
+                className="bg-[#53D6FF] hover:bg-[#82E8FF] text-[#061016]"
               >
                 {sending ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -542,7 +542,7 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
               </Button>
               
               {!emailConfigured && (
-                <p className="text-amber-400 text-sm mt-2">
+                <p className="text-[#8DEBFF] text-sm mt-2">
                   Email delivery must be configured before sending.
                 </p>
               )}
@@ -551,10 +551,10 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
         )}
 
         {isSent && (
-          <div className="bg-emerald-50 rounded-xl border border-emerald-200 p-6 text-center">
-            <CheckCircle className="w-12 h-12 text-emerald-600 mx-auto mb-2" />
-            <p className="font-semibold text-emerald-800">Newsletter Sent</p>
-            <p className="text-sm text-emerald-700">
+          <div className="bg-[#8DEBFF]/15 rounded-xl border border-[#8DEBFF]/30 p-6 text-center">
+            <CheckCircle className="w-12 h-12 text-[#8DEBFF] mx-auto mb-2" />
+            <p className="font-semibold text-[#8DEBFF]">Newsletter Sent</p>
+            <p className="text-sm text-[#8DEBFF]">
               This newsletter was sent to {newsletter.recipient_count || 0} subscribers on{' '}
               {newsletter.sent_at && new Date(newsletter.sent_at).toLocaleDateString()}.
             </p>

@@ -145,26 +145,26 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#1E1714] p-4">
+    <div className="min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-2xl bg-[#C8A46B]/10 flex items-center justify-center mx-auto mb-4 border border-[#C8A46B]/30">
-            <Flame className="w-8 h-8 text-[#C8A46B]" />
+          <div className="w-16 h-16 rounded-2xl bg-[#53D6FF]/10 flex items-center justify-center mx-auto mb-4 border border-[#8DEBFF]/30">
+            <Flame className="w-8 h-8 text-[#8DEBFF]" />
           </div>
-          <h1 className="text-2xl font-bold text-[#F6F0E8] mb-1">Admin Login</h1>
-          <p className="text-[#B8A89A]">Forged in the Fire</p>
+          <h1 className="text-2xl font-bold text-[#F6FAFC] mb-1">Admin Login</h1>
+          <p className="text-[#A9B8C6]">Forged in the Fire</p>
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="bg-[#241B18] rounded-2xl p-8 border border-[#3A2A24]">
+        <form onSubmit={handleSubmit} className="bg-[#11161C] rounded-2xl p-8 border border-[#1A232C]">
           {configMissing && (
-            <div className="mb-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+            <div className="mb-4 p-4 bg-[#53D6FF]/10 border border-[#53D6FF]/30 rounded-lg">
               <div className="flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <AlertTriangle className="w-5 h-5 text-[#8DEBFF] shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-amber-400 font-medium text-sm mb-1">Authentication Not Configured</p>
-                  <p className="text-amber-400/80 text-sm">
+                  <p className="text-[#8DEBFF] font-medium text-sm mb-1">Authentication Not Configured</p>
+                  <p className="text-[#8DEBFF]/80 text-sm">
                     Supabase environment variables are missing. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.
                   </p>
                 </div>
@@ -173,23 +173,23 @@ export default function LoginPage() {
           )}
           
           {error && !configMissing && (
-            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
+            <div className="mb-4 p-3 bg-[#8DEBFF]/10 border border-[#8DEBFF]/35 rounded-lg text-[#8DEBFF] text-sm">
               {error}
               {debugInfo && (
-                <p className="mt-1 text-xs text-red-400/70 font-mono">{debugInfo}</p>
+                <p className="mt-1 text-xs text-[#8DEBFF]/70 font-mono">{debugInfo}</p>
               )}
             </div>
           )}
 
           {resetSent && (
-            <div className="mb-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-green-400 text-sm">
+            <div className="mb-4 p-3 bg-[#8DEBFF]/10 border border-[#8DEBFF]/30 rounded-lg text-[#8DEBFF] text-sm">
               Password reset email sent! Check your inbox at {normalizeEmail(email)}
             </div>
           )}
 
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-[#CDBDAF] mb-1.5">
+              <label className="block text-sm font-medium text-[#B8C4CF] mb-1.5">
                 Email
               </label>
               <input
@@ -198,13 +198,13 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 disabled={configMissing}
-                className="w-full bg-[#1E1714] border border-[#3A2A24] rounded-lg px-4 py-2.5 text-[#F6F0E8] placeholder-[#8B5E3C] focus:outline-none focus:border-[#C8A46B] transition-colors disabled:opacity-50"
+                className="w-full bg-[#05070A] border border-[#1A232C] rounded-lg px-4 py-2.5 text-[#F6FAFC] placeholder-[#A9B8C6] focus:outline-none focus:border-[#8DEBFF] transition-colors disabled:opacity-50"
                 placeholder="admin@forgedinthefireohio.org"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-[#CDBDAF] mb-1.5">
+              <label className="block text-sm font-medium text-[#B8C4CF] mb-1.5">
                 Password
               </label>
               <div className="relative">
@@ -214,14 +214,14 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   disabled={configMissing}
-                  className="w-full bg-[#1E1714] border border-[#3A2A24] rounded-lg px-4 py-2.5 text-[#F6F0E8] placeholder-[#8B5E3C] focus:outline-none focus:border-[#C8A46B] transition-colors disabled:opacity-50"
+                  className="w-full bg-[#05070A] border border-[#1A232C] rounded-lg px-4 py-2.5 text-[#F6FAFC] placeholder-[#A9B8C6] focus:outline-none focus:border-[#8DEBFF] transition-colors disabled:opacity-50"
                   placeholder="••••••••"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   disabled={configMissing}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8B5E3C] hover:text-[#C8A46B] transition-colors disabled:opacity-50"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#A9B8C6] hover:text-[#8DEBFF] transition-colors disabled:opacity-50"
                 >
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
@@ -231,7 +231,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading || !supabase || configMissing}
-              className="w-full bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8] font-medium py-2.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-[#53D6FF] hover:bg-[#82E8FF] text-[#061016] font-medium py-2.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? 'Signing in...' : !supabase ? 'Initializing...' : 'Sign In'}
             </button>
@@ -240,26 +240,26 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={() => setShowResetForm(!showResetForm)}
-                className="text-sm text-[#8B5E3C] hover:text-[#C8A46B] transition-colors"
+                className="text-sm text-[#A9B8C6] hover:text-[#8DEBFF] transition-colors"
               >
                 {showResetForm ? 'Back to login' : 'Forgot password?'}
               </button>
               
               <a 
                 href="/admin-setup" 
-                className="text-sm text-[#8B5E3C] hover:text-[#C8A46B] transition-colors"
+                className="text-sm text-[#A9B8C6] hover:text-[#8DEBFF] transition-colors"
               >
                 Admin Setup →
               </a>
             </div>
 
             {showResetForm && (
-              <div className="pt-4 border-t border-[#3A2A24]">
+              <div className="pt-4 border-t border-[#1A232C]">
                 <button
                   type="button"
                   onClick={handleResetPassword}
                   disabled={loading || !supabase || !email}
-                  className="w-full flex items-center justify-center gap-2 bg-transparent hover:bg-[#3A2A24] text-[#C8A46B] font-medium py-2.5 rounded-lg transition-colors border border-[#C8A46B]/30 disabled:opacity-50"
+                  className="w-full flex items-center justify-center gap-2 bg-transparent hover:bg-[#1A232C] text-[#8DEBFF] font-medium py-2.5 rounded-lg transition-colors border border-[#8DEBFF]/30 disabled:opacity-50"
                 >
                   <KeyRound size={16} />
                   Send Password Reset Email
@@ -268,15 +268,15 @@ export default function LoginPage() {
             )}
           </div>
 
-          <div className="mt-6 pt-6 border-t border-[#3A2A24] text-center">
-            <a href="/" className="text-sm text-[#8B5E3C] hover:text-[#C8A46B] transition-colors">
+          <div className="mt-6 pt-6 border-t border-[#1A232C] text-center">
+            <a href="/" className="text-sm text-[#A9B8C6] hover:text-[#8DEBFF] transition-colors">
               ← Back to website
             </a>
           </div>
         </form>
 
         {/* Security Note */}
-        <p className="text-center text-xs text-[#8B5E3C] mt-6">
+        <p className="text-center text-xs text-[#A9B8C6] mt-6">
           This area is restricted to authorized personnel only.
           <br />
           All access is logged for security purposes.

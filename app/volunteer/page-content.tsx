@@ -60,21 +60,21 @@ export default function VolunteerPage() {
                 <Shield className="h-8 w-8 text-ember" />
               </div>
               <h3 className="font-serif text-xl font-semibold text-cream-100 mb-2">Make an Impact</h3>
-              <p className="text-cream-300/70">Directly support survivors in their journey to healing and independence</p>
+              <p className="text-silver-label">Directly support survivors in their journey to healing and independence</p>
             </div>
             <div>
               <div className="w-16 h-16 rounded-full bg-healing/10 flex items-center justify-center mx-auto mb-4">
                 <Award className="h-8 w-8 text-healing" />
               </div>
               <h3 className="font-serif text-xl font-semibold text-cream-100 mb-2">Gain Skills</h3>
-              <p className="text-cream-300/70">Receive comprehensive training in trauma-informed care and advocacy</p>
+              <p className="text-silver-label">Receive comprehensive training in trauma-informed care and advocacy</p>
             </div>
             <div>
               <div className="w-16 h-16 rounded-full bg-ember/10 flex items-center justify-center mx-auto mb-4">
                 <Users className="h-8 w-8 text-ember" />
               </div>
               <h3 className="font-serif text-xl font-semibold text-cream-100 mb-2">Join a Community</h3>
-              <p className="text-cream-300/70">Connect with passionate advocates and survivor-leaders</p>
+              <p className="text-silver-label">Connect with passionate advocates and survivor-leaders</p>
             </div>
           </div>
         </div>
@@ -104,9 +104,9 @@ export default function VolunteerPage() {
                     <span>{role.timeCommitment}</span>
                   </div>
                   <div className="space-y-2">
-                    <p className="text-sm text-cream-300/60 font-medium">Requirements:</p>
+                    <p className="text-sm text-silver-label font-medium">Requirements:</p>
                     {role.requirements.map((req, i) => (
-                      <div key={i} className="flex items-center gap-2 text-sm text-cream-300/70">
+                      <div key={i} className="flex items-center gap-2 text-sm text-silver-label">
                         <Check className="h-3 w-3 text-ember" />
                         <span>{req}</span>
                       </div>
@@ -142,7 +142,7 @@ export default function VolunteerPage() {
                       </div>
                       <div>
                         <h3 className="font-semibold text-cream-100">{item.title}</h3>
-                        <p className="text-cream-300/70">{item.desc}</p>
+                        <p className="text-silver-label">{item.desc}</p>
                       </div>
                     </div>
                   ))}

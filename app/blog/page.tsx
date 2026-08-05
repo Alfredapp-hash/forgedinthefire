@@ -11,33 +11,33 @@ import type { ContentCategory } from '@/src/features/content/types'
 // Newsletter signup component that opens the navbar subscribe modal via URL param
 function NewsletterSection() {
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-[#241B18] border border-[#3A2A24] shadow-lg">
+    <div className="relative overflow-hidden rounded-2xl bg-[#11161C] border border-[#1A232C] shadow-lg">
       {/* Decorative gradient line */}
-      <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-[#1E6B73] via-[#C8A46B] to-[#1E6B73]" />
+      <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-[#53D6FF] via-[#8DEBFF] to-[#53D6FF]" />
       
       {/* Subtle background glow */}
-      <div className="absolute top-0 right-0 w-64 h-64 bg-[#1E6B73]/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3" />
-      <div className="absolute bottom-0 left-0 w-48 h-48 bg-[#C8A46B]/5 rounded-full blur-3xl translate-y-1/2 -translate-x-1/3" />
+      <div className="absolute top-0 right-0 w-64 h-64 bg-[#53D6FF]/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3" />
+      <div className="absolute bottom-0 left-0 w-48 h-48 bg-[#53D6FF]/5 rounded-full blur-3xl translate-y-1/2 -translate-x-1/3" />
       
       <div className="relative p-8 md:p-10">
         <div className="flex flex-col lg:flex-row lg:items-center gap-6 lg:gap-10">
           {/* Left side - Content */}
           <div className="lg:w-1/2">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-xl bg-[#1E6B73]/20 flex items-center justify-center border border-[#1E6B73]/30">
-                <Mail className="w-5 h-5 text-[#4C9AA3]" />
+              <div className="w-10 h-10 rounded-xl bg-[#53D6FF]/20 flex items-center justify-center border border-[#53D6FF]/30">
+                <Mail className="w-5 h-5 text-[#53D6FF]" />
               </div>
-              <div className="flex items-center gap-1.5 text-[#C8A46B]">
+              <div className="flex items-center gap-1.5 text-[#8DEBFF]">
                 <Sparkles className="w-3.5 h-3.5" />
                 <span className="text-xs font-medium tracking-wider uppercase">Monthly Newsletter</span>
               </div>
             </div>
             
-            <h3 className="font-serif text-2xl font-semibold text-[#F6F0E8] mb-3">
+            <h3 className="font-serif text-2xl font-semibold text-[#F6FAFC] mb-3">
               Stay Connected
             </h3>
             
-            <p className="text-[#CDBDAF] leading-relaxed">
+            <p className="text-[#B8C4CF] leading-relaxed">
               Subscribe to receive Forged in the Fire updates, survivor support resources, 
               community news, and new blog posts directly in your inbox.
             </p>
@@ -45,14 +45,14 @@ function NewsletterSection() {
 
           {/* Right side - CTA */}
           <div className="lg:w-1/2 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-            <div className="flex-1 text-sm text-[#B8A89A]">
+            <div className="flex-1 text-sm text-[#A9B8C6]">
               <p>No spam. Unsubscribe anytime.</p>
               <p>We respect your privacy.</p>
             </div>
             <Button 
               asChild
               size="lg" 
-              className="bg-[#1E6B73] hover:bg-[#4C9AA3] text-[#F6F0E8] px-8 shadow-lg shadow-[#1E6B73]/20 transition-all duration-300"
+              className="bg-[#53D6FF] hover:bg-[#82E8FF] text-[#061016] px-8 shadow-lg shadow-[#53D6FF]/20 transition-all duration-300"
             >
               <Link href="/?subscribe=1">Subscribe</Link>
             </Button>
@@ -94,18 +94,18 @@ const categoryFilters: { value: ContentCategory | ''; label: string }[] = [
 // Error fallback component
 function BlogErrorState() {
   return (
-    <div className="min-h-screen bg-[#181210]">
+    <div className="min-h-screen">
       {/* Hero Section */}
-      <section className="relative py-16 md:py-24 bg-[#181210]">
+      <section className="relative py-16 md:py-24 bg-transparent">
         <div className="container-wide section-padding">
           <div className="max-w-3xl mx-auto text-center">
-            <span className="text-[#4C9AA3] font-medium text-sm tracking-widest uppercase mb-4 block">
+            <span className="text-[#53D6FF] font-medium text-sm tracking-widest uppercase mb-4 block">
               Forged in the Fire Blog
             </span>
-            <h1 className="font-serif text-4xl md:text-5xl font-bold text-[#F6F0E8] mb-6 leading-tight">
+            <h1 className="font-serif text-4xl md:text-5xl font-bold text-[#F6FAFC] mb-6 leading-tight">
               Stories, Resources, and Updates
             </h1>
-            <p className="text-lg text-[#CDBDAF] leading-relaxed">
+            <p className="text-lg text-[#B8C4CF] leading-relaxed">
               Read survivor centered resources, organizational updates, and community news from Forged in the Fire.
             </p>
           </div>
@@ -115,14 +115,14 @@ function BlogErrorState() {
       {/* Error Message */}
       <section className="py-12">
         <div className="container-wide section-padding">
-          <div className="max-w-xl mx-auto text-center py-16 px-6 bg-[#241B18] rounded-2xl border border-[#3A2A24]">
-            <div className="w-16 h-16 rounded-full bg-[#3A2A24] flex items-center justify-center mx-auto mb-6">
-              <FileText className="w-8 h-8 text-[#B8A89A]" />
+          <div className="max-w-xl mx-auto text-center py-16 px-6 bg-[#11161C] rounded-2xl border border-[#1A232C]">
+            <div className="w-16 h-16 rounded-full bg-[#1A232C] flex items-center justify-center mx-auto mb-6">
+              <FileText className="w-8 h-8 text-[#A9B8C6]" />
             </div>
-            <h2 className="font-serif text-xl text-[#F6F0E8] mb-3">
+            <h2 className="font-serif text-xl text-[#F6FAFC] mb-3">
               We could not load blog posts right now.
             </h2>
-            <p className="text-[#CDBDAF] mb-6">
+            <p className="text-[#B8C4CF] mb-6">
               Please check back soon for survivor resources, organizational updates, and monthly newsletters.
             </p>
             <Button asChild>
@@ -138,14 +138,14 @@ function BlogErrorState() {
 // Empty state component
 function BlogEmptyState({ category }: { category?: string }) {
   return (
-    <div className="text-center py-16 px-6 bg-[#241B18]/50 rounded-2xl border border-[#3A2A24]">
-      <div className="w-14 h-14 rounded-full bg-[#3A2A24] flex items-center justify-center mx-auto mb-5">
-        <FileText className="w-7 h-7 text-[#B8A89A]" />
+    <div className="text-center py-16 px-6 bg-[#11161C]/50 rounded-2xl border border-[#1A232C]">
+      <div className="w-14 h-14 rounded-full bg-[#1A232C] flex items-center justify-center mx-auto mb-5">
+        <FileText className="w-7 h-7 text-[#A9B8C6]" />
       </div>
-      <p className="font-serif text-lg text-[#F6F0E8] mb-2">
+      <p className="font-serif text-lg text-[#F6FAFC] mb-2">
         {category ? 'No posts in this category yet.' : 'No blog posts have been published yet.'}
       </p>
-      <p className="text-[#CDBDAF] text-sm max-w-md mx-auto">
+      <p className="text-[#B8C4CF] text-sm max-w-md mx-auto">
         Check back soon for survivor resources, organizational updates, and monthly newsletters.
       </p>
     </div>
@@ -155,7 +155,7 @@ function BlogEmptyState({ category }: { category?: string }) {
 // Featured Post Card
 function FeaturedPostCard({ post }: { post: Awaited<ReturnType<typeof getBlogPosts>>[0] }) {
   return (
-    <Card className="group overflow-hidden bg-[#241B18] border-[#3A2A24] hover:border-[#C8A46B]/50 transition-all duration-300">
+    <Card className="group overflow-hidden bg-[#11161C] border-[#1A232C] hover:border-[#8DEBFF]/50 transition-all duration-300">
       <Link href={`/blog/${post.slug}`} className="block">
         <div className="relative aspect-[16/10] overflow-hidden">
           {post.featuredImage?.url ? (
@@ -166,24 +166,24 @@ function FeaturedPostCard({ post }: { post: Awaited<ReturnType<typeof getBlogPos
               className="object-cover group-hover:scale-105 transition-transform duration-500"
             />
           ) : (
-            <div className="absolute inset-0 bg-gradient-to-br from-[#1E6B73]/20 to-[#241B18] flex items-center justify-center">
-              <span className="font-serif text-2xl text-[#F6F0E8]/20">Forged</span>
+            <div className="absolute inset-0 bg-gradient-to-br from-[#53D6FF]/20 to-[#11161C] flex items-center justify-center">
+              <span className="font-serif text-2xl text-[#27313B]">Forged</span>
             </div>
           )}
           <div className="absolute top-4 left-4">
-            <Badge className="bg-[#C8A46B] text-[#181210] font-semibold text-xs">
+            <Badge className="bg-[#53D6FF] text-[#05070A] font-semibold text-xs">
               {getCategoryLabel(post.category)}
             </Badge>
           </div>
         </div>
         <CardContent className="p-6">
-          <h3 className="font-serif text-xl font-semibold text-[#F6F0E8] mb-2 group-hover:text-[#C8A46B] transition-colors line-clamp-2">
+          <h3 className="font-serif text-xl font-semibold text-[#F6FAFC] mb-2 group-hover:text-[#8DEBFF] transition-colors line-clamp-2">
             {post.title}
           </h3>
-          <p className="text-[#CDBDAF] text-sm line-clamp-3 mb-4">
+          <p className="text-[#B8C4CF] text-sm line-clamp-3 mb-4">
             {post.excerpt || 'Read more about this topic...'}
           </p>
-          <div className="flex items-center gap-4 text-xs text-[#B8A89A]">
+          <div className="flex items-center gap-4 text-xs text-[#A9B8C6]">
             <span className="flex items-center gap-1">
               <Calendar className="w-3.5 h-3.5" />
               {formatDate(post.publishedAt || post.createdAt)}
@@ -204,7 +204,7 @@ function FeaturedPostCard({ post }: { post: Awaited<ReturnType<typeof getBlogPos
 // Regular Post Card
 function PostCard({ post }: { post: Awaited<ReturnType<typeof getBlogPosts>>[0] }) {
   return (
-    <Card className="group overflow-hidden bg-[#241B18] border-[#3A2A24] hover:border-[#1E6B73]/50 transition-all duration-300">
+    <Card className="group overflow-hidden bg-[#11161C] border-[#1A232C] hover:border-[#53D6FF]/50 transition-all duration-300">
       <Link href={`/blog/${post.slug}`} className="block">
         <div className="relative aspect-[16/10] overflow-hidden">
           {post.featuredImage?.url ? (
@@ -215,28 +215,28 @@ function PostCard({ post }: { post: Awaited<ReturnType<typeof getBlogPosts>>[0] 
               className="object-cover group-hover:scale-105 transition-transform duration-500"
             />
           ) : (
-            <div className="absolute inset-0 bg-gradient-to-br from-[#3A2A24] to-[#241B18] flex items-center justify-center">
-              <span className="font-serif text-xl text-[#F6F0E8]/15">Forged</span>
+            <div className="absolute inset-0 bg-gradient-to-br from-[#1A232C] to-[#11161C] flex items-center justify-center">
+              <span className="font-serif text-xl text-[#27313B]">Forged</span>
             </div>
           )}
         </div>
         <CardContent className="p-5">
           <div className="flex items-center gap-2 mb-3">
-            <Badge variant="secondary" className="bg-[#3A2A24] text-[#CDBDAF] text-xs border-0">
+            <Badge variant="secondary" className="bg-[#1A232C] text-[#B8C4CF] text-xs border-0">
               {getCategoryLabel(post.category)}
             </Badge>
-            <span className="text-xs text-[#B8A89A] flex items-center gap-1">
+            <span className="text-xs text-[#A9B8C6] flex items-center gap-1">
               <Calendar className="w-3 h-3" />
               {formatDate(post.publishedAt || post.createdAt)}
             </span>
           </div>
-          <h3 className="font-serif text-lg font-semibold text-[#F6F0E8] mb-2 group-hover:text-[#4C9AA3] transition-colors line-clamp-2">
+          <h3 className="font-serif text-lg font-semibold text-[#F6FAFC] mb-2 group-hover:text-[#53D6FF] transition-colors line-clamp-2">
             {post.title}
           </h3>
-          <p className="text-[#CDBDAF]/80 text-sm line-clamp-2 mb-3">
+          <p className="text-[#B8C4CF]/80 text-sm line-clamp-2 mb-3">
             {post.excerpt || 'Read more about this topic...'}
           </p>
-          <span className="text-sm text-[#4C9AA3] font-medium flex items-center gap-1 group-hover:gap-2 transition-all">
+          <span className="text-sm text-[#53D6FF] font-medium flex items-center gap-1 group-hover:gap-2 transition-all">
             Read More <ArrowRight className="w-4 h-4" />
           </span>
         </CardContent>
@@ -273,20 +273,20 @@ export default async function BlogPage({
   const activeCategory = searchParams.category
 
   return (
-    <div className="min-h-screen bg-[#181210]">
+    <div className="min-h-screen">
       {/* Hero Section */}
-      <section className="relative py-16 md:py-24 bg-[#181210]">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-[#1E6B73]/5 via-transparent to-transparent" />
+      <section className="relative py-16 md:py-24 bg-transparent">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-[#53D6FF]/5 via-transparent to-transparent" />
         
         <div className="container-wide section-padding relative">
           <div className="max-w-3xl mx-auto text-center">
-            <span className="text-[#4C9AA3] font-medium text-sm tracking-widest uppercase mb-4 block">
+            <span className="text-[#53D6FF] font-medium text-sm tracking-widest uppercase mb-4 block">
               Forged in the Fire Blog
             </span>
-            <h1 className="font-serif text-4xl md:text-5xl font-bold text-[#F6F0E8] mb-6 leading-tight">
+            <h1 className="font-serif text-4xl md:text-5xl font-bold text-[#F6FAFC] mb-6 leading-tight">
               Stories, Resources, and Updates
             </h1>
-            <p className="text-lg md:text-xl text-[#CDBDAF] leading-relaxed">
+            <p className="text-lg md:text-xl text-[#B8C4CF] leading-relaxed">
               Read survivor centered resources, organizational updates, and community news from Forged in the Fire.
             </p>
           </div>
@@ -294,14 +294,14 @@ export default async function BlogPage({
       </section>
 
       {/* Newsletter Section - Near Top */}
-      <section className="py-8 bg-[#1E1714]">
+      <section className="py-8 bg-transparent">
         <div className="container-wide section-padding">
           <NewsletterSection />
         </div>
       </section>
 
       {/* Category Filter */}
-      <section className="py-6 border-y border-[#3A2A24] bg-[#241B18]">
+      <section className="py-6 border-y border-[#1A232C] bg-[#11161C]">
         <div className="container-wide section-padding">
           <div className="flex flex-wrap gap-2 justify-center">
             {categoryFilters.map((cat) => (
@@ -310,8 +310,8 @@ export default async function BlogPage({
                 href={cat.value ? `/blog?category=${cat.value}` : '/blog'}
                 className={`px-4 py-2 rounded-full text-sm font-medium transition-colors duration-200 ${
                   (activeCategory === cat.value) || (!activeCategory && !cat.value)
-                    ? 'bg-[#1E6B73] text-[#F6F0E8]'
-                    : 'bg-[#3A2A24] text-[#CDBDAF] hover:bg-[#4A3A34] hover:text-[#F6F0E8]'
+                    ? 'bg-[#53D6FF] text-[#061016]'
+                    : 'bg-[#1A232C] text-[#B8C4CF] hover:bg-[#27313B] hover:text-[#F6FAFC]'
                 }`}
               >
                 {cat.label}
@@ -323,13 +323,13 @@ export default async function BlogPage({
 
       {/* Featured Posts */}
       {featuredPosts.length > 0 && (
-        <section className="py-12 bg-[#181210]">
+        <section className="py-12 bg-transparent">
           <div className="container-wide section-padding">
             <div className="flex items-center gap-3 mb-8">
-              <div className="w-8 h-8 rounded-lg bg-[#C8A46B]/20 flex items-center justify-center">
-                <Sparkles className="w-4 h-4 text-[#C8A46B]" />
+              <div className="w-8 h-8 rounded-lg bg-[#53D6FF]/20 flex items-center justify-center">
+                <Sparkles className="w-4 h-4 text-[#8DEBFF]" />
               </div>
-              <h2 className="font-serif text-2xl font-semibold text-[#F6F0E8]">
+              <h2 className="font-serif text-2xl font-semibold text-[#F6FAFC]">
                 Featured Stories
               </h2>
             </div>
@@ -343,14 +343,14 @@ export default async function BlogPage({
       )}
 
       {/* All Posts */}
-      <section className="py-12 bg-[#181210]">
+      <section className="py-12 bg-transparent">
         <div className="container-wide section-padding">
           <div className="flex items-center justify-between mb-8">
-            <h2 className="font-serif text-2xl font-semibold text-[#F6F0E8]">
+            <h2 className="font-serif text-2xl font-semibold text-[#F6FAFC]">
               {activeCategory ? getCategoryLabel(activeCategory) : 'Latest Articles'}
             </h2>
             {!activeCategory && posts.length > 0 && (
-              <span className="text-[#B8A89A] text-sm">
+              <span className="text-[#A9B8C6] text-sm">
                 {posts.length} {posts.length === 1 ? 'article' : 'articles'}
               </span>
             )}
@@ -369,18 +369,18 @@ export default async function BlogPage({
       </section>
 
       {/* Final CTA Section */}
-      <section className="py-16 bg-[#1E1714] relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom,_var(--tw-gradient-stops))] from-[#1E6B73]/5 via-transparent to-transparent" />
+      <section className="py-16 bg-transparent relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom,_var(--tw-gradient-stops))] from-[#53D6FF]/5 via-transparent to-transparent" />
         
         <div className="container-wide section-padding relative">
           <div className="max-w-3xl mx-auto text-center">
-            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#1E6B73]/20 to-[#C8A46B]/20 flex items-center justify-center mx-auto mb-6 border border-[#1E6B73]/30">
-              <Heart className="w-7 h-7 text-[#4C9AA3]" />
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#53D6FF]/20 to-[#8DEBFF]/20 flex items-center justify-center mx-auto mb-6 border border-[#53D6FF]/30">
+              <Heart className="w-7 h-7 text-heart" />
             </div>
-            <h2 className="font-serif text-3xl md:text-4xl font-bold text-[#F6F0E8] mb-4">
+            <h2 className="font-serif text-3xl md:text-4xl font-bold text-[#F6FAFC] mb-4">
               Be Part of the Story
             </h2>
-            <p className="text-lg text-[#CDBDAF] leading-relaxed mb-8 max-w-xl mx-auto">
+            <p className="text-lg text-[#B8C4CF] leading-relaxed mb-8 max-w-xl mx-auto">
               Your support helps us continue sharing stories of resilience, creating resources for survivors, and building a stronger community.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">

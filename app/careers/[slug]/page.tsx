@@ -100,7 +100,7 @@ export default async function JobDetailPage({ params }: JobPageProps) {
   const qualifications = job.requirements?.split('\n').filter(line => line.trim()) || []
 
   return (
-    <div className="min-h-screen bg-charcoal">
+    <div className="min-h-screen">
       {/* Premium Hero Section */}
       <section className="relative py-16 md:py-24 bg-gradient-to-b from-charcoal via-charcoal-800 to-charcoal">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-teal/5 via-transparent to-transparent" />
@@ -116,7 +116,7 @@ export default async function JobDetailPage({ params }: JobPageProps) {
                 <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
                 <span>Careers</span>
               </Link>
-              <span className="text-cream-100/30">/</span>
+              <span className="text-silver-label">/</span>
               <span className="text-teal font-medium text-sm tracking-wide uppercase">Open Position</span>
             </div>
 
@@ -150,7 +150,7 @@ export default async function JobDetailPage({ params }: JobPageProps) {
               <Button 
                 asChild 
                 size="lg"
-                className="bg-teal hover:bg-teal-600 text-white px-8 py-6 text-base font-semibold shadow-lg shadow-teal/20"
+                className="bg-forged hover:bg-forged-hover text-forged-on px-8 py-6 text-base font-semibold shadow-forge"
               >
                 <a 
                   href={`mailto:tracys@forgedinthefireohio.org?subject=Application for ${encodeURIComponent(job.title)}`}
@@ -332,7 +332,7 @@ export default async function JobDetailPage({ params }: JobPageProps) {
                       </p>
                       <Button 
                         asChild 
-                        className="w-full bg-teal hover:bg-teal-600 text-white mb-3"
+                        className="w-full bg-forged hover:bg-forged-hover text-forged-on mb-3"
                       >
                         <a 
                           href={`mailto:tracys@forgedinthefireohio.org?subject=Application for ${encodeURIComponent(job.title)}`}
@@ -400,7 +400,7 @@ export default async function JobDetailPage({ params }: JobPageProps) {
               <Button 
                 asChild 
                 size="lg"
-                className="bg-teal hover:bg-teal-600 text-white px-8"
+                className="bg-forged hover:bg-forged-hover text-forged-on px-8"
               >
                 <a 
                   href={`mailto:tracys@forgedinthefireohio.org?subject=Application for ${encodeURIComponent(job.title)}`}
@@ -437,7 +437,7 @@ export default async function JobDetailPage({ params }: JobPageProps) {
               <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
               Back to All Open Roles
             </Link>
-            <p className="text-sm text-cream-100/40">
+            <p className="text-sm text-silver-label">
               Questions? Contact us at{' '}
               <a href="mailto:tracys@forgedinthefireohio.org" className="text-teal hover:underline">
                 tracys@forgedinthefireohio.org

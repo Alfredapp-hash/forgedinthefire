@@ -75,3 +75,6 @@ AUDIT_REPORT.txt
 
 # Local Netlify folder
 .netlify
+
+# SEO crawler output
+/generated

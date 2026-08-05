@@ -183,14 +183,14 @@ export function MissionMomentCardV2() {
       onMouseLeave={handleMouseLeave}
       className="aspect-square rounded-xl p-[2px] relative cursor-default"
       style={{
-        background: 'linear-gradient(135deg, rgba(30,107,115,0.18) 0%, rgba(58,42,36,0.6) 50%, rgba(139,94,60,0.18) 100%)',
+        background: 'linear-gradient(135deg, rgba(83, 214, 255,0.18) 0%, rgba(26, 35, 44,0.6) 50%, rgba(83, 214, 255,0.18) 100%)',
       }}
     >
       <div 
         className="w-full h-full rounded-[10px] flex items-center justify-center relative overflow-hidden"
         style={{
-          background: '#241B18',
-          boxShadow: '0 12px 40px rgba(0,0,0,0.35), inset 0 1px 0 rgba(200,164,107,0.08)',
+          background: '#11161C',
+          boxShadow: '0 0 40px rgba(83,214,255,0.12), inset 0 1px 0 rgba(141, 235, 255,0.08)',
         }}
       >
         {/* Vignette overlay */}
@@ -223,7 +223,7 @@ export function MissionMomentCardV2() {
             animate={{ opacity: phase >= 1 && phase <= 3 ? 0.25 : 0 }}
             transition={{ duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] }}
             style={{
-              background: 'linear-gradient(180deg, rgba(36,27,24,0.5) 0%, rgba(30,107,115,0.08) 50%, rgba(36,27,24,0.5) 100%)',
+              background: 'linear-gradient(180deg, rgba(36,27,24,0.5) 0%, rgba(83, 214, 255,0.08) 50%, rgba(36,27,24,0.5) 100%)',
               backdropFilter: 'blur(6px)',
             }}
           />
@@ -238,7 +238,7 @@ export function MissionMomentCardV2() {
                 animate="visible"
                 exit="exit"
               >
-                <p className="font-serif text-lg italic text-[#C8A46B] leading-relaxed">
+                <p className="font-serif text-lg italic text-[#8DEBFF] leading-relaxed">
                   {sparkWords.map((word, i) => (
                     <motion.span
                       key={i}
@@ -283,7 +283,7 @@ export function MissionMomentCardV2() {
               className="relative w-full h-full"
             >
               <Image
-                src="/forged-logo.png"
+                src="/brand/fitf-mark.png"
                 alt="Forged in the Fire"
                 fill
                 className="object-contain drop-shadow-xl"
@@ -303,7 +303,7 @@ export function MissionMomentCardV2() {
                 exit="exit"
                 className="relative z-10"
               >
-                <p className="font-serif text-base italic text-[#E8DDD4] leading-relaxed tracking-wide">
+                <p className="font-serif text-base italic text-[#E4EBF1] leading-relaxed tracking-wide">
                   "Now we stand resolute, to bring
                   <br />
                   what's in darkness to light."
@@ -330,8 +330,8 @@ export function MissionMomentCardV2() {
                 className="relative z-10"
               >
                 <p 
-                  className="font-serif text-xl italic text-[#F6F0E8] leading-relaxed tracking-tight"
-                  style={{ textShadow: '0 2px 20px rgba(30,107,115,0.15)' }}
+                  className="font-serif text-xl italic text-[#F6FAFC] leading-relaxed tracking-tight"
+                  style={{ textShadow: '0 2px 20px rgba(83, 214, 255,0.15)' }}
                 >
                   "The fire that forges us
                   <br />
@@ -355,7 +355,7 @@ function MouseReactiveGlow({ mousePos, phase }: { mousePos: { x: number; y: numb
       animate={{ opacity: phase >= 1 ? 0.5 : 0 }}
       transition={{ duration: 1 }}
       style={{
-        background: `radial-gradient(circle at ${mousePos.x * 100}% ${mousePos.y * 100}%, rgba(30,107,115,0.25) 0%, transparent 50%)`,
+        background: `radial-gradient(circle at ${mousePos.x * 100}% ${mousePos.y * 100}%, rgba(83, 214, 255,0.25) 0%, transparent 50%)`,
       }}
     />
   );
@@ -373,7 +373,7 @@ function AmbientGlow({ phase }: { phase: number }) {
         }}
         transition={{ duration: 1.5, ease: [0.25, 0.46, 0.45, 0.94] }}
         style={{
-          background: 'radial-gradient(circle at 30% 30%, rgba(30,107,115,0.15) 0%, transparent 55%)',
+          background: 'radial-gradient(circle at 30% 30%, rgba(83, 214, 255,0.15) 0%, transparent 55%)',
         }}
       />
       <motion.div
@@ -382,7 +382,7 @@ function AmbientGlow({ phase }: { phase: number }) {
         animate={{ opacity: phase >= 2 ? 0.4 : 0 }}
         transition={{ duration: 1.8, ease: [0.25, 0.46, 0.45, 0.94] }}
         style={{
-          background: 'radial-gradient(circle at 70% 70%, rgba(139,94,60,0.1) 0%, transparent 50%)',
+          background: 'radial-gradient(circle at 70% 70%, rgba(83, 214, 255,0.1) 0%, transparent 50%)',
         }}
       />
       <motion.div
@@ -406,7 +406,7 @@ function AmbientGlow({ phase }: { phase: number }) {
             ease: 'easeInOut',
           }}
           style={{
-            background: 'radial-gradient(circle, rgba(30,107,115,0.25) 0%, rgba(76,154,163,0.1) 40%, transparent 70%)',
+            background: 'radial-gradient(circle, rgba(83, 214, 255,0.25) 0%, rgba(141, 235, 255,0.1) 40%, transparent 70%)',
             filter: 'blur(28px)',
           }}
         />
@@ -446,7 +446,7 @@ function LogoGlow({ phase, mousePos }: { phase: number; mousePos: { x: number; y
             ease: 'easeInOut',
           }}
           style={{
-            background: 'radial-gradient(circle, rgba(30,107,115,0.3) 0%, rgba(200,164,107,0.1) 50%, transparent 70%)',
+            background: 'radial-gradient(circle, rgba(83, 214, 255,0.3) 0%, rgba(141, 235, 255,0.1) 50%, transparent 70%)',
             filter: 'blur(16px)',
           }}
         />
@@ -473,7 +473,7 @@ function LogoGlow({ phase, mousePos }: { phase: number; mousePos: { x: number; y
           y: { duration: 0.5 },
         }}
         style={{
-          background: 'radial-gradient(circle, rgba(30,107,115,0.4) 0%, rgba(76,154,163,0.2) 50%, transparent 70%)',
+          background: 'radial-gradient(circle, rgba(83, 214, 255,0.4) 0%, rgba(141, 235, 255,0.2) 50%, transparent 70%)',
           filter: 'blur(8px)',
         }}
       />
@@ -521,7 +521,7 @@ function ParticleBurst({ show }: { show: boolean }) {
               width: p.size,
               height: p.size,
               background: `radial-gradient(circle, rgba(${210 + Math.random() * 30}, ${170 + Math.random() * 25}, ${120 + Math.random() * 30}, 0.85) 0%, transparent 70%)`,
-              boxShadow: `0 0 ${p.size * 2.5}px rgba(200, 164, 107, 0.5)`,
+              boxShadow: `0 0 ${p.size * 2.5}px rgba(141, 235, 255, 0.5)`,
             }}
           />
         ))}
@@ -541,7 +541,7 @@ function EmberParticles() {
           style={{
             width: 1.5 + (i % 2) * 0.5,
             height: 1.5 + (i % 2) * 0.5,
-            background: 'radial-gradient(circle, rgba(200, 164, 107, 0.5) 0%, transparent 70%)',
+            background: 'radial-gradient(circle, rgba(141, 235, 255, 0.5) 0%, transparent 70%)',
             left: `${25 + i * 11}%`,
             top: `${35 + (i % 3) * 18}%`,
           }}
@@ -568,20 +568,20 @@ function ReducedMotionCard() {
     <div 
       className="aspect-square rounded-xl p-[2px]"
       style={{
-        background: 'linear-gradient(135deg, rgba(30,107,115,0.18) 0%, rgba(58,42,36,0.6) 50%, rgba(139,94,60,0.18) 100%)',
+        background: 'linear-gradient(135deg, rgba(83, 214, 255,0.18) 0%, rgba(26, 35, 44,0.6) 50%, rgba(83, 214, 255,0.18) 100%)',
       }}
     >
       <div 
         className="w-full h-full rounded-[10px] flex items-center justify-center relative overflow-hidden"
         style={{
-          background: '#241B18',
-          boxShadow: '0 12px 40px rgba(0,0,0,0.35), inset 0 1px 0 rgba(200,164,107,0.08)',
+          background: '#11161C',
+          boxShadow: '0 0 40px rgba(83,214,255,0.12), inset 0 1px 0 rgba(141, 235, 255,0.08)',
         }}
       >
         <div 
           className="absolute inset-0 pointer-events-none"
           style={{
-            background: 'radial-gradient(circle at 30% 30%, rgba(30,107,115,0.12) 0%, transparent 55%)',
+            background: 'radial-gradient(circle at 30% 30%, rgba(83, 214, 255,0.12) 0%, transparent 55%)',
           }}
         />
         
@@ -590,12 +590,12 @@ function ReducedMotionCard() {
             <div 
               className="absolute inset-0 -m-4 pointer-events-none"
               style={{
-                background: 'radial-gradient(circle, rgba(30,107,115,0.25) 0%, rgba(200,164,107,0.1) 50%, transparent 70%)',
+                background: 'radial-gradient(circle, rgba(83, 214, 255,0.25) 0%, rgba(141, 235, 255,0.1) 50%, transparent 70%)',
                 filter: 'blur(12px)',
               }}
             />
             <Image
-              src="/forged-logo.png"
+              src="/brand/fitf-mark.png"
               alt="Forged in the Fire"
               fill
               className="object-contain drop-shadow-xl"
@@ -603,8 +603,8 @@ function ReducedMotionCard() {
             />
           </div>
 
-          <p className="font-serif text-xl italic text-[#F6F0E8] leading-relaxed tracking-tight"
-             style={{ textShadow: '0 2px 20px rgba(30,107,115,0.15)' }}>
+          <p className="font-serif text-xl italic text-[#F6FAFC] leading-relaxed tracking-tight"
+             style={{ textShadow: '0 2px 20px rgba(83, 214, 255,0.15)' }}>
             "The fire that forges us
             <br />
             also frees us."

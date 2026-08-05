@@ -62,7 +62,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
   const contentBlocks = post.blocks.filter(b => b.type !== 'hero')
   
   return (
-    <article className="min-h-screen bg-charcoal">
+    <article className="min-h-screen">
       {/* Navigation Breadcrumb */}
       <nav className="py-4 border-b border-charcoal-700">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
@@ -83,7 +83,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
         <section className="py-16 md:py-24 bg-gradient-to-b from-charcoal to-charcoal-800">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8">
             <div className="max-w-3xl mx-auto text-center">
-              <Badge className="mb-4 bg-teal text-white">
+              <Badge className="mb-4 bg-forged text-forged-on">
                 {getCategoryLabel(post.category)}
               </Badge>
               <h1 className="font-playfair text-3xl md:text-4xl lg:text-5xl font-bold text-cream-100 mb-4">
@@ -113,7 +113,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
             {/* Meta Bar (if hero block was used) */}
             {heroBlock && (
               <div className="flex flex-wrap items-center gap-4 mb-8 pb-8 border-b border-charcoal-700">
-                <Badge className="bg-teal text-white">
+                <Badge className="bg-forged text-forged-on">
                   {getCategoryLabel(post.category)}
                 </Badge>
                 <span className="text-sm text-cream-100/60 flex items-center gap-1">

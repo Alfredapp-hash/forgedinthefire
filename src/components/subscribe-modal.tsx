@@ -152,9 +152,9 @@ export function SubscribeModal({ isOpen, onClose }: SubscribeModalProps) {
             aria-modal="true"
             aria-labelledby="subscribe-title"
           >
-            <div className="bg-[#1E1714] border border-[#3A2A24] rounded-2xl shadow-2xl overflow-hidden">
+            <div className="bg-[#05070A] border border-[#1A232C] rounded-2xl shadow-2xl overflow-hidden">
               {/* Header */}
-              <div className="relative bg-gradient-to-r from-[#1E6B73] to-[#4C9AA3] p-6 text-center">
+              <div className="relative bg-gradient-to-r from-[#53D6FF] to-[#53D6FF] p-6 text-center">
                 <button
                   onClick={onClose}
                   className="absolute right-4 top-4 p-1 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition-colors"
@@ -180,24 +180,24 @@ export function SubscribeModal({ isOpen, onClose }: SubscribeModalProps) {
                   <div className="text-center py-4">
                     {result.success ? (
                       <>
-                        <div className="w-16 h-16 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                          <CheckCircle className="w-8 h-8 text-emerald-500" />
+                        <div className="w-16 h-16 bg-[#8DEBFF]/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <CheckCircle className="w-8 h-8 text-[#8DEBFF]" />
                         </div>
-                        <h3 className="font-semibold text-[#C8A46B] text-lg mb-2">Thank You!</h3>
-                        <p className="text-[#CDBDAF]">{result.message}</p>
+                        <h3 className="font-semibold text-[#8DEBFF] text-lg mb-2">Thank You!</h3>
+                        <p className="text-[#B8C4CF]">{result.message}</p>
                       </>
                     ) : (
                       <>
-                        <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                          <AlertCircle className="w-8 h-8 text-red-500" />
+                        <div className="w-16 h-16 bg-[#8DEBFF]/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <AlertCircle className="w-8 h-8 text-[#8DEBFF]" />
                         </div>
-                        <h3 className="font-semibold text-red-400 text-lg mb-2">Something Went Wrong</h3>
-                        <p className="text-[#CDBDAF]">{result.message}</p>
+                        <h3 className="font-semibold text-[#8DEBFF] text-lg mb-2">Something Went Wrong</h3>
+                        <p className="text-[#B8C4CF]">{result.message}</p>
                       </>
                     )}
                     <Button
                       onClick={onClose}
-                      className="mt-6 bg-[#1E6B73] hover:bg-[#4C9AA3] text-white"
+                      className="mt-6 bg-[#53D6FF] hover:bg-[#82E8FF] text-[#061016]"
                     >
                       Close
                     </Button>
@@ -206,8 +206,8 @@ export function SubscribeModal({ isOpen, onClose }: SubscribeModalProps) {
                   <form onSubmit={handleSubmit} className="space-y-4">
                     {/* Name */}
                     <div>
-                      <Label htmlFor="name" className="text-[#CDBDAF]">
-                        Name <span className="text-[#8B5E3C]">(optional)</span>
+                      <Label htmlFor="name" className="text-[#B8C4CF]">
+                        Name <span className="text-[#A9B8C6]">(optional)</span>
                       </Label>
                       <Input
                         id="name"
@@ -215,14 +215,14 @@ export function SubscribeModal({ isOpen, onClose }: SubscribeModalProps) {
                         value={formData.name}
                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                         placeholder="Your name"
-                        className="bg-[#181210] border-[#3A2A24] text-[#F6F0E8] placeholder:text-[#8B5E3C] focus:border-[#1E6B73] mt-1"
+                        className="bg-[#05070A] border-[#1A232C] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:border-[#53D6FF] mt-1"
                       />
                     </div>
                     
                     {/* Email */}
                     <div>
-                      <Label htmlFor="email" className="text-[#CDBDAF]">
-                        Email <span className="text-red-400">*</span>
+                      <Label htmlFor="email" className="text-[#B8C4CF]">
+                        Email <span className="text-[#8DEBFF]">*</span>
                       </Label>
                       <Input
                         id="email"
@@ -231,20 +231,20 @@ export function SubscribeModal({ isOpen, onClose }: SubscribeModalProps) {
                         onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                         placeholder="your@email.com"
                         className={cn(
-                          "bg-[#181210] border-[#3A2A24] text-[#F6F0E8] placeholder:text-[#8B5E3C] focus:border-[#1E6B73] mt-1",
-                          errors.email && "border-red-500"
+                          "bg-[#05070A] border-[#1A232C] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:border-[#53D6FF] mt-1",
+                          errors.email && "border-[#8DEBFF]/35"
                         )}
                         aria-invalid={errors.email ? 'true' : 'false'}
                       />
                       {errors.email && (
-                        <p className="text-red-400 text-sm mt-1">{errors.email}</p>
+                        <p className="text-[#8DEBFF] text-sm mt-1">{errors.email}</p>
                       )}
                     </div>
                     
                     {/* Phone */}
                     <div>
-                      <Label htmlFor="phone" className="text-[#CDBDAF]">
-                        Phone <span className="text-[#8B5E3C]">(optional)</span>
+                      <Label htmlFor="phone" className="text-[#B8C4CF]">
+                        Phone <span className="text-[#A9B8C6]">(optional)</span>
                       </Label>
                       <Input
                         id="phone"
@@ -252,13 +252,13 @@ export function SubscribeModal({ isOpen, onClose }: SubscribeModalProps) {
                         value={formData.phone}
                         onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                         placeholder="(555) 123-4567"
-                        className="bg-[#181210] border-[#3A2A24] text-[#F6F0E8] placeholder:text-[#8B5E3C] focus:border-[#1E6B73] mt-1"
+                        className="bg-[#05070A] border-[#1A232C] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:border-[#53D6FF] mt-1"
                       />
                     </div>
                     
                     {/* Email Preferences */}
                     <div>
-                      <Label className="text-[#CDBDAF] mb-3 block">
+                      <Label className="text-[#B8C4CF] mb-3 block">
                         Choose the updates you would like to receive:
                       </Label>
                       <div className="space-y-3">
@@ -271,14 +271,14 @@ export function SubscribeModal({ isOpen, onClose }: SubscribeModalProps) {
                               type="checkbox"
                               checked={formData.preferences[option.value]}
                               onChange={(e) => updatePreference(option.value, e.target.checked)}
-                              className="mt-1 w-4 h-4 rounded border-[#3A2A24] bg-[#181210] text-[#1E6B73] focus:ring-[#1E6B73] focus:ring-offset-0"
+                              className="mt-1 w-4 h-4 rounded border-[#1A232C] bg-[#05070A] text-[#53D6FF] focus:ring-[#53D6FF] focus:ring-offset-0"
                             />
                             <div className="flex-1">
-                              <span className="text-[#F6F0E8] text-sm font-medium group-hover:text-[#4C9AA3] transition-colors">
+                              <span className="text-[#F6FAFC] text-sm font-medium group-hover:text-[#53D6FF] transition-colors">
                                 {option.label}
                               </span>
                               {option.default && (
-                                <span className="text-[#4C9AA3] text-xs ml-2">(Recommended)</span>
+                                <span className="text-[#53D6FF] text-xs ml-2">(Recommended)</span>
                               )}
                             </div>
                           </label>
@@ -290,7 +290,7 @@ export function SubscribeModal({ isOpen, onClose }: SubscribeModalProps) {
                     <Button
                       type="submit"
                       disabled={isSubmitting}
-                      className="w-full bg-[#1E6B73] hover:bg-[#4C9AA3] text-white py-3 h-auto font-semibold"
+                      className="w-full bg-[#53D6FF] hover:bg-[#82E8FF] text-[#061016] py-3 h-auto font-semibold"
                     >
                       {isSubmitting ? (
                         <>
@@ -302,7 +302,7 @@ export function SubscribeModal({ isOpen, onClose }: SubscribeModalProps) {
                       )}
                     </Button>
                     
-                    <p className="text-xs text-[#8B5E3C] text-center">
+                    <p className="text-xs text-[#A9B8C6] text-center">
                       We respect your privacy. Unsubscribe at any time.
                     </p>
                   </form>
