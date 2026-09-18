@@ -3,7 +3,7 @@ import { createDefaultClips, studioError, withStudioAdmin } from '@/lib/studio/a
 import { slugify, uniqueSlug } from '@/lib/studio/slug'
 
 const ALLOWED = [
-  'title', 'slug', 'summary', 'talking_points', 'scheduled_on', 'status', 'blog_post_id',
+  'title', 'slug', 'summary', 'talking_points', 'scheduled_on', 'status', 'blog_post_id', 'cover_url',
 ] as const
 
 export async function GET(request: Request) {

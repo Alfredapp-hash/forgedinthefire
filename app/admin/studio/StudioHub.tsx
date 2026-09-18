@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { CalendarDays, PenSquare, Plus } from 'lucide-react'
 import type { ContentTopic } from '@/lib/studio/types'
+import { topicCoverUrl } from '@/lib/studio/topic-covers'
 
 type View = 'calendar' | 'topics'
 
@@ -200,14 +201,22 @@ export function StudioHub() {
                   <p className="text-sm text-[#A9B8C6]">Open slot. One topic drives the whole package.</p>
                 ) : (
                   <ul className="space-y-2">
-                    {assigned.map((topic) => (
+                    {assigned.map((topic) => {
+                      const cover = topicCoverUrl(topic)
+                      return (
                       <li key={topic.id}>
-                        <Link href={`/admin/studio/topics/${topic.id}`} className="block text-[#F6FAFC] hover:text-[#8DEBFF]">
-                          {topic.title}
-                          <span className="block text-xs text-[#A9B8C6]">{topic.status.replace('_', ' ')}</span>
+                        <Link href={`/admin/studio/topics/${topic.id}`} className="flex items-center gap-3 text-[#F6FAFC] hover:text-[#8DEBFF]">
+                          {cover ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={cover} alt="" className="h-12 w-12 rounded-lg object-cover border border-[#27313B] shrink-0" />
+                          ) : null}
+                          <span>
+                            {topic.title}
+                            <span className="block text-xs text-[#A9B8C6]">{topic.status.replace('_', ' ')}</span>
+                          </span>
                         </Link>
                       </li>
-                    ))}
+                    )})}
                   </ul>
                 )}
               </div>
@@ -228,17 +237,25 @@ export function StudioHub() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#27313B]">
-              {topics.map((topic) => (
+              {topics.map((topic) => {
+                const cover = topicCoverUrl(topic)
+                return (
                 <tr key={topic.id} className="hover:bg-[#1A232C]/50">
                   <td className="px-5 py-3">
-                    <Link href={`/admin/studio/topics/${topic.id}`} className="text-[#F6FAFC] hover:text-[#8DEBFF]">
-                      {topic.title}
+                    <Link href={`/admin/studio/topics/${topic.id}`} className="flex items-center gap-3 text-[#F6FAFC] hover:text-[#8DEBFF]">
+                      {cover ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={cover} alt="" className="h-10 w-10 rounded-md object-cover border border-[#27313B] shrink-0" />
+                      ) : (
+                        <span className="h-10 w-10 rounded-md border border-[#27313B] bg-[#05070A] shrink-0" />
+                      )}
+                      <span>{topic.title}</span>
                     </Link>
                   </td>
                   <td className="px-5 py-3 text-[#A9B8C6]">{topic.scheduled_on || '—'}</td>
                   <td className="px-5 py-3 text-[#8DEBFF]">{topic.status.replace('_', ' ')}</td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         </div>

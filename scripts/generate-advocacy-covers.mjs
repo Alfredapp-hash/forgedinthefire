@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 /**
- * Generate Forged-brand cover images for each advocacy calendar release topic.
- * Outputs square (podcast) + landscape (blog/OG) PNGs under public/content-covers/
+ * Generate Forged-brand cover images for each advocacy calendar topic.
+ * Topic text is the hero. Blog / podcast variants keep the same topic
+ * and add the release-specific title as secondary copy.
+ *
+ * Outputs under public/content-covers/:
+ *   - topic  1080×1080  (Studio calendar / social)
+ *   - podcast 1400×1400
+ *   - blog    1200×630  (OG / featured)
  *
  * Usage: node scripts/generate-advocacy-covers.mjs
  */
@@ -44,7 +50,7 @@ function escapeXml(s) {
 }
 
 function wrapTitle(title, maxChars = 22, maxLines = 4) {
-  const words = title.split(/\s+/)
+  const words = String(title).split(/\s+/).filter(Boolean)
   const lines = []
   let cur = ''
   for (const w of words) {
@@ -58,7 +64,8 @@ function wrapTitle(title, maxChars = 22, maxLines = 4) {
     }
   }
   if (lines.length < maxLines && cur) lines.push(cur)
-  if (lines.length === maxLines && words.join(' ').length > lines.join(' ').length) {
+  const joined = lines.join(' ')
+  if (lines.length === maxLines && words.join(' ').length > joined.length) {
     lines[maxLines - 1] = lines[maxLines - 1].replace(/\.?$/, '…')
   }
   return lines.slice(0, maxLines)
@@ -69,16 +76,28 @@ function coverSvg({
   height,
   cycle,
   theme,
-  title,
-  kind, // 'podcast' | 'blog'
+  subtitle,
+  kind, // 'topic' | 'podcast' | 'blog'
 }) {
-  const lines = wrapTitle(title, width > height ? 28 : 20, 5)
-  const titleFont = Math.round(width * (width === height ? 0.055 : 0.045))
-  const startY = Math.round(height * 0.42)
-  const lineH = Math.round(titleFont * 1.2)
-  const titleTspans = lines
-    .map((line, i) => `<tspan x="${Math.round(width * 0.08)}" dy="${i === 0 ? 0 : lineH}">${escapeXml(line)}</tspan>`)
+  const square = width === height
+  const topicChars = square ? 18 : 26
+  const topicLines = wrapTitle(theme, topicChars, 4)
+  const topicFont = Math.round(width * (square ? 0.072 : 0.052))
+  const topicStartY = Math.round(height * (square ? 0.4 : 0.38))
+  const topicLineH = Math.round(topicFont * 1.18)
+  const topicTspans = topicLines
+    .map((line, i) => `<tspan x="${Math.round(width * 0.08)}" dy="${i === 0 ? 0 : topicLineH}">${escapeXml(line)}</tspan>`)
     .join('')
+
+  const subLines = subtitle ? wrapTitle(subtitle, square ? 28 : 36, 2) : []
+  const subFont = Math.round(width * (square ? 0.028 : 0.024))
+  const subStartY = topicStartY + topicLines.length * topicLineH + Math.round(height * 0.04)
+  const subTspans = subLines
+    .map((line, i) => `<tspan x="${Math.round(width * 0.08)}" dy="${i === 0 ? 0 : Math.round(subFont * 1.25)}">${escapeXml(line)}</tspan>`)
+    .join('')
+
+  const kindLabel =
+    kind === 'topic' ? 'TOPIC' : kind === 'podcast' ? 'PODCAST' : 'BLOG'
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
@@ -100,9 +119,8 @@ function coverSvg({
   </defs>
   <rect width="100%" height="100%" fill="url(#bg)"/>
   <rect width="100%" height="100%" fill="url(#ember)"/>
-  <!-- forge edge -->
   <rect x="0" y="0" width="${Math.round(width * 0.012)}" height="100%" fill="${ICE}"/>
-  <rect x="${Math.round(width * 0.08)}" y="${Math.round(height * 0.28)}" width="${Math.round(width * 0.18)}" height="3" fill="url(#bar)"/>
+  <rect x="${Math.round(width * 0.08)}" y="${Math.round(height * 0.3)}" width="${Math.round(width * 0.18)}" height="3" fill="url(#bar)"/>
 
   <text x="${Math.round(width * 0.08)}" y="${Math.round(height * 0.14)}"
     font-family="Georgia, 'Times New Roman', serif" font-size="${Math.round(width * 0.028)}"
@@ -110,15 +128,19 @@ function coverSvg({
 
   <text x="${Math.round(width * 0.08)}" y="${Math.round(height * 0.22)}"
     font-family="system-ui, -apple-system, sans-serif" font-size="${Math.round(width * 0.022)}"
-    letter-spacing="0.16em" fill="${MUTE}">${escapeXml(kind.toUpperCase())} · CYCLE ${cycle}</text>
+    letter-spacing="0.16em" fill="${MUTE}">${kindLabel} · CYCLE ${cycle}</text>
 
-  <text x="${Math.round(width * 0.08)}" y="${Math.round(height * 0.34)}"
-    font-family="system-ui, -apple-system, sans-serif" font-size="${Math.round(width * 0.02)}"
-    letter-spacing="0.12em" fill="${ICE}">${escapeXml(theme.toUpperCase())}</text>
+  <text y="${topicStartY}"
+    font-family="Georgia, 'Times New Roman', serif" font-size="${topicFont}"
+    font-weight="700" fill="${PAPER}">${topicTspans}</text>
 
-  <text y="${startY}"
-    font-family="Georgia, 'Times New Roman', serif" font-size="${titleFont}"
-    font-weight="700" fill="${PAPER}">${titleTspans}</text>
+  ${
+    subtitle
+      ? `<text y="${subStartY}"
+    font-family="system-ui, -apple-system, sans-serif" font-size="${subFont}"
+    fill="${ICE}">${subTspans}</text>`
+      : ''
+  }
 
   <text x="${Math.round(width * 0.08)}" y="${Math.round(height * 0.92)}"
     font-family="system-ui, -apple-system, sans-serif" font-size="${Math.round(width * 0.018)}"
@@ -132,8 +154,17 @@ async function renderOne(week) {
 
   const jobs = [
     {
+      kind: 'topic',
+      subtitle: null,
+      w: 1080,
+      h: 1080,
+      file: `${base}-topic.png`,
+      markLeft: 860,
+      markTop: 60,
+    },
+    {
       kind: 'podcast',
-      title: week.podcast_title,
+      subtitle: week.podcast_title,
       w: 1400,
       h: 1400,
       file: `${base}-podcast.png`,
@@ -142,7 +173,7 @@ async function renderOne(week) {
     },
     {
       kind: 'blog',
-      title: week.blog_title,
+      subtitle: week.blog_title,
       w: 1200,
       h: 630,
       file: `${base}-blog.png`,
@@ -158,7 +189,7 @@ async function renderOne(week) {
       height: job.h,
       cycle: week.cycle,
       theme: week.theme,
-      title: job.title,
+      subtitle: job.subtitle,
       kind: job.kind,
     })
     const markBuf = await mark.clone().toBuffer()
@@ -179,10 +210,10 @@ async function main() {
   for (const week of releases) {
     const row = await renderOne(week)
     manifest.push(row)
-    console.log(`cover cycle ${week.cycle}: ${row.podcast}`)
+    console.log(`cover cycle ${week.cycle}: ${row.topic}`)
   }
   writeFileSync(resolve(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2))
-  console.log(`Wrote ${manifest.length * 2} covers → public/content-covers/`)
+  console.log(`Wrote ${manifest.length * 3} covers → public/content-covers/`)
 }
 
 main().catch((err) => {

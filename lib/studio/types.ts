@@ -45,6 +45,8 @@ export type ContentTopic = {
   scheduled_on: string | null
   status: TopicStatus
   blog_post_id: string | null
+  /** Present after 20260918_content_topics_cover migration; Studio also resolves from manifest. */
+  cover_url?: string | null
   created_by: string | null
   created_at: string
   updated_at: string

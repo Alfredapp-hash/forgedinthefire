@@ -150,6 +150,7 @@ async function main() {
     const covers = coversByCycle.get(week.cycle)
     const blogCover = covers ? `${SITE}${covers.blog}` : null
     const podCover = covers ? `${SITE}${covers.podcast}` : null
+    const topicCover = covers ? `${SITE}${covers.topic || covers.podcast}` : null
     console.log(`→ Cycle ${week.cycle}: ${week.theme}`)
 
     // --- Topic ---
@@ -161,6 +162,15 @@ async function main() {
         .eq('slug', topicSlug)
         .maybeSingle()
       topicId = data?.id || null
+      if (topicId && topicCover) {
+        const { error: coverErr } = await supabase
+          .from('content_topics')
+          .update({ cover_url: topicCover })
+          .eq('id', topicId)
+        if (coverErr && !String(coverErr.message).includes('cover_url')) {
+          console.warn('Topic cover update', topicSlug, coverErr.message)
+        }
+      }
       stats.skipped++
     } else {
       const talking = [
@@ -169,19 +179,25 @@ async function main() {
         `Short-form: ${week.tiktok}`,
         `Guest/format: ${week.guest_format}`,
       ].filter(Boolean)
-      const { data, error } = await supabase
+      const topicRow = {
+        title: `Cycle ${week.cycle}: ${week.theme}`,
+        slug: topicSlug,
+        summary: `Release week ${week.week} · Blog “${week.blog_title}” · Podcast “${week.podcast_title}”`,
+        talking_points: talking,
+        scheduled_on: week.blog_date,
+        status: 'planned',
+        cover_url: topicCover,
+        created_by: 'calendar-seed',
+      }
+      let { data, error } = await supabase
         .from('content_topics')
-        .insert({
-          title: `Cycle ${week.cycle}: ${week.theme}`,
-          slug: topicSlug,
-          summary: `Release week ${week.week} · Blog “${week.blog_title}” · Podcast “${week.podcast_title}”`,
-          talking_points: talking,
-          scheduled_on: week.blog_date,
-          status: 'planned',
-          created_by: 'calendar-seed',
-        })
+        .insert(topicRow)
         .select('id')
         .single()
+      if (error && String(error.message).includes('cover_url')) {
+        delete topicRow.cover_url
+        ;({ data, error } = await supabase.from('content_topics').insert(topicRow).select('id').single())
+      }
       if (error) {
         console.error('Topic insert failed', topicSlug, error.message)
       } else {
@@ -341,11 +357,22 @@ async function main() {
   // Follow-up weeks: light topics only (promotion checklist)
   for (const week of followups) {
     const topicSlug = slugify(`c${week.cycle}-followup-w${week.week}`)
+    const covers = coversByCycle.get(week.cycle)
+    const topicCover = covers ? `${SITE}${covers.topic || covers.podcast}` : null
     if (topicSlugs.has(topicSlug)) {
+      if (topicCover) {
+        const { error: coverErr } = await supabase
+          .from('content_topics')
+          .update({ cover_url: topicCover })
+          .eq('slug', topicSlug)
+        if (coverErr && !String(coverErr.message).includes('cover_url')) {
+          console.warn('Follow-up cover', topicSlug, coverErr.message)
+        }
+      }
       stats.skipped++
       continue
     }
-    const { error } = await supabase.from('content_topics').insert({
+    const followRow = {
       title: `Cycle ${week.cycle} follow-up: ${week.theme}`,
       slug: topicSlug,
       summary: `Promotion week ${week.week}. Podcast: ${week.podcast_title}. Blog: ${week.blog_title}.`,
@@ -357,8 +384,14 @@ async function main() {
       ].filter(Boolean),
       scheduled_on: week.week_of,
       status: 'idea',
+      cover_url: topicCover,
       created_by: 'calendar-seed',
-    })
+    }
+    let { error } = await supabase.from('content_topics').insert(followRow)
+    if (error && String(error.message).includes('cover_url')) {
+      delete followRow.cover_url
+      ;({ error } = await supabase.from('content_topics').insert(followRow))
+    }
     if (error) console.warn('Follow-up topic', topicSlug, error.message)
     else {
       topicSlugs.add(topicSlug)
