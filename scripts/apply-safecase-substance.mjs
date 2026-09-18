@@ -5,7 +5,6 @@
  *
  * Usage:
  *   SUPABASE_DB_PASSWORD='…' node scripts/apply-safecase-substance.mjs
- * Password: Supabase Dashboard → Project Settings → Database → Database password
  */
 import { readFileSync } from 'fs'
 import { resolve, dirname } from 'path'
@@ -22,11 +21,12 @@ if (!password) {
 }
 
 const sqlPath = resolve(root, 'supabase/migrations/20260918_safecase_native_substance.sql')
-const sql = readFileSync(sqlPath, 'utf8')
-const dbUrl = `postgresql://postgres.${ref}:${encodeURIComponent(password)}@aws-0-us-east-2.pooler.supabase.com:6543/postgres`
+// Direct DB host (pooler tenant lookup fails for this project from CLI)
+const dbUrl = `postgresql://postgres:${encodeURIComponent(password)}@db.${ref}.supabase.co:5432/postgres`
 
-const r = spawnSync('psql', [dbUrl, '-v', 'ON_ERROR_STOP=1', '-c', sql], {
+const r = spawnSync('psql', [dbUrl, '-v', 'ON_ERROR_STOP=1', '-f', sqlPath], {
   encoding: 'utf8',
+  env: { ...process.env, PGPASSWORD: password },
   maxBuffer: 10_000_000,
 })
 if (r.stdout) process.stdout.write(r.stdout)
