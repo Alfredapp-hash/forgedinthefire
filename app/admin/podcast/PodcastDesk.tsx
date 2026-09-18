@@ -223,7 +223,7 @@ export function PodcastDesk() {
       const items = xml.match(/<item>/g)?.length || 0
       const enclosures = xml.match(/<enclosure /g)?.length || 0
       if (items === 0) {
-        setOk('Feed is valid but empty � publish one episode with audio before submitting to Apple / Spotify / Amazon')
+        setOk('Feed is valid but empty - publish one episode with audio before submitting to Apple / Spotify / Amazon')
       } else {
         setOk(`Feed valid: ${items} episode${items === 1 ? '' : 's'}, ${enclosures} enclosure${enclosures === 1 ? '' : 's'}`)
       }
@@ -266,7 +266,7 @@ export function PodcastDesk() {
           <p className="text-[11px] uppercase tracking-[0.22em] text-[#8DEBFF] mb-1">Enterprise audio</p>
           <h1 className="text-2xl font-bold text-[#F6FAFC]">Podcast Console</h1>
           <p className="text-sm text-[#A9B8C6] max-w-2xl">
-            Production pipeline, scheduling, chapters, private feeds, directory distribution, and analytics —
+            Production pipeline, scheduling, chapters, private feeds, directory distribution, and analytics â€"
             built to replace Captivate / Transistor / Buzzsprout for this show.
           </p>
         </div>
@@ -307,7 +307,7 @@ export function PodcastDesk() {
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search title, guest, slug…"
+                placeholder="Search title, guest, slugâ€¦"
                 className="rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC] md:w-72"
               />
             </div>
@@ -350,7 +350,7 @@ export function PodcastDesk() {
             {PIPELINE_COLS.map((status) => (
               <div key={status} className="rounded-2xl border border-[#27313B] bg-[#151B22] p-3 min-h-[180px]">
                 <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF] mb-3">
-                  {status} · {columns[status].length}
+                  {status} Â· {columns[status].length}
                 </p>
                 <div className="space-y-2">
                   {columns[status].map((ep) => (
@@ -362,9 +362,9 @@ export function PodcastDesk() {
                       <p className="text-sm text-[#F6FAFC] line-clamp-2">{ep.title}</p>
                       <p className="text-[11px] text-[#A9B8C6] mt-1">
                         S{ep.season}{ep.episode_number != null ? `E${ep.episode_number}` : ''}
-                        {ep.visibility !== 'public' ? ` · ${ep.visibility}` : ''}
-                        {ep.scheduled_for ? ` · ${new Date(ep.scheduled_for).toLocaleString()}` : ''}
-                        {' · '}{ep.audio_url ? 'audio ready' : 'needs audio'}
+                        {ep.visibility !== 'public' ? ` Â· ${ep.visibility}` : ''}
+                        {ep.scheduled_for ? ` Â· ${new Date(ep.scheduled_for).toLocaleString()}` : ''}
+                        {' Â· '}{ep.audio_url ? 'audio ready' : 'needs audio'}
                       </p>
                     </Link>
                   ))}
@@ -439,10 +439,10 @@ export function PodcastDesk() {
       {tab === 'distribution' && (
         <div className="space-y-4">
           <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-3">
-            <p className="text-sm font-medium text-[#F6FAFC]">Hosted RSS — submit this URL once</p>
+            <p className="text-sm font-medium text-[#F6FAFC]">Hosted RSS â€" submit this URL once</p>
             <p className="text-xs text-[#A9B8C6]">
               Episodes you publish are hosted on this site and listed in the public feed. Apple Podcasts,
-              Spotify, and Amazon Music all ingest that feed — you do not re-upload audio to each store.
+              Spotify, and Amazon Music all ingest that feed â€" you do not re-upload audio to each store.
             </p>
             <div className="flex flex-col sm:flex-row gap-2">
               <code className="flex-1 rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-xs text-[#8DEBFF] break-all">
@@ -461,25 +461,25 @@ export function PodcastDesk() {
                 disabled={validating}
                 className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF] disabled:opacity-40"
               >
-                {validating ? 'Checking�' : 'Validate feed'}
+                {validating ? 'Checking...' : 'Validate feed'}
               </button>
             </div>
             <ul className="text-sm text-[#B8C4CF] space-y-2 list-disc pl-5">
               <li>
-                <strong className="text-[#F6FAFC]">Apple Podcasts:</strong> podcastsconnect.apple.com → Add a show → RSS feed → paste URL → validate artwork (1400×1400+) and owner email.
+                <strong className="text-[#F6FAFC]">Apple Podcasts:</strong> podcastsconnect.apple.com â†' Add a show â†' RSS feed â†' paste URL â†' validate artwork (1400Ã-1400+) and owner email.
               </li>
               <li>
-                <strong className="text-[#F6FAFC]">Spotify:</strong> podcasters.spotify.com → Add your podcast → RSS → claim with the email on the feed.
+                <strong className="text-[#F6FAFC]">Spotify:</strong> podcasters.spotify.com â†' Add your podcast â†' RSS â†' claim with the email on the feed.
               </li>
               <li>
-                <strong className="text-[#F6FAFC]">Amazon Music:</strong> podcasters.amazon.com → Add podcast via RSS → complete Amazon Music for Podcasters listing.
+                <strong className="text-[#F6FAFC]">Amazon Music:</strong> podcasters.amazon.com â†' Add podcast via RSS â†' complete Amazon Music for Podcasters listing.
               </li>
             </ul>
           </section>
           <section className="rounded-2xl border border-[#27313B] bg-[#151B22] divide-y divide-[#27313B]">
             {distribution.length === 0 && (
               <p className="p-5 text-sm text-[#A9B8C6]">
-                Apply the podcast enterprise migration to seed Apple, Spotify, Amazon, and more — then track submission status here.
+                Apply the podcast enterprise migration to seed Apple, Spotify, Amazon, and more â€" then track submission status here.
               </p>
             )}
             {distribution.map((row) => (
@@ -488,7 +488,7 @@ export function PodcastDesk() {
                   <p className="text-[#F6FAFC]">{DISTRIBUTION_LABELS[row.platform] || row.platform}</p>
                   <p className="text-xs text-[#A9B8C6]">
                     {row.status.replace('_', ' ')}
-                    {row.listing_url ? ` · ${row.listing_url}` : ''}
+                    {row.listing_url ? ` Â· ${row.listing_url}` : ''}
                   </p>
                   <input
                     defaultValue={row.listing_url || ''}
@@ -524,8 +524,8 @@ export function PodcastDesk() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="grid md:grid-cols-3 gap-3 flex-1">
               <Stat label="Events (30d)" value={String(analytics?.total ?? 0)} />
-              <Stat label="Top app" value={analytics?.by_app[0]?.name || '—'} />
-              <Stat label="Top country" value={analytics?.by_country[0]?.name || '—'} />
+              <Stat label="Top app" value={analytics?.by_app[0]?.name || 'â€"'} />
+              <Stat label="Top country" value={analytics?.by_country[0]?.name || 'â€"'} />
             </div>
             <button
               type="button"
@@ -591,7 +591,7 @@ export function PodcastDesk() {
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-[#A9B8C6]">
-                      {ep.published_at ? new Date(ep.published_at).toLocaleDateString() : '—'}
+                      {ep.published_at ? new Date(ep.published_at).toLocaleDateString() : 'â€"'}
                     </td>
                     <td className="px-4 py-3 text-right text-[#8DEBFF]">{ep.downloads}</td>
                   </tr>
@@ -639,7 +639,7 @@ export function PodcastDesk() {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <p className="text-[#F6FAFC]">{sub.name || sub.email}</p>
-                      <p className="text-xs text-[#A9B8C6]">{sub.email} · {sub.status}</p>
+                      <p className="text-xs text-[#A9B8C6]">{sub.email} Â· {sub.status}</p>
                     </div>
                     {sub.status === 'active' && (
                       <button
@@ -707,7 +707,7 @@ export function PodcastDesk() {
           </section>
           <p className="text-xs text-[#A9B8C6] inline-flex items-center gap-2">
             <Radio size={12} />
-            Pipeline stages: {EPISODE_PIPELINE.join(' → ')}
+            Pipeline stages: {EPISODE_PIPELINE.join(' â†' ')}
           </p>
         </div>
       )}

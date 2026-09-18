@@ -6,7 +6,6 @@
  * Usage:
  *   SUPABASE_DB_PASSWORD='…' node scripts/apply-safecase-substance.mjs
  */
-import { readFileSync } from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { spawnSync } from 'child_process'
@@ -20,15 +19,22 @@ if (!password) {
   process.exit(1)
 }
 
-const sqlPath = resolve(root, 'supabase/migrations/20260918_safecase_native_substance.sql')
-// Direct DB host (pooler tenant lookup fails for this project from CLI)
+const files = [
+  'supabase/migrations/20260918_safecase_native_substance.sql',
+  'supabase/migrations/20260918_safecase_2fa_scaffold.sql',
+]
 const dbUrl = `postgresql://postgres:${encodeURIComponent(password)}@db.${ref}.supabase.co:5432/postgres`
 
-const r = spawnSync('psql', [dbUrl, '-v', 'ON_ERROR_STOP=1', '-f', sqlPath], {
-  encoding: 'utf8',
-  env: { ...process.env, PGPASSWORD: password },
-  maxBuffer: 10_000_000,
-})
-if (r.stdout) process.stdout.write(r.stdout)
-if (r.stderr) process.stderr.write(r.stderr)
-process.exit(r.status ?? 1)
+for (const rel of files) {
+  const sqlPath = resolve(root, rel)
+  console.log(`Applying ${rel}…`)
+  const r = spawnSync('psql', [dbUrl, '-v', 'ON_ERROR_STOP=1', '-f', sqlPath], {
+    encoding: 'utf8',
+    env: { ...process.env, PGPASSWORD: password },
+    maxBuffer: 10_000_000,
+  })
+  if (r.stdout) process.stdout.write(r.stdout)
+  if (r.stderr) process.stderr.write(r.stderr)
+  if (r.status) process.exit(r.status)
+}
+console.log('SafeCase substance + 2FA scaffold migrations applied (2FA live gate still off).')
