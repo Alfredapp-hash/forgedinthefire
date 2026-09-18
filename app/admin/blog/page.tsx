@@ -200,15 +200,23 @@ export default async function BlogPage({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#F6FAFC]">Blog Studio</h1>
-          <p className="text-sm text-[#A9B8C6]">Create and manage blog posts, stories, and content.</p>
+          <h1 className="text-2xl font-bold text-[#F6FAFC]">Blog production board</h1>
+          <p className="text-sm text-[#A9B8C6]">
+            Drafting, scheduled, and published posts. Start a biweekly package from{' '}
+            <Link href="/admin/studio" className="text-[#8DEBFF] hover:underline">Content Studio</Link>.
+          </p>
         </div>
-        <Button asChild >
-          <Link href="/admin/blog/new">
-            <Plus className="w-4 h-4 mr-2" />
-            New Post
-          </Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button asChild variant="outline">
+            <Link href="/admin/studio">Studio</Link>
+          </Button>
+          <Button asChild >
+            <Link href="/admin/blog/new">
+              <Plus className="w-4 h-4 mr-2" />
+              New Post
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {/* Stats Grid */}
@@ -289,6 +297,37 @@ export default async function BlogPage({
           </p>
         </div>
       )}
+
+      <div className="grid md:grid-cols-4 gap-3">
+        {(['draft', 'scheduled', 'published', 'archived'] as ContentStatus[]).map((column) => {
+          const columnItems = (items ?? []).filter((item) => item.status === column)
+          const labels: Record<ContentStatus, string> = {
+            draft: 'Drafting',
+            scheduled: 'Scheduled',
+            published: 'Published',
+            archived: 'Archived',
+          }
+          return (
+            <div key={column} className="rounded-2xl border border-[#27313B] bg-[#151B22] p-3 min-h-[180px]">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF] mb-3">
+                {labels[column]} · {columnItems.length}
+              </p>
+              <div className="space-y-2">
+                {columnItems.map((item) => (
+                  <Link
+                    key={item.id}
+                    href={`/admin/blog/${item.id}`}
+                    className="block rounded-lg border border-[#27313B] bg-[#05070A] p-3 hover:border-[#53D6FF]"
+                  >
+                    <p className="text-sm text-[#F6FAFC] leading-snug">{item.title}</p>
+                    <p className="text-[11px] text-[#A9B8C6] mt-1">/{item.slug}</p>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
 
       {/* Content List */}
       <div className="bg-[#151B22] rounded-2xl border border-[#27313B] overflow-hidden">
