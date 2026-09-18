@@ -44,7 +44,7 @@ export default function SocialDashboard() {
       <div className="grid md:grid-cols-2 gap-4">
         <Link href="/admin/social/accounts" className="bg-[#151B22] rounded-xl border p-5 hover:shadow-forge-sm transition-shadow flex items-center gap-4">
           <Megaphone className="w-8 h-8 text-[#53D6FF]" />
-          <div className="flex-1"><p className="font-semibold">Manage Accounts</p><p className="text-xs text-[#A9B8C6]">Connect Facebook, Instagram, LinkedIn</p></div>
+          <div className="flex-1"><p className="font-semibold">Manage Accounts</p><p className="text-xs text-[#A9B8C6]">Facebook, Instagram, LinkedIn, TikTok, YouTube</p></div>
           <ArrowRight className="w-4 h-4 text-[#A9B8C6]" />
         </Link>
         <Link href="/admin/social/campaigns" className="bg-[#151B22] rounded-xl border p-5 hover:shadow-forge-sm transition-shadow flex items-center gap-4">
