@@ -6,6 +6,7 @@ import { ArrowLeft, Copy, Loader2, Mic2 } from 'lucide-react'
 import { StudioCanvasEditor } from '@/components/studio/studio-canvas'
 import { DEFAULT_HASHTAGS, type StudioTemplate, type TopicBundle, type TopicStatus } from '@/lib/studio/types'
 import { emptyCanvas, normalizeCanvas } from '@/lib/studio/canvas'
+import { topicCoverUrl } from '@/lib/studio/topic-covers'
 
 const STATUSES: TopicStatus[] = ['idea', 'planned', 'in_production', 'published', 'archived']
 
@@ -160,6 +161,7 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
   }
 
   const { topic, episode, blog } = bundle
+  const cover = topicCoverUrl(topic)
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -167,7 +169,16 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
         <ArrowLeft size={14} /> Studio
       </Link>
       <header className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-        <div className="flex-1">
+        <div className="flex items-start gap-4 flex-1">
+          {cover ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={cover}
+              alt=""
+              className="h-24 w-24 rounded-xl object-cover border border-[#27313B] shrink-0"
+            />
+          ) : null}
+          <div className="flex-1 min-w-0">
           <input
             defaultValue={topic.title}
             onBlur={(e) => {
@@ -178,6 +189,7 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
             className="w-full bg-transparent text-2xl font-bold text-[#F6FAFC] focus:outline-none"
           />
           <p className="text-xs text-[#A9B8C6]">/{topic.slug}</p>
+          </div>
         </div>
         <select
           value={topic.status}

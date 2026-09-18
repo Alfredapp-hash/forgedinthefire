@@ -4,7 +4,7 @@ import { slugify } from '@/lib/studio/slug'
 import type { ContentTopic, PodcastEpisode, StudioClip } from '@/lib/studio/types'
 
 const ALLOWED = [
-  'title', 'slug', 'summary', 'talking_points', 'scheduled_on', 'status', 'blog_post_id',
+  'title', 'slug', 'summary', 'talking_points', 'scheduled_on', 'status', 'blog_post_id', 'cover_url',
 ] as const
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
