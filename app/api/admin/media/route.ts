@@ -32,6 +32,10 @@ export async function POST(request: Request) {
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 })
     }
+    const allowed = /^(image|audio|video)\//.test(file.type) || file.type === 'application/pdf'
+    if (!allowed) {
+      return NextResponse.json({ error: 'Upload an image, audio, video, or PDF file' }, { status: 400 })
+    }
 
     const admin = await createAdminClient()
     const ext = file.name.split('.').pop() ?? 'jpg'
