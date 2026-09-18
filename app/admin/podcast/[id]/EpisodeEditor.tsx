@@ -7,6 +7,8 @@ import {
   ArrowLeft,
   CheckCircle2,
   Circle,
+  Code2,
+  Copy,
   Loader2,
   Mic,
   Plus,
@@ -37,6 +39,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
   const [recording, setRecording] = useState(false)
   const [chapterTitle, setChapterTitle] = useState('')
   const [chapterStart, setChapterStart] = useState('0:00')
+  const [copied, setCopied] = useState<string | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
 
@@ -178,6 +181,27 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
     router.push('/admin/podcast')
   }
 
+  async function duplicateEpisode() {
+    if (!episode) return
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/admin/studio/episodes/${episode.id}/duplicate`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Duplicate failed')
+      router.push(`/admin/podcast/${data.id}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Duplicate failed')
+      setSaving(false)
+    }
+  }
+
+  async function copyText(label: string, text: string) {
+    await navigator.clipboard.writeText(text)
+    setCopied(label)
+    setTimeout(() => setCopied(null), 1500)
+  }
+
   function addChapter() {
     if (!episode) return
     const start_ms = parseTimestamp(chapterStart)
@@ -261,6 +285,13 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
             className="px-3 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium disabled:opacity-40"
           >
             {episode.status === 'published' ? 'Live' : 'Publish now'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void duplicateEpisode()}
+            className="px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
+          >
+            Duplicate
           </button>
           <button
             type="button"
@@ -465,6 +496,41 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
             }}
           />
         )}
+      </section>
+
+      <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-3">
+        <p className="text-sm font-medium text-[#F6FAFC] flex items-center gap-2">
+          <Code2 size={14} /> Share · embed · RSS item
+        </p>
+        <div className="grid gap-2">
+          <code className="block rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-xs text-[#8DEBFF] break-all">
+            {typeof window !== 'undefined' ? `${window.location.origin}/podcast/${episode.slug}` : `/podcast/${episode.slug}`}
+          </code>
+          <code className="block rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-xs text-[#8DEBFF] break-all">
+            {`<iframe src="/podcast/embed" width="100%" height="180" frameborder="0" allow="autoplay" title="${episode.title}"></iframe>`}
+          </code>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void copyText('link', `${window.location.origin}/podcast/${episode.slug}`)}
+            className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
+          >
+            <Copy size={14} /> {copied === 'link' ? 'Copied' : 'Copy page link'}
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              void copyText(
+                'embed',
+                `<iframe src="${window.location.origin}/podcast/embed" width="100%" height="180" frameborder="0" allow="autoplay" title="${episode.title}"></iframe>`
+              )
+            }
+            className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
+          >
+            <Copy size={14} /> {copied === 'embed' ? 'Copied' : 'Copy embed'}
+          </button>
+        </div>
       </section>
 
       <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5">

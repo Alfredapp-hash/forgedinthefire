@@ -2,11 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Copy, Loader2, Upload } from 'lucide-react'
+import { ArrowLeft, Copy, Loader2, Mic2 } from 'lucide-react'
 import { StudioCanvasEditor } from '@/components/studio/studio-canvas'
 import { DEFAULT_HASHTAGS, type StudioTemplate, type TopicBundle, type TopicStatus } from '@/lib/studio/types'
 import { emptyCanvas, normalizeCanvas } from '@/lib/studio/canvas'
-import { PODCAST } from '@/lib/podcast-meta'
 
 const STATUSES: TopicStatus[] = ['idea', 'planned', 'in_production', 'published', 'archived']
 
@@ -18,7 +17,6 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
   const [saving, setSaving] = useState(false)
   const [points, setPoints] = useState('')
   const [clipId, setClipId] = useState<string | null>(null)
-  const [uploading, setUploading] = useState(false)
 
   async function load() {
     const [topicRes, tplRes] = await Promise.all([
@@ -62,39 +60,26 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
     }
   }
 
-  async function saveEpisode(patch: Record<string, unknown>) {
+  async function createEpisode() {
     if (!bundle) return
     setSaving(true)
     setError(null)
     try {
-      if (!bundle.episode) {
-        const res = await fetch('/api/admin/studio/episodes', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            topic_id: topicId,
-            title: bundle.topic.title,
-            summary: bundle.topic.summary,
-            ...patch,
-          }),
-        })
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error || 'Could not create episode')
-        setBundle({ ...bundle, episode: data })
-      } else {
-        const res = await fetch('/api/admin/studio/episodes', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: bundle.episode.id, ...patch }),
-        })
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error || 'Could not update episode')
-        setBundle({ ...bundle, episode: data })
-      }
-      setOk('Episode saved')
+      const res = await fetch('/api/admin/studio/episodes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic_id: topicId,
+          title: bundle.topic.title,
+          summary: bundle.topic.summary,
+          status: 'draft',
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Could not create episode')
+      window.location.href = `/admin/podcast/${data.id}`
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Episode save failed')
-    } finally {
+      setError(err instanceof Error ? err.message : 'Episode create failed')
       setSaving(false)
     }
   }
@@ -142,36 +127,6 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
       setError(err instanceof Error ? err.message : 'Blog create failed')
     } finally {
       setSaving(false)
-    }
-  }
-
-  async function uploadAudio(file: File) {
-    setUploading(true)
-    setError(null)
-    try {
-      const fd = new FormData()
-      fd.append('file', file)
-      fd.append('alt', bundle?.topic.title || 'Podcast audio')
-      const res = await fetch('/api/admin/media', { method: 'POST', body: fd })
-      const asset = await res.json()
-      if (!res.ok) throw new Error(asset.error || 'Upload failed')
-      const duration = await new Promise<number | null>((resolve) => {
-        const audio = document.createElement('audio')
-        audio.preload = 'metadata'
-        audio.onloadedmetadata = () => resolve(Math.round(audio.duration) || null)
-        audio.onerror = () => resolve(null)
-        audio.src = asset.url
-      })
-      await saveEpisode({
-        audio_url: asset.url,
-        audio_mime: asset.mime_type || file.type,
-        file_size: asset.size_bytes || file.size,
-        duration_seconds: duration,
-      })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed')
-    } finally {
-      setUploading(false)
     }
   }
 
@@ -278,87 +233,45 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
           )}
         </div>
         <p className="text-sm text-[#A9B8C6]">
-          The existing Blog Studio editor stays intact. This only links a draft so the package stays together.
+          The Blog editor stays intact. This only links a draft so the package stays together.
         </p>
       </section>
 
       <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-[#F6FAFC]">Podcast episode</h2>
-          {episode && (
-            <Link href={`/admin/podcast/${episode.id}`} className="text-sm text-[#53D6FF]">
-              Open audio editor
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-medium text-[#F6FAFC]">Podcast</h2>
+          <Link href="/admin/podcast" className="text-sm text-[#53D6FF]">
+            Open Podcast Console
+          </Link>
+        </div>
+        <p className="text-sm text-[#A9B8C6]">
+          Episode production lives in the Podcast tab — pipeline, chapters, scheduling, RSS, and analytics.
+        </p>
+        {episode ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              href={`/admin/podcast/${episode.id}`}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium"
+            >
+              <Mic2 size={14} />
+              Open episode · {episode.status}
             </Link>
-          )}
-        </div>
-        <div className="grid md:grid-cols-2 gap-3">
-          <input
-            defaultValue={episode?.title || topic.title}
-            onBlur={(e) => void saveEpisode({ title: e.target.value })}
-            className="rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
-            placeholder="Episode title"
-          />
-          <input
-            defaultValue={episode?.slug || topic.slug}
-            onBlur={(e) => void saveEpisode({ slug: e.target.value })}
-            className="rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
-            placeholder="slug"
-          />
-          <input
-            type="number"
-            defaultValue={episode?.season ?? 1}
-            onBlur={(e) => void saveEpisode({ season: Number(e.target.value) })}
-            className="rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
-          />
-          <input
-            type="number"
-            defaultValue={episode?.episode_number ?? ''}
-            onBlur={(e) => void saveEpisode({ episode_number: e.target.value })}
-            placeholder="Episode number"
-            className="rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
-          />
-        </div>
-        <textarea
-          defaultValue={episode?.summary || topic.summary || ''}
-          onBlur={(e) => void saveEpisode({ summary: e.target.value })}
-          rows={3}
-          className="w-full rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
-          placeholder="Episode summary"
-        />
-        <textarea
-          defaultValue={episode?.transcript || ''}
-          onBlur={(e) => void saveEpisode({ transcript: e.target.value })}
-          rows={4}
-          className="w-full rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
-          placeholder="Transcript (optional, shown on the public episode page)"
-        />
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF] cursor-pointer">
-            <Upload size={14} />
-            {uploading ? 'Uploading…' : 'Upload audio'}
-            <input
-              type="file"
-              accept="audio/*"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) void uploadAudio(file)
-              }}
-            />
-          </label>
-          <select
-            defaultValue={episode?.status || 'draft'}
-            onChange={(e) => void saveEpisode({ status: e.target.value })}
-            className="rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
+            <span className="text-xs text-[#A9B8C6]">
+              {episode.audio_url ? 'Audio ready' : 'Needs audio'}
+              {episode.episode_number != null ? ` · S${episode.season}E${episode.episode_number}` : ''}
+            </span>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void createEpisode()}
+            disabled={saving}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#53D6FF] disabled:opacity-40"
           >
-            <option value="draft">draft</option>
-            <option value="scheduled">scheduled</option>
-            <option value="published">published</option>
-          </select>
-          {episode?.audio_url && (
-            <audio controls src={episode.audio_url} className="max-w-xs" />
-          )}
-        </div>
+            <Mic2 size={14} />
+            Create episode from this topic
+          </button>
+        )}
       </section>
 
       <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-4">
@@ -428,21 +341,7 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
         )}
       </section>
 
-      <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5">
-        <h2 className="text-sm font-medium text-[#F6FAFC] mb-2">RSS preview</h2>
-        <p className="text-sm text-[#A9B8C6] mb-3">
-          Published episodes appear in the public feed. Directories read this URL.
-        </p>
-        <code className="block rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-xs text-[#8DEBFF] break-all">
-          {PODCAST.feed}
-        </code>
-        {episode?.status === 'published' && episode.audio_url && (
-          <p className="text-sm text-[#8DEBFF] mt-3">
-            This episode will appear at /podcast/{episode.slug} and in RSS.
-          </p>
-        )}
-        {saving && <p className="text-xs text-[#A9B8C6] mt-2">Saving…</p>}
-      </section>
+      {saving && <p className="text-xs text-[#A9B8C6]">Saving…</p>}
     </div>
   )
 }

@@ -87,7 +87,10 @@ export async function getPublishedEpisode(slug: string): Promise<PodcastEpisode 
     .eq('status', 'published')
     .single()
   if (error || !data) return null
-  return data as PodcastEpisode
+  const ep = data as PodcastEpisode
+  // Private episodes stay off the public site (token RSS only)
+  if (ep.visibility === 'private') return null
+  return ep
 }
 
 export function formatDuration(seconds: number | null | undefined) {

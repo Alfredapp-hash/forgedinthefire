@@ -189,12 +189,12 @@ DROP POLICY IF EXISTS "Insert podcast analytics" ON podcast_analytics_events;
 CREATE POLICY "Insert podcast analytics" ON podcast_analytics_events
   FOR INSERT TO anon, authenticated WITH CHECK (true);
 
--- Public published policy: only public visibility in open queries
+-- Public published policy: public + unlisted (private stays token-feed only)
 DROP POLICY IF EXISTS "Public published podcasts" ON podcast_episodes;
 CREATE POLICY "Public published podcasts" ON podcast_episodes
   FOR SELECT USING (
     status = 'published'
-    AND visibility = 'public'
+    AND visibility IN ('public', 'unlisted')
     AND audio_url IS NOT NULL
   );
 

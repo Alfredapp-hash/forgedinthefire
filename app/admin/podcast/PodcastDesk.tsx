@@ -441,10 +441,40 @@ export function PodcastDesk() {
 
       {tab === 'analytics' && (
         <div className="space-y-4">
-          <div className="grid md:grid-cols-3 gap-3">
-            <Stat label="Events (30d)" value={String(analytics?.total ?? 0)} />
-            <Stat label="Top app" value={analytics?.by_app[0]?.name || '—'} />
-            <Stat label="Top country" value={analytics?.by_country[0]?.name || '—'} />
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="grid md:grid-cols-3 gap-3 flex-1">
+              <Stat label="Events (30d)" value={String(analytics?.total ?? 0)} />
+              <Stat label="Top app" value={analytics?.by_app[0]?.name || '—'} />
+              <Stat label="Top country" value={analytics?.by_country[0]?.name || '—'} />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (!analytics) return
+                const lines = [
+                  'episode,season,episode_number,published_at,downloads',
+                  ...analytics.episode_compare.map((ep) =>
+                    [
+                      JSON.stringify(ep.title),
+                      ep.season,
+                      ep.episode_number ?? '',
+                      ep.published_at || '',
+                      ep.downloads,
+                    ].join(',')
+                  ),
+                ]
+                const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `podcast-analytics-${new Date().toISOString().slice(0, 10)}.csv`
+                a.click()
+                URL.revokeObjectURL(url)
+              }}
+              className="px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF] shrink-0"
+            >
+              Export CSV
+            </button>
           </div>
           <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5">
             <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF] mb-3">Daily downloads / plays</p>

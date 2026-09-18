@@ -14,7 +14,6 @@ import {
   Megaphone,
   Users,
   Mail,
-  Shield,
   Mic2,
 } from 'lucide-react'
 import { loadSEOAuditReport, getSEOSummaryFromAuditReport, getMockSEOSummary } from '@/src/lib/seo/audit-report-server'
@@ -144,7 +143,6 @@ export default async function AdminPage() {
       <div>
         <h2 className="text-lg font-bold text-[#F6FAFC] mb-4">Quick Actions</h2>
         <div className="flex flex-wrap gap-3">
-          <Link href="/admin/safecase" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">SafeCase</Link>
           <Link href="/admin/studio" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Studio</Link>
           <Link href="/admin/blog/new" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">New Blog Post</Link>
           <Link href="/admin/podcast" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Podcast</Link>
@@ -158,7 +156,6 @@ export default async function AdminPage() {
         <h2 className="text-lg font-bold text-[#F6FAFC] mb-4">Management Tools</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {[
-            { label: 'SafeCase', description: 'Confidential client, safety, and casework records from Ark Vault.', href: '/admin/safecase', icon: Shield, accent: TEAL },
             { label: 'Content Studio', description: 'Biweekly topic calendar that drives Blog, Podcast, and Social.', href: '/admin/studio', icon: PenSquare, accent: TEAL },
             { label: 'Blog', description: 'Block editor, media library, autosave, and publishing checklist.', href: '/admin/blog', icon: FileText, accent: TEAL },
             { label: 'Podcast Console', description: 'Enterprise episode pipeline, RSS, private feeds, and analytics.', href: '/admin/podcast', icon: Mic2, accent: '#53D6FF' },

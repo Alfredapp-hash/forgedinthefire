@@ -73,8 +73,8 @@ export function PodcastAudioEditor({ audioUrl, title, onExported }: Props) {
       setRange({ start: region.start, end: region.end, total })
       setReady(true)
     })
-    regions.on('region-updated', (region) => sync(region as RegionApi))
-    regions.on('region-created', (region) => sync(region as RegionApi))
+    regions.on('region-updated', (region: RegionApi) => sync(region))
+    regions.on('region-created', (region: RegionApi) => sync(region))
 
     return () => {
       ws.destroy()
