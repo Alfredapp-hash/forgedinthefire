@@ -11,7 +11,10 @@
     "type-check": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "seo:crawl": "node scripts/seo-crawler.mjs"
+    "seo:crawl": "node scripts/seo-crawler.mjs",
+    "content:covers": "node scripts/generate-advocacy-covers.mjs",
+    "content:seed": "node --env-file=.env.local scripts/seed-advocacy-calendar.mjs",
+    "content:attach-covers": "node --env-file=.env.local scripts/attach-advocacy-covers.mjs"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
