@@ -202,7 +202,7 @@ export default function EditContentPage({ params }: { params: Promise<{ id: stri
               type="text"
               value={item.title}
               onChange={(e) => setItem({ ...item, title: e.target.value })}
-              className="w-full text-xl font-semibold border border-[#27313B] rounded-lg px-4 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] transition-colors"
+              className="w-full text-xl font-semibold border border-[#27313B] rounded-lg px-4 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] transition-colors"
             />
           </div>
 
@@ -244,14 +244,14 @@ export default function EditContentPage({ params }: { params: Promise<{ id: stri
                       value={block.data.title || ''}
                       onChange={(e) => updateBlock(index, { type: 'hero', data: { ...block.data, title: e.target.value } })}
                       placeholder="Hero Title"
-                      className="w-full font-semibold border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                      className="w-full font-semibold border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                     />
                     <input
                       type="text"
                       value={block.data.subtitle || ''}
                       onChange={(e) => updateBlock(index, { type: 'hero', data: { ...block.data, subtitle: e.target.value } })}
                       placeholder="Subtitle (optional)"
-                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                     />
                   </div>
                 )}
@@ -262,7 +262,7 @@ export default function EditContentPage({ params }: { params: Promise<{ id: stri
                     onChange={(e) => updateBlock(index, { type: 'text', data: { content: e.target.value } })}
                     placeholder="Enter your content here..."
                     rows={6}
-                    className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] resize-y"
+                    className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] resize-y"
                   />
                 )}
 
@@ -273,7 +273,7 @@ export default function EditContentPage({ params }: { params: Promise<{ id: stri
                       onChange={(e) => updateBlock(index, { type: 'quote', data: { ...block.data, text: e.target.value } })}
                       placeholder="Quote text..."
                       rows={3}
-                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] italic focus:outline-none focus:border-[#53D6FF]"
+                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] italic focus:outline-none focus:border-[#53D6FF]"
                     />
                     <div className="flex gap-3">
                       <input
@@ -281,14 +281,14 @@ export default function EditContentPage({ params }: { params: Promise<{ id: stri
                         value={block.data.author || ''}
                         onChange={(e) => updateBlock(index, { type: 'quote', data: { ...block.data, author: e.target.value } })}
                         placeholder="Author name"
-                        className="flex-1 border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                        className="flex-1 border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                       />
                       <input
                         type="text"
                         value={block.data.role || ''}
                         onChange={(e) => updateBlock(index, { type: 'quote', data: { ...block.data, role: e.target.value } })}
                         placeholder="Role/Title"
-                        className="flex-1 border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                        className="flex-1 border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                       />
                     </div>
                   </div>
@@ -309,21 +309,21 @@ export default function EditContentPage({ params }: { params: Promise<{ id: stri
                       value={block.data.image || ''}
                       onChange={(e) => updateBlock(index, { type: 'imageText', data: { ...block.data, image: e.target.value } })}
                       placeholder="Image URL"
-                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                     />
                     <input
                       type="text"
                       value={block.data.imageAlt || ''}
                       onChange={(e) => updateBlock(index, { type: 'imageText', data: { ...block.data, imageAlt: e.target.value } })}
                       placeholder="Alt text (for accessibility)"
-                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                     />
                     <textarea
                       value={block.data.content || ''}
                       onChange={(e) => updateBlock(index, { type: 'imageText', data: { ...block.data, content: e.target.value } })}
                       placeholder="Content text..."
                       rows={3}
-                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                     />
                   </div>
                 )}
@@ -335,14 +335,14 @@ export default function EditContentPage({ params }: { params: Promise<{ id: stri
                       value={block.data.text || ''}
                       onChange={(e) => updateBlock(index, { type: 'cta', data: { ...block.data, text: e.target.value } })}
                       placeholder="Button text"
-                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                     />
                     <input
                       type="text"
                       value={block.data.url || ''}
                       onChange={(e) => updateBlock(index, { type: 'cta', data: { ...block.data, url: e.target.value } })}
                       placeholder="URL (e.g., /get-help or https://...)"
-                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                      className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                     />
                   </div>
                 )}
@@ -387,7 +387,7 @@ export default function EditContentPage({ params }: { params: Promise<{ id: stri
                 seo: { ...item.seo, title: e.target.value }
               })}
               placeholder="Page title for search engines"
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
             />
             <p className="text-xs text-[#A9B8C6] mt-1">
               Defaults to: {item.title} | Forged in the Fire
@@ -407,7 +407,7 @@ export default function EditContentPage({ params }: { params: Promise<{ id: stri
               })}
               placeholder="Brief description for search results"
               rows={3}
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] resize-y"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] resize-y"
             />
           </div>
 
@@ -424,7 +424,7 @@ export default function EditContentPage({ params }: { params: Promise<{ id: stri
                 }
               })}
               placeholder="human trafficking advocacy, Lorain County Ohio, survivor support"
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
             />
             <p className="text-xs text-[#A9B8C6] mt-1">Separate keywords with commas</p>
           </div>
@@ -439,7 +439,7 @@ export default function EditContentPage({ params }: { params: Promise<{ id: stri
                 seo: { ...item.seo, canonicalUrl: e.target.value }
               })}
               placeholder="https://www.forgedinthefireohio.org/blog/your-post"
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
             />
           </div>
 

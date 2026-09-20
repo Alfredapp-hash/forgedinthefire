@@ -336,7 +336,7 @@ export default function NewBlogPostPage() {
               value={title}
               onChange={(e) => handleTitleChange(e)}
               placeholder="Enter a compelling title..."
-              className="w-full text-lg border border-[#27313B] rounded-lg px-4 py-3 text-[#F6FAFC] placeholder-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] transition-colors"
+              className="w-full text-lg border border-[#27313B] rounded-lg px-4 py-3 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] placeholder-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] transition-colors"
               required
             />
             <p className="text-xs text-[#A9B8C6] mt-1">
@@ -381,7 +381,7 @@ export default function NewBlogPostPage() {
               onChange={(e) => setExcerpt(e.target.value)}
               placeholder="Brief description for previews, search results, and social sharing..."
               rows={3}
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] resize-none"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] resize-none"
             />
             <p className="text-xs text-[#A9B8C6] mt-1">
               {excerpt.length}/160 characters recommended for SEO
@@ -446,7 +446,7 @@ export default function NewBlogPostPage() {
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value as ContentCategory)}
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
             >
               {categories.map((cat) => (
                 <option key={cat.value} value={cat.value}>{cat.label}</option>
@@ -465,7 +465,7 @@ export default function NewBlogPostPage() {
               value={tags}
               onChange={(e) => setTags(e.target.value)}
               placeholder="survivor stories, cleveland, advocacy, housing..."
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
             />
           </div>
         </div>
@@ -488,7 +488,7 @@ export default function NewBlogPostPage() {
                   value={featuredImage}
                   onChange={(e) => setFeaturedImage(e.target.value)}
                   placeholder="https://example.com/image.jpg"
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                 />
               </div>
               <div>
@@ -500,7 +500,7 @@ export default function NewBlogPostPage() {
                   value={featuredImageAlt}
                   onChange={(e) => setFeaturedImageAlt(e.target.value)}
                   placeholder="Descriptive text for screen readers"
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                 />
               </div>
             </div>
@@ -537,7 +537,7 @@ export default function NewBlogPostPage() {
                 value={author}
                 onChange={(e) => setAuthor(e.target.value)}
                 placeholder="e.g., Jane Smith"
-                className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
               />
             </div>
 
@@ -551,7 +551,7 @@ export default function NewBlogPostPage() {
                 type="datetime-local"
                 value={publishDate}
                 onChange={(e) => setPublishDate(e.target.value)}
-                className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
               />
             </div>
           </div>
@@ -611,7 +611,7 @@ export default function NewBlogPostPage() {
               value={seoTitle}
               onChange={(e) => setSeoTitle(e.target.value)}
               placeholder="Title for search engines"
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
             />
             <p className="text-xs text-[#A9B8C6] mt-1">
               {seoTitle.length}/65 characters
@@ -627,7 +627,7 @@ export default function NewBlogPostPage() {
               onChange={(e) => setSeoDescription(e.target.value)}
               placeholder="Description for search results..."
               rows={2}
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] resize-none"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] resize-none"
             />
             <p className="text-xs text-[#A9B8C6] mt-1">
               {seoDescription.length}/160 characters

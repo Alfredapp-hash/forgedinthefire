@@ -62,7 +62,7 @@ export default function NewContentPage() {
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Enter content title..."
-            className="w-full border border-[#27313B] rounded-lg px-4 py-2.5 text-[#F6FAFC] placeholder-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] transition-colors"
+            className="w-full border border-[#27313B] rounded-lg px-4 py-2.5 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] placeholder-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] transition-colors"
             required
           />
         </div>

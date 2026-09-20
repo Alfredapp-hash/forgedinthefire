@@ -11,7 +11,7 @@ type Props = {
 }
 
 const inputClass =
-  'w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]'
+  'w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]'
 const labelClass = 'block text-xs font-semibold text-[#A9B8C6] mb-1'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
