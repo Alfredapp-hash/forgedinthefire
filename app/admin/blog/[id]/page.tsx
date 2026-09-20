@@ -379,7 +379,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                 type="text"
                 value={item.title}
                 onChange={(e) => setItem({ ...item, title: e.target.value })}
-                className="w-full text-xl font-semibold border border-[#27313B] rounded-lg px-4 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] transition-colors"
+                className="w-full text-xl font-semibold border border-[#27313B] rounded-lg px-4 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] transition-colors"
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -388,7 +388,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                 <select
                   value={item.category}
                   onChange={(e) => setItem({ ...item, category: e.target.value as ContentCategory })}
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                 >
                   {categories.map((cat) => (
                     <option key={cat.value} value={cat.value}>{cat.label}</option>
@@ -415,7 +415,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                 onChange={(e) => setItem({ ...item, excerpt: e.target.value })}
                 placeholder="Brief summary for previews and search results..."
                 rows={2}
-                className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] resize-none"
+                className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] resize-none"
               />
               <p className="text-xs text-[#A9B8C6] mt-1">{item.excerpt?.length || 0}/160 characters</p>
             </div>
@@ -433,7 +433,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                   type="text"
                   value={item.slug}
                   onChange={(e) => handleSlugChange(e.target.value)}
-                  className={`flex-1 border rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] transition-colors ${
+                  className={`flex-1 border rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] transition-colors ${
                     slugError ? 'border-[#8DEBFF]/35 bg-[#8DEBFF]/15' : 'border-[#27313B]'
                   }`}
                 />
@@ -455,7 +455,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                 value={item.tags?.join(', ') || ''}
                 onChange={(e) => setItem({ ...item, tags: e.target.value.split(',').map(t => t.trim()).filter(Boolean) })}
                 placeholder="e.g., survivor stories, advocacy, cleveland, housing..."
-                className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
               />
               {item.tags && item.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
@@ -479,7 +479,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                 value={item.authorName || ''}
                 onChange={(e) => setItem({ ...item, authorName: e.target.value })}
                 placeholder="e.g., Jane Smith"
-                className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
               />
             </div>
           </div>
@@ -556,7 +556,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                     value={item.newsletterCategory || ''}
                     onChange={(e) => setItem({ ...item, newsletterCategory: e.target.value })}
                     placeholder="e.g., Survivor Stories, Events, Volunteer Spotlight"
-                    className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                    className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                   />
                 </div>
               )}
@@ -571,7 +571,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                   value={item.emailSubject || ''}
                   onChange={(e) => setItem({ ...item, emailSubject: e.target.value })}
                   placeholder={`Default: "New from Forged in the Fire: ${item.title}"`}
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                 />
               </div>
 
@@ -585,7 +585,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                   onChange={(e) => setItem({ ...item, emailExcerpt: e.target.value })}
                   placeholder={`Default: "${item.excerpt?.slice(0, 100)}..."`}
                   rows={2}
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] resize-none"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] resize-none"
                 />
                 <p className="text-xs text-[#A9B8C6] mt-1">
                   A shorter excerpt specifically for email notifications.
@@ -612,7 +612,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                     } 
                   })}
                   placeholder="Image URL"
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                 />
                 <input
                   type="text"
@@ -627,7 +627,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                     } 
                   })}
                   placeholder="Alt text (for accessibility)"
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                 />
               </div>
               {item.featuredImage?.url && (
@@ -697,7 +697,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                   setItem({ ...item, cta: undefined })
                 }
               }}
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
             >
               <option value="">No CTA</option>
               {ctaOptions.map((opt) => (
