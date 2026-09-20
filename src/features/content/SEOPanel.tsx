@@ -204,7 +204,7 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
             value={seo.title || ''}
             onChange={(e) => handleChange({ title: e.target.value })}
             placeholder={`${item.title} | Forged in the Fire`}
-            className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30 ${
+            className={`w-full border rounded-lg px-3 py-2 text-sm bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30 ${
               titleLen > 65 ? 'border-[#8DEBFF]/35' : 'border-[#27313B]'
             }`}
             maxLength={80}
@@ -229,7 +229,7 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
             onChange={(e) => handleChange({ description: e.target.value })}
             placeholder="Brief description of this content for search results..."
             rows={3}
-            className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30 resize-none ${
+            className={`w-full border rounded-lg px-3 py-2 text-sm bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30 resize-none ${
               descLen > 160 ? 'border-[#8DEBFF]/35' : 'border-[#27313B]'
             }`}
             maxLength={200}
@@ -251,7 +251,7 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
               keywords: e.target.value.split(',').map(k => k.trim()).filter(Boolean)
             })}
             placeholder="human trafficking advocacy, Lorain County Ohio, survivor support"
-            className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30"
+            className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30"
           />
           <p className="text-xs text-[#A9B8C6] mt-1">
             Separate keywords with commas. These help with SEO focus.
@@ -268,7 +268,7 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
             value={seo.ogTitle || ''}
             onChange={(e) => handleChange({ ogTitle: e.target.value })}
             placeholder={seo.title || item.title}
-            className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30"
+            className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30"
           />
           <p className="text-xs text-[#A9B8C6] mt-1">
             Title shown when shared on Facebook, LinkedIn, etc.
@@ -285,7 +285,7 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
             onChange={(e) => handleChange({ ogDescription: e.target.value })}
             placeholder={seo.description || item.excerpt}
             rows={2}
-            className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30 resize-none"
+            className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30 resize-none"
           />
         </div>
 
@@ -299,7 +299,7 @@ export default function SEOPanel({ item, onChange }: SEOPanelProps) {
             value={seo.canonicalUrl || ''}
             onChange={(e) => handleChange({ canonicalUrl: e.target.value })}
             placeholder={`https://www.forgedinthefireohio.org/blog/${item.slug}`}
-            className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30"
+            className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-sm bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:ring-2 focus:ring-[#53D6FF]/30"
           />
         </div>
 
