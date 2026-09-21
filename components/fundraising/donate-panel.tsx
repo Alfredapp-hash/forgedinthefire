@@ -7,6 +7,18 @@ import { ZEFFY_DONATE_URL, type FundraisingCampaign, type SuggestedAmount } from
 import { Button } from '@/components/ui/button'
 import { Heart } from 'lucide-react'
 
+function inboundUtm() {
+  if (typeof window === 'undefined') return {} as Record<string, string>
+  const q = new URLSearchParams(window.location.search)
+  const pick = (key: string) => q.get(key) || ''
+  return {
+    utm_source: pick('utm_source'),
+    utm_medium: pick('utm_medium'),
+    utm_campaign: pick('utm_campaign'),
+    utm_content: pick('utm_content'),
+  }
+}
+
 export function CampaignDonatePanel({
   campaign,
   fundraiserId,
@@ -25,11 +37,13 @@ export function CampaignDonatePanel({
   const amount = custom ? Number(custom) : selected
 
   function checkout() {
+    const inbound = inboundUtm()
     const base = campaign.zeffy_url || ZEFFY_DONATE_URL
     const url = zeffyCheckoutUrl(amount, {
-      utm_source: 'campaign',
-      utm_medium: 'site',
-      utm_campaign: campaign.utm_campaign || campaign.slug,
+      utm_source: inbound.utm_source || 'campaign',
+      utm_medium: inbound.utm_medium || 'site',
+      utm_campaign: inbound.utm_campaign || campaign.utm_campaign || campaign.slug,
+      utm_content: inbound.utm_content,
     })
     const href = amount ? url : base
     window.open(href, '_blank', 'noopener,noreferrer')
@@ -37,6 +51,7 @@ export function CampaignDonatePanel({
   }
 
   async function submitReport() {
+    const inbound = inboundUtm()
     const res = await fetch(`/api/campaigns/${campaign.slug}/report-gift`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -49,6 +64,10 @@ export function CampaignDonatePanel({
         is_anonymous: report.anonymous,
         is_recurring: recurring,
         fundraiser_id: fundraiserId || null,
+        utm_source: inbound.utm_source || 'campaign',
+        utm_medium: inbound.utm_medium || 'site',
+        utm_campaign: inbound.utm_campaign || campaign.utm_campaign || campaign.slug,
+        utm_content: inbound.utm_content || null,
         company: '',
       }),
     })
