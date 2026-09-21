@@ -576,9 +576,44 @@
   }
 }
 
-/* Mobile nav sheet is portaled to document.body. Inline + !important
-   positioning keeps it on the viewport even if a parent filter/transform
-   stacking context or a leftover opacity animation tries to hide it. */
+/* Native <details> mobile nav. The sheet is a descendant of <header> but
+   header itself has no filter/transform, so position:fixed is viewport-based. */
+.mobile-nav-toggle > summary {
+  list-style: none;
+}
+.mobile-nav-toggle > summary::-webkit-details-marker,
+.mobile-nav-toggle > summary::marker {
+  display: none;
+  content: none;
+}
+.mobile-nav-toggle[open] .mobile-nav-icon-open {
+  display: none;
+}
+.mobile-nav-toggle:not([open]) .mobile-nav-icon-close {
+  display: none;
+}
+.header-glass-on {
+  background-color: rgba(5, 7, 10, 0.45);
+  border-color: rgba(83, 214, 255, 0.08);
+}
+.header-glass-on::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+.header-glass-off {
+  background-color: transparent;
+  border-color: transparent;
+}
+header:has(.mobile-nav-toggle[open]) .header-glass {
+  background-color: #05070a !important;
+  border-color: rgba(83, 214, 255, 0.08) !important;
+}
+header:has(.mobile-nav-toggle[open]) .header-glass::before {
+  display: none !important;
+}
 .mobile-nav-sheet {
   position: fixed !important;
   top: 5rem !important;
@@ -586,7 +621,6 @@
   bottom: 0 !important;
   left: 0 !important;
   z-index: 45 !important;
-  display: block !important;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -599,6 +633,7 @@
 }
 
 @media (min-width: 1024px) {
+  .mobile-nav-toggle,
   .mobile-nav-sheet {
     display: none !important;
   }
