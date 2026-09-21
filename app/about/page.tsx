@@ -261,16 +261,16 @@ export default function AboutPage() {
                         vulnerable people and supporting survivors of trafficking and exploitation.
                       </p>
                       <p>
-                        Brian helps build the systems that support the organization’s mission—from
+                        Brian helps build the systems that support the organization's mission—from
                         developing policies and procedures to strengthening its website, digital
                         outreach, and podcast production. His work focuses on giving the team
                         practical tools and a strong operational foundation to expand its reach and
                         serve its community.
                       </p>
                       <p>
-                        Brian holds a bachelor’s degree in legal studies and is continuing his legal
+                        Brian holds a bachelor's degree in legal studies and is continuing his legal
                         education at Purdue Global Law School. He hopes to serve as the
-                        organization’s in-house legal counsel after completing his education and
+                        organization's in-house legal counsel after completing his education and
                         meeting the requirements for admission to practice.
                       </p>
                       <p>
@@ -278,6 +278,61 @@ export default function AboutPage() {
                         Tracy Preston Springford, he shares a commitment to protecting children,
                         ending exploitation, and helping survivors find safety, opportunity, and a
                         path forward.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-[#151B22] border-[#1A232C] overflow-hidden">
+              <CardContent className="p-0">
+                <div className="flex flex-col lg:flex-row">
+                  <div className="lg:w-72 xl:w-80 flex-shrink-0 bg-[#11161C] flex items-center justify-center p-10 lg:p-12">
+                    <div
+                      className="relative w-48 lg:w-56 rounded-2xl overflow-hidden shadow-forge border border-[#1A232C]"
+                      style={{ aspectRatio: '1 / 1' }}
+                    >
+                      <Image
+                        src="/Leanna-Long-headshot.png"
+                        alt="Leanna Long, Director of Programming at Forged in the Fire"
+                        fill
+                        className="object-cover object-top"
+                        sizes="(max-width: 1024px) 192px, 224px"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex-1 p-8 lg:p-12">
+                    <div className="mb-6">
+                      <h3 className="font-serif text-3xl font-bold text-[#F6FAFC] mb-1">
+                        Leanna Long
+                      </h3>
+                      <p className="text-[#53D6FF] font-medium text-lg">
+                        Director of Programming
+                      </p>
+                    </div>
+
+                    <div className="space-y-4 text-[#B8C4CF] leading-relaxed">
+                      <p>
+                        Leanna Long serves as Director of Programming at Forged in the Fire,
+                        bringing extensive training and experience in hospital advocacy,
+                        crisis-hotline intervention, direct field advocacy, and trauma-informed
+                        leadership. As a certified advocate, she combines professional expertise,
+                        compassion, and lived experience with a deep respect for each survivor's
+                        dignity, choices, and individual needs.
+                      </p>
+                      <p>
+                        In her role, Leanna helps build and develop the organization's advocacy
+                        team while overseeing programs and services for victims and survivors. Her
+                        work focuses on ensuring that every program reflects Forged in the Fire's
+                        commitment to survivor-centered, trauma-informed care.
+                      </p>
+                      <p>
+                        Leanna understands the courage it takes to seek support and the importance
+                        of meeting people where they are. She is dedicated to creating programs
+                        that help survivors find safety, access meaningful support, and pursue
+                        healing and growth on their own terms.
                       </p>
                     </div>
                   </div>
