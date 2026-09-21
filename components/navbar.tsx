@@ -4,19 +4,13 @@ import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { SubscribeModal } from '@/src/components/subscribe-modal';
 import { NAV_LINKS } from '@/lib/constants';
 import { cn } from '@/lib/utils';
 import { Menu, X, Mail } from 'lucide-react';
 import Image from 'next/image';
-
-const reducedMotionVariants = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1 },
-  exit: { opacity: 0 },
-};
 
 export function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
@@ -27,6 +21,8 @@ export function Navbar() {
 
   // Hide navbar on admin routes - admin has its own sidebar navigation
   const isAdminRoute = pathname?.startsWith('/admin') || pathname?.startsWith('/login') || pathname?.startsWith('/unauthorized');
+
+  const glassHeader = isScrolled || pathname !== '/';
 
   useEffect(() => {
     const handleScroll = () => {
@@ -45,6 +41,17 @@ export function Navbar() {
   useEffect(() => {
     setIsOpen(false);
   }, [pathname]);
+
+  // Desktop layout uses the inline nav; never leave the sheet open across that breakpoint.
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1024px)');
+    const onChange = () => {
+      if (media.matches) setIsOpen(false);
+    };
+    onChange();
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, []);
 
   // Lock body scroll when mobile menu is open
   useEffect(() => {
@@ -76,24 +83,106 @@ export function Navbar() {
     return pathname.startsWith(href);
   };
 
+  const closeMenu = () => setIsOpen(false);
+
   // Hooks must run unconditionally, so bail out only at render time.
   if (isAdminRoute) return null;
+
+  const mobileSheet = isOpen ? (
+    <div
+      id="mobile-menu"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Site menu"
+      className="mobile-nav-sheet"
+    >
+      <nav className="flex min-h-full flex-col px-5 pb-28 pt-2" aria-label="Mobile navigation">
+        <ul className="flex flex-col">
+          {NAV_LINKS.map((link) => (
+            <li key={link.href}>
+              <Link
+                href={link.href}
+                className={cn(
+                  'flex min-h-11 items-center border-b border-[#1A232C] px-1 text-base font-medium transition-colors',
+                  isActive(link.href)
+                    ? 'text-[#53D6FF]'
+                    : 'text-[#F6FAFC] hover:text-[#53D6FF]',
+                  'priority' in link && link.priority && 'font-semibold'
+                )}
+                aria-current={isActive(link.href) ? 'page' : undefined}
+                onClick={closeMenu}
+              >
+                {link.label}
+              </Link>
+            </li>
+          ))}
+        </ul>
+
+        <div className="mt-8 flex flex-col gap-3">
+          <Button asChild variant="outline" size="lg" className="w-full min-h-12">
+            <Link href="/get-help" onClick={closeMenu}>
+              Get Help Now
+            </Link>
+          </Button>
+          <Button
+            type="button"
+            onClick={() => {
+              closeMenu();
+              setIsSubscribeOpen(true);
+            }}
+            variant="outline"
+            size="lg"
+            className="w-full min-h-12"
+          >
+            <Mail className="mr-2 h-4 w-4" />
+            Subscribe to Updates
+          </Button>
+          <Button asChild variant="default" size="lg" className="w-full min-h-12">
+            <Link href="/donate" onClick={closeMenu}>
+              Donate Today
+            </Link>
+          </Button>
+        </div>
+
+        <div className="mt-8 rounded-lg border border-[#27313B]/30 bg-[#11161C] p-4">
+          <p className="mb-2 text-sm font-medium text-[#B8C4CF]">
+            National Human Trafficking Hotline
+          </p>
+          <a
+            href="tel:1-888-373-7888"
+            className="text-lg font-bold text-[#8DEBFF] hover:text-[#A9B8C6]"
+          >
+            1-888-373-7888
+          </a>
+          <p className="mt-1 text-xs text-[#A9B8C6]">Text &quot;BEFREE&quot; to 233733</p>
+        </div>
+      </nav>
+    </div>
+  ) : null;
 
   return (
     <>
       <header
-        className={cn(
-          'fixed top-0 left-0 right-0 z-40 transition-[background-color,backdrop-filter,border-color] duration-300',
-          // Transparent over the hero on "/" until scroll; everywhere else a
-          // near-invisible pane of blurred obsidian with a faint cyan hairline.
-          isOpen || isScrolled || pathname !== '/'
-            ? 'bg-[rgba(5,7,10,0.45)] backdrop-blur-[18px] border-b border-[rgba(83,214,255,0.08)]'
-            : 'bg-transparent'
-        )}
+        className="fixed top-0 left-0 right-0 z-40"
         role="banner"
       >
+        {/* Glass fill is a sibling layer, not a filter on <header> itself.
+            backdrop-filter on the header used to turn it into a containing
+            block, which clipped the mobile sheet to the 80px bar on every
+            page except a transparent Home. */}
+        <div
+          aria-hidden
+          className={cn(
+            'pointer-events-none absolute inset-0 border-b transition-[background-color,backdrop-filter,border-color] duration-300',
+            isOpen
+              ? 'bg-[#05070A] border-[rgba(83,214,255,0.08)]'
+              : glassHeader
+                ? 'bg-[rgba(5,7,10,0.45)] backdrop-blur-[18px] border-[rgba(83,214,255,0.08)]'
+                : 'border-transparent bg-transparent'
+          )}
+        />
       <nav
-        className="container-wide section-padding"
+        className="relative container-wide section-padding"
         role="navigation"
         aria-label="Main navigation"
       >
@@ -103,6 +192,7 @@ export function Navbar() {
             href="/"
             className="flex items-center gap-2.5 group shrink-0"
             aria-label="Forged in the Fire - Home"
+            onClick={closeMenu}
           >
             {/* The brand lockup is a square with baked-in type, so the navbar
                 uses only the anvil-and-flame mark; the wordmark beside it is
@@ -173,16 +263,17 @@ export function Navbar() {
 
           {/* Mobile Menu Button */}
           <button
-            onClick={() => setIsOpen(!isOpen)}
-            className="lg:hidden p-2 text-[#B8C4CF] hover:text-[#53D6FF] transition-colors"
+            type="button"
+            onClick={() => setIsOpen((open) => !open)}
+            className="relative z-10 lg:hidden p-2 text-[#B8C4CF] hover:text-[#53D6FF] transition-colors"
             aria-expanded={isOpen}
             aria-controls="mobile-menu"
             aria-label={isOpen ? 'Close menu' : 'Open menu'}
           >
             {isOpen ? (
-              <X className="h-6 w-6" />
+              <X className="h-6 w-6" aria-hidden="true" />
             ) : (
-              <Menu className="h-6 w-6" />
+              <Menu className="h-6 w-6" aria-hidden="true" />
             )}
           </button>
         </div>
@@ -190,93 +281,8 @@ export function Navbar() {
 
     </header>
 
-      {portalReady
-        ? createPortal(
-            <AnimatePresence>
-              {isOpen ? (
-                <motion.div
-                  id="mobile-menu"
-                  role="dialog"
-                  aria-modal="true"
-                  aria-label="Site menu"
-                  initial="hidden"
-                  animate="visible"
-                  exit="exit"
-                  variants={reducedMotionVariants}
-                  transition={{ duration: 0.18 }}
-                  className="fixed inset-x-0 bottom-0 top-20 z-[35] lg:hidden"
-                >
-                  <div className="absolute inset-0 bg-[#05070A]" />
-                  <nav
-                    className="relative h-full overflow-y-auto overscroll-contain px-5 pb-28 pt-2"
-                    role="navigation"
-                    aria-label="Mobile navigation"
-                  >
-                    <ul className="flex flex-col">
-                      {NAV_LINKS.map((link) => (
-                        <li key={link.href}>
-                          <Link
-                            href={link.href}
-                            className={cn(
-                              'flex min-h-12 items-center border-b border-[#1A232C] px-1 text-lg font-medium transition-colors',
-                              isActive(link.href)
-                                ? 'text-[#53D6FF]'
-                                : 'text-[#F6FAFC] hover:text-[#53D6FF]'
-                            )}
-                            aria-current={isActive(link.href) ? 'page' : undefined}
-                            onClick={() => setIsOpen(false)}
-                          >
-                            {link.label}
-                          </Link>
-                        </li>
-                      ))}
-                    </ul>
+      {portalReady ? createPortal(mobileSheet, document.body) : null}
 
-                    <div className="mt-8 flex flex-col gap-3">
-                      <Button asChild variant="outline" size="lg" className="w-full min-h-12">
-                        <Link href="/get-help" onClick={() => setIsOpen(false)}>
-                          Get Help Now
-                        </Link>
-                      </Button>
-                      <Button
-                        onClick={() => {
-                          setIsOpen(false);
-                          setIsSubscribeOpen(true);
-                        }}
-                        variant="outline"
-                        size="lg"
-                        className="w-full min-h-12"
-                      >
-                        <Mail className="mr-2 h-4 w-4" />
-                        Subscribe to Updates
-                      </Button>
-                      <Button asChild variant="default" size="lg" className="w-full min-h-12">
-                        <Link href="/donate" onClick={() => setIsOpen(false)}>
-                          Donate Today
-                        </Link>
-                      </Button>
-                    </div>
-
-                    <div className="mt-8 rounded-lg border border-[#27313B]/30 bg-[#11161C] p-4">
-                      <p className="mb-2 text-sm font-medium text-[#B8C4CF]">
-                        National Human Trafficking Hotline
-                      </p>
-                      <a
-                        href="tel:1-888-373-7888"
-                        className="text-lg font-bold text-[#8DEBFF] hover:text-[#A9B8C6]"
-                      >
-                        1-888-373-7888
-                      </a>
-                      <p className="mt-1 text-xs text-[#A9B8C6]">Text &quot;BEFREE&quot; to 233733</p>
-                    </div>
-                  </nav>
-                </motion.div>
-              ) : null}
-            </AnimatePresence>,
-            document.body
-          )
-        : null}
-    
     {/* Subscribe Modal */}
     <SubscribeModal isOpen={isSubscribeOpen} onClose={() => setIsSubscribeOpen(false)} />
     </>
