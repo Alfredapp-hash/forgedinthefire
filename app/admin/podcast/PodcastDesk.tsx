@@ -70,6 +70,7 @@ export function PodcastDesk() {
   const [copied, setCopied] = useState<string | null>(null)
   const [subEmail, setSubEmail] = useState('')
   const [subName, setSubName] = useState('')
+  const [validating, setValidating] = useState(false)
 
   async function loadCore() {
     const [epRes, topicRes, showRes] = await Promise.all([
@@ -209,6 +210,28 @@ export function PodcastDesk() {
     await navigator.clipboard.writeText(text)
     setCopied(label)
     setTimeout(() => setCopied(null), 1500)
+  }
+
+  async function validateFeed() {
+    setValidating(true)
+    setError(null)
+    try {
+      const res = await fetch('/podcast/rss.xml', { cache: 'no-store' })
+      const xml = await res.text()
+      if (!res.ok) throw new Error(`Feed returned ${res.status}`)
+      if (!xml.includes('<rss') || !xml.includes('<channel>')) throw new Error('Feed is not valid RSS')
+      const items = xml.match(/<item>/g)?.length || 0
+      const enclosures = xml.match(/<enclosure /g)?.length || 0
+      if (items === 0) {
+        setOk('Feed is valid but empty — publish one episode with audio before submitting to Apple / Spotify / Amazon')
+      } else {
+        setOk(`Feed valid: ${items} episode${items === 1 ? '' : 's'}, ${enclosures} enclosure${enclosures === 1 ? '' : 's'}`)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Feed validation failed')
+    } finally {
+      setValidating(false)
+    }
   }
 
   const filtered = useMemo(() => {
@@ -431,6 +454,14 @@ export function PodcastDesk() {
                 className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
               >
                 <Copy size={14} /> {copied === 'rss' ? 'Copied' : 'Copy RSS'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void validateFeed()}
+                disabled={validating}
+                className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF] disabled:opacity-40"
+              >
+                {validating ? 'Checking…' : 'Validate feed'}
               </button>
             </div>
             <ul className="text-sm text-[#B8C4CF] space-y-2 list-disc pl-5">

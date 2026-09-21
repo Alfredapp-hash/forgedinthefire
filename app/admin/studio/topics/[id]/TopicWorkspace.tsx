@@ -131,6 +131,26 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
     }
   }
 
+  async function publishPackage() {
+    if (!bundle) return
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/admin/studio/topics/${topicId}/package`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        const parts = [data.blog?.error, data.episode?.error, data.error].filter(Boolean)
+        throw new Error(parts.join(' · ') || 'Package publish failed')
+      }
+      setOk('Topic package published — blog + episode are live')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Package publish failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function sendToSocial() {
     if (!bundle) return
     const posts = bundle.clips.map((c) => ({
@@ -191,6 +211,7 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
           <p className="text-xs text-[#A9B8C6]">/{topic.slug}</p>
           </div>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
         <select
           value={topic.status}
           onChange={(e) => void saveTopic({ status: e.target.value })}
@@ -198,6 +219,15 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
         >
           {STATUSES.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
         </select>
+        <button
+          type="button"
+          onClick={() => void publishPackage()}
+          disabled={saving || (!blog && !episode)}
+          className="px-3 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium disabled:opacity-40"
+        >
+          Publish package
+        </button>
+        </div>
       </header>
 
       {error && <p className="text-sm text-red-300">{error}</p>}

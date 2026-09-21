@@ -30,6 +30,7 @@ import {
   splitBuffer,
   type StudioTrack,
 } from '@/lib/podcast/multitrack'
+import { measureLoudness, normalizeToLufs } from '@/lib/podcast/loudness'
 import {
   CopyPlus,
   Mic2,
@@ -53,7 +54,7 @@ type RegionApi = {
 type Props = {
   audioUrl?: string | null
   title: string
-  onExported: (file: File, durationSeconds: number) => Promise<void>
+  onExported: (file: File, durationSeconds: number, loudness?: { lufsIntegrated: number; truePeakDb: number }) => Promise<void>
   onPublished?: () => Promise<void>
 }
 
@@ -728,8 +729,9 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
             })
           : mixdownTracks(tracks)
       let mixed = applyGainAndFades(mixedRaw, masterGain, masterFadeIn, masterFadeOut)
-      // Final polish: gentle limit on master
+      mixed = normalizeToLufs(mixed, -16, -1)
       mixed = await applyEffect(mixed, 'limit')
+      const loudness = measureLoudness(mixed)
       const blob = kind === 'wav' ? encodeWav(mixed) : await encodeMp3(mixed)
       const ext = kind === 'wav' ? 'wav' : 'mp3'
       const file = new File(
@@ -737,8 +739,12 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
         `${title.replace(/[^\w]+/g, '-').slice(0, 48) || 'episode'}-mix.${ext}`,
         { type: blob.type },
       )
-      await onExported(file, mixed.duration)
-      setOk(thenPublish ? 'Mix saved to site host' : `Saved ${ext.toUpperCase()} mix to episode`)
+      await onExported(file, mixed.duration, loudness)
+      setOk(
+        thenPublish
+          ? `Mix saved (${loudness.lufsIntegrated.toFixed(1)} LUFS)`
+          : `Saved ${ext.toUpperCase()} mix · ${loudness.lufsIntegrated.toFixed(1)} LUFS`,
+      )
       if (thenPublish && onPublished) await onPublished()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Export failed')

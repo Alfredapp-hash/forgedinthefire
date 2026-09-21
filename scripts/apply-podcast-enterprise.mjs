@@ -19,6 +19,10 @@ if (!password) {
 const files = [
   'supabase/migrations/20260917_studio.sql',
   'supabase/migrations/20260918_podcast_enterprise.sql',
+  'supabase/migrations/20260918_content_topics_cover.sql',
+  'supabase/migrations/20260921_podcast_hardening.sql',
+  'supabase/migrations/20260921_blog_hardening.sql',
+  'supabase/migrations/20260921_studio_p1.sql',
 ]
 
 const dbUrl = `postgresql://postgres:${encodeURIComponent(password)}@db.${ref}.supabase.co:5432/postgres`

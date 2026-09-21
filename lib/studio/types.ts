@@ -83,6 +83,11 @@ export type PodcastEpisode = {
   created_by: string | null
   created_at: string
   updated_at: string
+  consent_confirmed?: boolean
+  identity_protection?: 'anonymous' | 'pseudonym' | 'first_name' | 'real_name'
+  preview_token?: string | null
+  lufs_integrated?: number | null
+  lufs_true_peak?: number | null
 }
 
 export type PodcastShow = {

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Calendar, User, ArrowLeft, Clock, Share2 } from 'lucide-react'
+import { articleJsonLd } from '@/lib/seo/json-ld'
 
 interface BlogPostPageProps {
   params: Promise<{ slug: string }>
@@ -63,6 +64,10 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
   
   return (
     <article className="min-h-screen">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(articleJsonLd(post)) }}
+      />
       {/* Navigation Breadcrumb */}
       <nav className="py-4 border-b border-charcoal-700">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">

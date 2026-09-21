@@ -1,5 +1,5 @@
 [build]
-  command = "npm run build"
+  command = "npm run build && node scripts/validate-podcast-feed.mjs"
   publish = ".next"
 
 [build.environment]

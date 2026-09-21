@@ -37,6 +37,7 @@ export function contentToDb(patch: Partial<ContentItem> & { publishedAt?: string
   if (patch.publishedAt !== undefined) row.published_at = patch.publishedAt
   if (patch.scheduledFor !== undefined) row.scheduled_for = patch.scheduledFor
   if (patch.consentConfirmed !== undefined) row.consent_confirmed = patch.consentConfirmed
+  if (patch.identityProtection !== undefined) row.identity_protection = patch.identityProtection
   if (patch.topicId !== undefined) row.topic_id = patch.topicId
   return row
 }
@@ -68,7 +69,9 @@ export function contentFromDb(row: Record<string, unknown>): ContentItem {
     featuredInNewsletter: Boolean(row.featured_in_newsletter),
     newsletterCategory: row.newsletter_category as string | undefined,
     consentConfirmed: Boolean(row.consent_confirmed),
+    identityProtection: (row.identity_protection as ContentItem['identityProtection']) || 'anonymous',
     topicId: (row.topic_id as string | null) ?? null,
+    previewToken: (row.preview_token as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
     publishedAt: row.published_at as string | undefined,

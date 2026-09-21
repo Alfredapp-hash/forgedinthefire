@@ -14,7 +14,9 @@
     "seo:crawl": "node scripts/seo-crawler.mjs",
     "content:covers": "node scripts/generate-advocacy-covers.mjs",
     "content:seed": "node --env-file=.env.local scripts/seed-advocacy-calendar.mjs",
-    "content:attach-covers": "node --env-file=.env.local scripts/attach-advocacy-covers.mjs"
+    "content:attach-covers": "node --env-file=.env.local scripts/attach-advocacy-covers.mjs",
+    "feed:validate": "node scripts/validate-podcast-feed.mjs",
+    "migrate:studio": "node scripts/apply-podcast-enterprise.mjs"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",

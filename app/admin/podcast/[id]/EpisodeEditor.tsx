@@ -155,18 +155,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
   }
 
   async function publish() {
-    if (!episode?.audio_url) {
-      setError('Upload or record audio before publishing')
-      return
-    }
-    if (!episode.file_size || episode.file_size < 1) {
-      setError('Audio is missing file size — re-save the mix so Apple RSS enclosure length is valid')
-      return
-    }
-    if (!episode.cover_url) {
-      setError('Add episode cover art (Apple: square ≥1400px; aim for 3000×3000 show/episode art)')
-      return
-    }
+    if (!episode) return
     await save(
       {
         status: 'published',
@@ -175,6 +164,40 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
       },
       'Published to /podcast and RSS',
     )
+  }
+
+  async function unpublish() {
+    if (!episode) return
+    if (!window.confirm('Unpublish this episode from the site, RSS, and sitemap?')) return
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/admin/studio/episodes/${episode.id}/unpublish`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Unpublish failed')
+      setEpisode({
+        ...data,
+        chapters: Array.isArray(data.chapters) ? data.chapters : [],
+        keywords: Array.isArray(data.keywords) ? data.keywords : [],
+        ad_markers: Array.isArray(data.ad_markers) ? data.ad_markers : [],
+      })
+      setOk('Unpublished — removed from public RSS and sitemap')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unpublish failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function openPreview() {
+    if (!episode) return
+    const res = await fetch(`/api/admin/studio/episodes/${episode.id}/preview`, { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) {
+      setError(data.error || 'Could not create preview')
+      return
+    }
+    window.open(data.url, '_blank')
   }
 
   async function removeEpisode() {
@@ -251,6 +274,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
       { ok: episode.episode_number != null, label: 'Episode number' },
       { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters' },
       { ok: Boolean(episode.transcript), label: 'Transcript → VTT in RSS' },
+      { ok: Boolean(episode.consent_confirmed), label: 'Survivor consent / no identifying details' },
       { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)' },
       { ok: Boolean(episode.topic_id), label: 'Linked biweekly topic' },
     ]
@@ -291,10 +315,26 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
           <button
             type="button"
             onClick={() => void publish()}
-            disabled={!episode.audio_url || episode.status === 'published'}
+            disabled={episode.status === 'published'}
             className="px-3 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium disabled:opacity-40"
           >
             {episode.status === 'published' ? 'Live' : 'Publish now'}
+          </button>
+          {episode.status === 'published' && (
+            <button
+              type="button"
+              onClick={() => void unpublish()}
+              className="px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
+            >
+              Unpublish
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void openPreview()}
+            className="px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
+          >
+            Preview link
           </button>
           <button
             type="button"
@@ -415,6 +455,34 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
           <input type="checkbox" checked={episode.explicit} onChange={(e) => void save({ explicit: e.target.checked })} />
           Mark explicit
         </label>
+        <label className="flex items-start gap-2 text-sm text-[#B8C4CF] md:col-span-2">
+          <input
+            type="checkbox"
+            checked={Boolean(episode.consent_confirmed)}
+            onChange={(e) => void save({ consent_confirmed: e.target.checked })}
+            className="mt-0.5"
+          />
+          I confirm survivor consent is on file, or this episode contains no identifying survivor details.
+        </label>
+        <Field label="Identity protection">
+          <select
+            value={episode.identity_protection || 'anonymous'}
+            onChange={(e) => void save({ identity_protection: e.target.value })}
+            className={input}
+          >
+            <option value="anonymous">anonymous</option>
+            <option value="pseudonym">pseudonym</option>
+            <option value="first_name">first name only</option>
+            <option value="real_name">real name (explicit consent)</option>
+          </select>
+        </Field>
+        {episode.lufs_integrated != null && (
+          <p className="text-xs text-[#A9B8C6] md:col-span-2">
+            Mix loudness {Number(episode.lufs_integrated).toFixed(1)} LUFS
+            {episode.lufs_true_peak != null ? ` · true peak ${Number(episode.lufs_true_peak).toFixed(1)} dBTP` : ''}
+            {' '}(target −16 LUFS / −1 dBTP)
+          </p>
+        )}
         {episode.topic_id && (
           <Link href={`/admin/studio/topics/${episode.topic_id}`} className="text-sm text-[#53D6FF]">
             Open linked topic
@@ -498,9 +566,13 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         <PodcastAudioEditor
           audioUrl={episode.audio_url}
           title={episode.title}
-          onExported={async (file, duration) => {
+          onExported={async (file, duration, loudness) => {
             await uploadFile(file, 'audio', duration)
-            await save({ status: episode.status === 'draft' ? 'editing' : episode.status }, 'Edited audio hosted')
+            await save({
+              status: episode.status === 'draft' ? 'editing' : episode.status,
+              lufs_integrated: loudness?.lufsIntegrated ?? null,
+              lufs_true_peak: loudness?.truePeakDb ?? null,
+            }, 'Edited audio hosted')
           }}
           onPublished={async () => {
             await publish()

@@ -330,6 +330,21 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
               <Eye className="w-4 h-4" />
             </Link>
           )}
+          <button
+            type="button"
+            onClick={async () => {
+              const res = await fetch(`/api/admin/content/${item.id}/preview`, { method: 'POST' })
+              const data = await res.json()
+              if (!res.ok) {
+                alert(data.error || 'Could not create preview')
+                return
+              }
+              window.open(data.url, '_blank')
+            }}
+            className="inline-flex items-center px-3 py-2 rounded-lg border border-[#27313B] text-[#A9B8C6] hover:text-[#53D6FF] hover:border-[#53D6FF] transition-colors text-sm"
+          >
+            Draft preview
+          </button>
         </div>
       </div>
 
