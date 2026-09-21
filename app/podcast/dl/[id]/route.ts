@@ -92,5 +92,9 @@ export async function GET(
     country,
   })
 
+  if (!episode.audio_url) {
+    return NextResponse.json({ error: 'No audio' }, { status: 404 })
+  }
+
   return NextResponse.redirect(episode.audio_url, 302)
 }

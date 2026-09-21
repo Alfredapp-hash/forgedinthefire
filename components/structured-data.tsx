@@ -45,6 +45,7 @@ export function OrganizationStructuredData() {
       'https://linkedin.com/company/forgedinthefireohio',
     ],
     nonprofitStatus: 'Nonprofit501c3',
+    taxID: ORG.ein,
     cause: [
       'Human Trafficking Support',
       'Survivor Services',

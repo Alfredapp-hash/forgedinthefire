@@ -32,7 +32,7 @@ export async function generateMetadata({ params }: BlogPostPageProps): Promise<M
       title: post.seo.ogTitle || post.seo.title || post.title,
       description: post.seo.ogDescription || post.seo.description || post.excerpt,
       type: 'article',
-      publishedTime: post.publishedAt,
+      publishedTime: post.publishedAt ?? undefined,
       authors: post.authorName ? [post.authorName] : undefined,
       images: post.seo.ogImage || post.featuredImage?.url ? [
         {

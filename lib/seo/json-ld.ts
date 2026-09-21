@@ -4,7 +4,7 @@ export function articleJsonLd(post: {
   title: string
   slug: string
   excerpt?: string
-  publishedAt?: string
+  publishedAt?: string | null
   updatedAt?: string
   authorName?: string
   featuredImage?: { url?: string } | null
@@ -14,8 +14,8 @@ export function articleJsonLd(post: {
     '@type': 'Article',
     headline: post.title,
     description: post.excerpt,
-    datePublished: post.publishedAt,
-    dateModified: post.updatedAt || post.publishedAt,
+    datePublished: post.publishedAt ?? undefined,
+    dateModified: post.updatedAt || post.publishedAt || undefined,
     author: post.authorName
       ? { '@type': 'Person', name: post.authorName }
       : { '@type': 'Organization', name: 'Forged in the Fire' },

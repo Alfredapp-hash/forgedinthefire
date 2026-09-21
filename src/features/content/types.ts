@@ -180,7 +180,7 @@ export type ContentItem = {
   // Timestamps
   createdAt: string
   updatedAt: string
-  publishedAt?: string
+  publishedAt?: string | null
   scheduledFor?: string
   consentConfirmed?: boolean   // Required for impact-story posts
   identityProtection?: 'anonymous' | 'pseudonym' | 'first_name' | 'real_name'

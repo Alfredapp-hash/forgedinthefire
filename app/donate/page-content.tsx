@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { DONATION_TIERS } from '@/lib/constants';
+import { DONATION_TIERS, ORG } from '@/lib/constants';
 import { formatCurrency } from '@/lib/utils';
 import { Heart, Shield, Check, ChevronRight, Lock, Receipt } from 'lucide-react';
 
@@ -185,7 +185,7 @@ export default function DonatePageContent() {
                 <CardContent className="p-6">
                   <Shield className="h-10 w-10 text-healing mx-auto mb-4" />
                   <h3 className="font-semibold text-cream-100 mb-2">501(c)(3) Nonprofit</h3>
-                  <p className="text-sm text-silver-label">All donations are tax-deductible</p>
+                  <p className="text-sm text-silver-label">EIN {ORG.ein} · donations are tax-deductible</p>
                 </CardContent>
               </Card>
               <Card className="bg-charcoal-800/50 border-steel-700 text-center">
