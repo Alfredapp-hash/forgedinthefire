@@ -13,6 +13,7 @@ import type { ChannelPoint, WeekPoint } from '@/lib/ads/types'
 
 type Desk = {
   tablesMissing?: boolean
+  dbWarning?: string | null
   totals: { spend_cents: number; return_cents: number; gift_count: number; roas: number | null; cpa_cents: number | null }
   campaigns: CampaignRollup[]
   channels: ChannelPoint[]
@@ -66,12 +67,15 @@ export function AdsDesk() {
           <button type="button" onClick={() => downloadMarkdown(data.report)} className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-[#53D6FF] text-[#061016] text-sm font-semibold">
             <FileDown size={14} /> Download
           </button>
+          <a href="/preview/ad-research" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2 rounded-xl border border-[#27313B] text-sm text-[#F6FAFC]">
+            Research preview
+          </a>
         </div>
       </div>
 
       {data.tablesMissing && (
         <p className="text-sm text-[#8DEBFF] bg-[#53D6FF]/10 border border-[#53D6FF]/30 rounded-xl p-4">
-          Ad tables are not applied yet. Peer graphs still work. Run <code>supabase/migrations/20260921_ad_campaigns.sql</code> to log FITF spend and return.
+          Ad tables are not applied yet{data.dbWarning ? ` (${data.dbWarning})` : ''}. Peer graphs still work. Run <code>supabase/migrations/20260921_ad_campaigns.sql</code> to log FITF spend and return.
         </p>
       )}
 

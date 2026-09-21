@@ -12,7 +12,12 @@ export async function withAdsAdmin() {
 
 export function adsError(err: unknown) {
   const raw = err instanceof Error ? err.message : 'Ads request failed'
-  if (raw.toLowerCase().includes('admin') || raw.toLowerCase().includes('forbidden')) {
+  if (
+    raw.toLowerCase().includes('admin')
+    || raw.toLowerCase().includes('forbidden')
+    || raw.toLowerCase().includes('not authenticated')
+    || raw.toLowerCase().includes('not authorized')
+  ) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
   if (raw.toLowerCase().includes('not configured')) {

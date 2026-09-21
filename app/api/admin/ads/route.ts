@@ -4,9 +4,29 @@ import { COMPETITOR_CAMPAIGNS, COMPETITOR_PLAYBOOK } from '@/lib/ads/competitors
 import { channelPoints, rollupCampaign, totals, weekPoints } from '@/lib/ads/metrics'
 import { buildAdsReport } from '@/lib/ads/report'
 import { SECTOR_CHANNELS, SECTOR_NOTES, SECTOR_SOURCE } from '@/lib/ads/sector'
-import type { AdCampaign, AdReturnEntry, AdSpendEntry } from '@/lib/ads/types'
+import { requireAdmin } from '@/lib/admin/auth'
+import type { AdCampaign, AdReturnEntry, AdSpendEntry, CampaignRollup } from '@/lib/ads/types'
 
-async function loadDesk() {
+function emptyDesk(tablesMissing: boolean, reason?: string) {
+  const rollups: CampaignRollup[] = []
+  const channels = channelPoints(rollups)
+  return {
+    tablesMissing,
+    dbWarning: reason || null,
+    totals: totals(rollups),
+    campaigns: rollups,
+    spend: [] as AdSpendEntry[],
+    returns: [] as AdReturnEntry[],
+    channels,
+    weeks: [] as { week: string; spend_cents: number; return_cents: number }[],
+    sector: { channels: SECTOR_CHANNELS, notes: SECTOR_NOTES, source: SECTOR_SOURCE },
+    competitors: COMPETITOR_CAMPAIGNS,
+    playbook: COMPETITOR_PLAYBOOK,
+    report: buildAdsReport(rollups, channels),
+  }
+}
+
+async function loadFitf() {
   const { supabase } = await withAdsAdmin()
   let campaigns: AdCampaign[] = []
   let spend: AdSpendEntry[] = []
@@ -78,27 +98,34 @@ async function loadDesk() {
   const allReturns = [...returns, ...extraReturns]
   const rollups = campaigns.map((c) => rollupCampaign(c, spend, allReturns))
   const channels = channelPoints(rollups)
-  const weeks = weekPoints(spend, allReturns)
-  const report = buildAdsReport(rollups, channels)
-
   return {
     tablesMissing,
+    dbWarning: null as string | null,
     totals: totals(rollups),
     campaigns: rollups,
     spend,
     returns: allReturns,
     channels,
-    weeks,
+    weeks: weekPoints(spend, allReturns),
     sector: { channels: SECTOR_CHANNELS, notes: SECTOR_NOTES, source: SECTOR_SOURCE },
     competitors: COMPETITOR_CAMPAIGNS,
     playbook: COMPETITOR_PLAYBOOK,
-    report,
+    report: buildAdsReport(rollups, channels),
   }
 }
 
 export async function GET() {
   try {
-    return NextResponse.json(await loadDesk())
+    await requireAdmin()
+    try {
+      return NextResponse.json(await loadFitf())
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : ''
+      if (isMissingTable(err) || raw.toLowerCase().includes('not configured') || raw.includes('SERVICE_ROLE')) {
+        return NextResponse.json(emptyDesk(true, raw.slice(0, 180)))
+      }
+      throw err
+    }
   } catch (err) {
     return adsError(err)
   }
