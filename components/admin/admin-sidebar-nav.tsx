@@ -19,6 +19,7 @@ import {
   UserCog,
   Shield,
   ShieldCheck,
+  HeartHandshake,
 } from 'lucide-react'
 
 const navItems = [
@@ -28,6 +29,7 @@ const navItems = [
   { label: 'Blog', href: '/admin/blog', icon: Newspaper },
   { label: 'Podcast', href: '/admin/podcast', icon: Mic2 },
   { label: 'Social', href: '/admin/social', icon: Megaphone },
+  { label: 'Campaigns', href: '/admin/campaigns', icon: HeartHandshake },
   { label: 'Content', href: '/admin/content', icon: FileText },
   { label: 'Careers', href: '/admin/careers', icon: ExternalLink },
   { label: 'Subscribers', href: '/admin/subscribers', icon: Users },
