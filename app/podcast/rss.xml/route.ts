@@ -42,7 +42,7 @@ export async function GET() {
       ${ep.cover_url ? `<itunes:image href="${escapeXml(ep.cover_url)}" />` : ''}
       ${(ep.keywords || []).length ? `<itunes:keywords>${escapeXml(ep.keywords.join(','))}</itunes:keywords>` : ''}
 ${chaptersToRss(ep.chapters)}
-      ${ep.transcript ? `<podcast:transcript url="${escapeXml(link)}#transcript" type="text/plain" />` : ''}
+      ${ep.transcript ? `<podcast:transcript url="${escapeXml(`${meta.site}/podcast/${ep.slug}/transcript.vtt`)}" type="text/vtt" rel="captions" />` : ''}
     </item>`
   }).join('\n')
 

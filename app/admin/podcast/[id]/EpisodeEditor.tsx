@@ -120,7 +120,22 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
       setError('Upload or record audio before publishing')
       return
     }
-    await save({ status: 'published', published_at: new Date().toISOString() }, 'Published to /podcast and RSS')
+    if (!episode.file_size || episode.file_size < 1) {
+      setError('Audio is missing file size — re-save the mix so Apple RSS enclosure length is valid')
+      return
+    }
+    if (!episode.cover_url) {
+      setError('Add episode cover art (Apple wants square artwork; show cover should be ≥1400×1400)')
+      return
+    }
+    await save(
+      {
+        status: 'published',
+        published_at: new Date().toISOString(),
+        visibility: episode.visibility === 'private' ? episode.visibility : 'public',
+      },
+      'Published to /podcast and RSS',
+    )
   }
 
   async function removeEpisode() {
@@ -191,10 +206,12 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
       { ok: Boolean(episode.summary), label: 'Summary' },
       { ok: Boolean(episode.show_notes), label: 'Show notes' },
       { ok: Boolean(episode.audio_url), label: 'Audio file' },
+      { ok: Boolean(episode.file_size && episode.file_size > 0), label: 'Enclosure file size (Apple RSS)' },
       { ok: Boolean(episode.duration_seconds), label: 'Duration measured' },
+      { ok: Boolean(episode.cover_url), label: 'Cover art (prefer 1400×1400+)' },
       { ok: episode.episode_number != null, label: 'Episode number' },
       { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters' },
-      { ok: Boolean(episode.transcript), label: 'Transcript' },
+      { ok: Boolean(episode.transcript), label: 'Transcript → VTT in RSS' },
       { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)' },
       { ok: Boolean(episode.topic_id), label: 'Linked biweekly topic' },
     ]

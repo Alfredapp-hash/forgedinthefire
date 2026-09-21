@@ -133,8 +133,9 @@ export default function NewBlogPostPage() {
   const [template, setTemplate] = useState<PostTemplate>('standard')
   const [tags, setTags] = useState('')
   const [author, setAuthor] = useState('')
-  const [status, setStatus] = useState<'draft' | 'published'>('draft')
+  const [status, setStatus] = useState<'draft' | 'scheduled' | 'published'>('draft')
   const [publishDate, setPublishDate] = useState('')
+  const [scheduledFor, setScheduledFor] = useState('')
   const [seoTitle, setSeoTitle] = useState('')
   const [seoDescription, setSeoDescription] = useState('')
   const [slugError, setSlugError] = useState<string | null>(null)
@@ -211,6 +212,12 @@ export default function NewBlogPostPage() {
     setError(null)
     
     try {
+      if (status === 'scheduled' && !scheduledFor) {
+        setError('Pick a schedule date/time before saving as scheduled')
+        setLoading(false)
+        return
+      }
+
       // Parse tags
       const tagArray = tags.split(',').map(t => t.trim()).filter(Boolean)
       
@@ -218,6 +225,10 @@ export default function NewBlogPostPage() {
       const publishedAt = status === 'published' 
         ? (publishDate ? new Date(publishDate).toISOString() : new Date().toISOString())
         : undefined
+      const scheduledAt =
+        status === 'scheduled' && scheduledFor
+          ? new Date(scheduledFor).toISOString()
+          : undefined
 
       // Create the content item with all fields
       const newItem = await createContentItem(
@@ -236,6 +247,7 @@ export default function NewBlogPostPage() {
         authorName: author.trim() || undefined,
         status,
         publishedAt,
+        scheduledFor: scheduledAt,
         featuredImage: featuredImage ? {
           id: crypto.randomUUID(),
           url: featuredImage.trim(),
@@ -541,16 +553,21 @@ export default function NewBlogPostPage() {
               />
             </div>
 
-            {/* Publish Date */}
+            {/* Publish / schedule date */}
             <div>
               <label className="block text-sm font-medium text-[#F6FAFC] mb-1.5">
-                Publish Date
-                <span className="text-xs font-normal text-[#A9B8C6] ml-2">(if published)</span>
+                {status === 'scheduled' ? 'Go live at' : 'Publish Date'}
+                <span className="text-xs font-normal text-[#A9B8C6] ml-2">
+                  {status === 'scheduled' ? '(required)' : '(if published)'}
+                </span>
               </label>
               <input
                 type="datetime-local"
-                value={publishDate}
-                onChange={(e) => setPublishDate(e.target.value)}
+                value={status === 'scheduled' ? scheduledFor : publishDate}
+                onChange={(e) => {
+                  if (status === 'scheduled') setScheduledFor(e.target.value)
+                  else setPublishDate(e.target.value)
+                }}
                 className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
               />
             </div>
@@ -561,7 +578,7 @@ export default function NewBlogPostPage() {
             <label className="block text-sm font-medium text-[#F6FAFC] mb-2">
               Status
             </label>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="radio"
@@ -574,6 +591,20 @@ export default function NewBlogPostPage() {
                 <span className="flex items-center gap-1.5 text-sm text-[#F6FAFC]">
                   <EyeOff className="w-4 h-4 text-[#8DEBFF]" />
                   Draft
+                </span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="status"
+                  value="scheduled"
+                  checked={status === 'scheduled'}
+                  onChange={() => setStatus('scheduled')}
+                  className="rounded border-[#27313B]"
+                />
+                <span className="flex items-center gap-1.5 text-sm text-[#F6FAFC]">
+                  <Eye className="w-4 h-4 text-[#8DEBFF]" />
+                  Scheduled
                 </span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
