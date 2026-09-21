@@ -1,9 +1,12 @@
 [build]
-  command = "npm run build"
+  command = "npm run build && node scripts/validate-podcast-feed.mjs"
   publish = ".next"
 
 [build.environment]
   NODE_VERSION = "20"
+
+[functions]
+  directory = "netlify/functions"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"

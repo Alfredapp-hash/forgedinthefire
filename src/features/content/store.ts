@@ -1,6 +1,5 @@
 'use client'
 
-import { nanoid } from 'nanoid'
 import type { ContentItem, PostTemplate, ContentCategory, ContentStatus, SEOSettings, ContentBlock, ContentCTA } from './types'
 
 const BASE = '/api/admin/content'
@@ -133,14 +132,14 @@ export async function createContentItem(
   category?: ContentCategory
 ): Promise<ContentItem> {
   const now = new Date().toISOString()
-  const newItem: ContentItem = {
-    id: nanoid(),
+  // Let Postgres generate UUID — never send nanoid into content.id
+  const payload = {
     title,
     slug: slugify(title),
     template,
     category: category || getDefaultCategory(template),
-    tags: [],
-    status: 'draft',
+    tags: [] as string[],
+    status: 'draft' as const,
     excerpt: '',
     blocks: generateDefaultBlocks(template, title),
     seo: generateDefaultSEO(title),
@@ -152,19 +151,18 @@ export async function createContentItem(
     createdAt: now,
     updatedAt: now,
   }
-  return apiFetch<ContentItem>(BASE, { method: 'POST', body: JSON.stringify(newItem) })
+  return apiFetch<ContentItem>(BASE, { method: 'POST', body: JSON.stringify(payload) })
 }
 
 export async function updateContentItem(
   id: string, 
-  patch: Partial<ContentItem>
+  patch: Partial<ContentItem> & { publishedAt?: string | null }
 ): Promise<ContentItem | null> {
-  const slugPatch = patch.slug ?? (patch.title ? slugify(patch.title) : undefined)
+  // Do not auto-rewrite slug from title — that breaks live URLs without redirects
   return apiFetch<ContentItem>(`${BASE}/${id}`, {
     method: 'PATCH',
     body: JSON.stringify({ 
       ...patch, 
-      ...(slugPatch ? { slug: slugPatch } : {}),
       updatedAt: new Date().toISOString(),
     }),
   })
@@ -181,8 +179,11 @@ export async function deleteContentItem(id: string): Promise<boolean> {
 
 export async function publishContentItem(
   id: string,
-  options?: { sendBlogNotification?: boolean }
+  options?: { sendBlogNotification?: boolean; template?: PostTemplate; consentConfirmed?: boolean }
 ): Promise<ContentItem | null> {
+  if (options?.template === 'impact-story' && !options.consentConfirmed) {
+    throw new Error('Survivor consent must be confirmed before publishing an impact story')
+  }
   const patch: Partial<ContentItem> = {
     status: 'published',
     publishedAt: new Date().toISOString(),
@@ -194,7 +195,7 @@ export async function publishContentItem(
 }
 
 export async function unpublishContentItem(id: string): Promise<ContentItem | null> {
-  return updateContentItem(id, { status: 'draft', publishedAt: undefined })
+  return updateContentItem(id, { status: 'draft', publishedAt: null })
 }
 
 export async function duplicateContentItem(id: string): Promise<ContentItem | null> {
@@ -202,14 +203,25 @@ export async function duplicateContentItem(id: string): Promise<ContentItem | nu
   if (!original) return null
   
   const now = new Date().toISOString()
-  const copy: ContentItem = {
-    ...original,
-    id: nanoid(),
+  // Omit id — Postgres assigns a new UUID
+  const copy = {
     title: `${original.title} (Copy)`,
     slug: `${original.slug}-copy-${Date.now()}`,
-    status: 'draft',
+    template: original.template,
+    category: original.category,
+    tags: original.tags,
+    status: 'draft' as const,
+    excerpt: original.excerpt,
+    blocks: original.blocks,
+    seo: original.seo,
+    cta: original.cta,
     featured: false,
-    publishedAt: undefined,
+    featuredImage: original.featuredImage,
+    galleryImages: original.galleryImages,
+    sendBlogNotification: false,
+    includeInNewsletter: original.includeInNewsletter,
+    featuredInNewsletter: false,
+    topicId: original.topicId ?? null,
     createdAt: now,
     updatedAt: now,
   }

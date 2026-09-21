@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { HeroAnimation } from '@/components/hero-animation';
-import { CORE_VALUES, SERVICES, IMPACT_STATS } from '@/lib/constants';
+import { CORE_VALUES, SERVICES, IMPACT_STATS, ORG } from '@/lib/constants';
 import { 
   ArrowRight, 
   Heart, 
@@ -45,7 +45,24 @@ export function HomeContent() {
   return (
     <div className="min-h-screen">
       {/* Hero — full viewport video lock; overlays next */}
-      <HeroAnimation />
+      <HeroAnimation>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="pointer-events-none mt-auto flex justify-center px-4 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] sm:px-6">
+            <div
+              className="pointer-events-auto max-w-[min(92vw,28rem)] rounded-2xl border border-[#53D6FF]/45 bg-[#05070A]/85 px-6 py-3 text-center shadow-[0_12px_40px_rgba(5,7,10,0.65)] backdrop-blur-md"
+              aria-label="501(c)(3) nonprofit tax identification"
+            >
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[#8DEBFF]">
+                501(c)(3) tax-exempt nonprofit
+              </p>
+              <p className="mt-1 font-mono text-xl font-bold tracking-[0.08em] text-[#F6FAFC] sm:text-2xl">
+                EIN {ORG.ein}
+              </p>
+              <p className="mt-1 text-xs text-[#B8C4CF]">Donations are tax-deductible</p>
+            </div>
+          </div>
+        </div>
+      </HeroAnimation>
 
       {/* Impact Stats - Emotional Warmth Section */}
       <section className="py-20 bg-[#1A232C] border-y border-[#27313B]/30">
@@ -85,6 +102,9 @@ export function HomeContent() {
               communities across the greater Northeast Ohio region. We are committed to meeting
               survivors where they are and walking alongside them on their journey toward healing,
               safety, and independence.
+            </p>
+            <p className="mt-6 text-sm font-medium text-[#F6FAFC]">
+              501(c)(3) tax-exempt nonprofit · EIN {ORG.ein} · donations are tax-deductible
             </p>
           </div>
         </div>

@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Calendar, User, ArrowLeft, Clock, Share2 } from 'lucide-react'
+import { articleJsonLd } from '@/lib/seo/json-ld'
+import { ContentAdvisory } from '@/components/content-advisory'
 
 interface BlogPostPageProps {
   params: Promise<{ slug: string }>
@@ -31,7 +33,7 @@ export async function generateMetadata({ params }: BlogPostPageProps): Promise<M
       title: post.seo.ogTitle || post.seo.title || post.title,
       description: post.seo.ogDescription || post.seo.description || post.excerpt,
       type: 'article',
-      publishedTime: post.publishedAt,
+      publishedTime: post.publishedAt ?? undefined,
       authors: post.authorName ? [post.authorName] : undefined,
       images: post.seo.ogImage || post.featuredImage?.url ? [
         {
@@ -63,6 +65,10 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
   
   return (
     <article className="min-h-screen">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(articleJsonLd(post)) }}
+      />
       {/* Navigation Breadcrumb */}
       <nav className="py-4 border-b border-charcoal-700">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
@@ -110,6 +116,9 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
       <main className="py-12">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-4xl mx-auto">
+            {post.seo?.showPublicAdvisory && (
+              <ContentAdvisory warning={post.seo.contentWarning} />
+            )}
             {/* Meta Bar (if hero block was used) */}
             {heroBlock && (
               <div className="flex flex-wrap items-center gap-4 mb-8 pb-8 border-b border-charcoal-700">

@@ -133,8 +133,9 @@ export default function NewBlogPostPage() {
   const [template, setTemplate] = useState<PostTemplate>('standard')
   const [tags, setTags] = useState('')
   const [author, setAuthor] = useState('')
-  const [status, setStatus] = useState<'draft' | 'published'>('draft')
+  const [status, setStatus] = useState<'draft' | 'scheduled' | 'published'>('draft')
   const [publishDate, setPublishDate] = useState('')
+  const [scheduledFor, setScheduledFor] = useState('')
   const [seoTitle, setSeoTitle] = useState('')
   const [seoDescription, setSeoDescription] = useState('')
   const [slugError, setSlugError] = useState<string | null>(null)
@@ -211,6 +212,12 @@ export default function NewBlogPostPage() {
     setError(null)
     
     try {
+      if (status === 'scheduled' && !scheduledFor) {
+        setError('Pick a schedule date/time before saving as scheduled')
+        setLoading(false)
+        return
+      }
+
       // Parse tags
       const tagArray = tags.split(',').map(t => t.trim()).filter(Boolean)
       
@@ -218,6 +225,10 @@ export default function NewBlogPostPage() {
       const publishedAt = status === 'published' 
         ? (publishDate ? new Date(publishDate).toISOString() : new Date().toISOString())
         : undefined
+      const scheduledAt =
+        status === 'scheduled' && scheduledFor
+          ? new Date(scheduledFor).toISOString()
+          : undefined
 
       // Create the content item with all fields
       const newItem = await createContentItem(
@@ -236,6 +247,7 @@ export default function NewBlogPostPage() {
         authorName: author.trim() || undefined,
         status,
         publishedAt,
+        scheduledFor: scheduledAt,
         featuredImage: featuredImage ? {
           id: crypto.randomUUID(),
           url: featuredImage.trim(),
@@ -336,7 +348,7 @@ export default function NewBlogPostPage() {
               value={title}
               onChange={(e) => handleTitleChange(e)}
               placeholder="Enter a compelling title..."
-              className="w-full text-lg border border-[#27313B] rounded-lg px-4 py-3 text-[#F6FAFC] placeholder-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] transition-colors"
+              className="w-full text-lg border border-[#27313B] rounded-lg px-4 py-3 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] placeholder-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] transition-colors"
               required
             />
             <p className="text-xs text-[#A9B8C6] mt-1">
@@ -381,7 +393,7 @@ export default function NewBlogPostPage() {
               onChange={(e) => setExcerpt(e.target.value)}
               placeholder="Brief description for previews, search results, and social sharing..."
               rows={3}
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] resize-none"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] resize-none"
             />
             <p className="text-xs text-[#A9B8C6] mt-1">
               {excerpt.length}/160 characters recommended for SEO
@@ -446,7 +458,7 @@ export default function NewBlogPostPage() {
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value as ContentCategory)}
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
             >
               {categories.map((cat) => (
                 <option key={cat.value} value={cat.value}>{cat.label}</option>
@@ -465,7 +477,7 @@ export default function NewBlogPostPage() {
               value={tags}
               onChange={(e) => setTags(e.target.value)}
               placeholder="survivor stories, cleveland, advocacy, housing..."
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
             />
           </div>
         </div>
@@ -488,7 +500,7 @@ export default function NewBlogPostPage() {
                   value={featuredImage}
                   onChange={(e) => setFeaturedImage(e.target.value)}
                   placeholder="https://example.com/image.jpg"
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                 />
               </div>
               <div>
@@ -500,7 +512,7 @@ export default function NewBlogPostPage() {
                   value={featuredImageAlt}
                   onChange={(e) => setFeaturedImageAlt(e.target.value)}
                   placeholder="Descriptive text for screen readers"
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                 />
               </div>
             </div>
@@ -537,21 +549,26 @@ export default function NewBlogPostPage() {
                 value={author}
                 onChange={(e) => setAuthor(e.target.value)}
                 placeholder="e.g., Jane Smith"
-                className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
               />
             </div>
 
-            {/* Publish Date */}
+            {/* Publish / schedule date */}
             <div>
               <label className="block text-sm font-medium text-[#F6FAFC] mb-1.5">
-                Publish Date
-                <span className="text-xs font-normal text-[#A9B8C6] ml-2">(if published)</span>
+                {status === 'scheduled' ? 'Go live at' : 'Publish Date'}
+                <span className="text-xs font-normal text-[#A9B8C6] ml-2">
+                  {status === 'scheduled' ? '(required)' : '(if published)'}
+                </span>
               </label>
               <input
                 type="datetime-local"
-                value={publishDate}
-                onChange={(e) => setPublishDate(e.target.value)}
-                className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                value={status === 'scheduled' ? scheduledFor : publishDate}
+                onChange={(e) => {
+                  if (status === 'scheduled') setScheduledFor(e.target.value)
+                  else setPublishDate(e.target.value)
+                }}
+                className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
               />
             </div>
           </div>
@@ -561,7 +578,7 @@ export default function NewBlogPostPage() {
             <label className="block text-sm font-medium text-[#F6FAFC] mb-2">
               Status
             </label>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="radio"
@@ -574,6 +591,20 @@ export default function NewBlogPostPage() {
                 <span className="flex items-center gap-1.5 text-sm text-[#F6FAFC]">
                   <EyeOff className="w-4 h-4 text-[#8DEBFF]" />
                   Draft
+                </span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="status"
+                  value="scheduled"
+                  checked={status === 'scheduled'}
+                  onChange={() => setStatus('scheduled')}
+                  className="rounded border-[#27313B]"
+                />
+                <span className="flex items-center gap-1.5 text-sm text-[#F6FAFC]">
+                  <Eye className="w-4 h-4 text-[#8DEBFF]" />
+                  Scheduled
                 </span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
@@ -611,7 +642,7 @@ export default function NewBlogPostPage() {
               value={seoTitle}
               onChange={(e) => setSeoTitle(e.target.value)}
               placeholder="Title for search engines"
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
             />
             <p className="text-xs text-[#A9B8C6] mt-1">
               {seoTitle.length}/65 characters
@@ -627,7 +658,7 @@ export default function NewBlogPostPage() {
               onChange={(e) => setSeoDescription(e.target.value)}
               placeholder="Description for search results..."
               rows={2}
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] resize-none"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] resize-none"
             />
             <p className="text-xs text-[#A9B8C6] mt-1">
               {seoDescription.length}/160 characters

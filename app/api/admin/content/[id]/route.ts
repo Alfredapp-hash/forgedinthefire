@@ -1,9 +1,11 @@
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 import { requireAdmin } from '@/lib/admin/auth'
 import { NextResponse } from 'next/server'
 import { contentFromDb, contentToDb } from '@/lib/content-db'
 import { sendBlogPostNotification, isEmailConfigured } from '@/src/lib/email/service'
 import type { ContentItem } from '@/src/features/content/types'
+import { snapshotContent } from '@/lib/studio/revisions'
+import { propagatePublicSurfaces } from '@/lib/studio/propagate'
 
 async function maybeSendPublishNotification(
   supabase: NonNullable<Awaited<ReturnType<typeof createClient>>>,
@@ -96,16 +98,41 @@ export async function PATCH(
       return NextResponse.json({ error: 'Database not configured' }, { status: 503 })
     }
 
-    await requireAdmin()
+    const user = await requireAdmin()
 
     const { data: existing } = await supabase
       .from('content')
-      .select('status')
+      .select('*')
       .eq('id', id)
       .single()
 
     const body = await request.json()
     const dbPatch = contentToDb(body)
+
+    const nextStatus = (dbPatch.status as string | undefined) ?? existing?.status
+    const nextTemplate = (dbPatch.template as string | undefined) ?? existing?.template
+    const nextConsent =
+      dbPatch.consent_confirmed !== undefined
+        ? Boolean(dbPatch.consent_confirmed)
+        : Boolean(existing?.consent_confirmed)
+
+    if (nextStatus === 'published' && nextTemplate === 'impact-story' && !nextConsent) {
+      return NextResponse.json(
+        { error: 'Survivor consent must be confirmed before publishing an impact story' },
+        { status: 400 },
+      )
+    }
+
+    if (nextStatus !== 'published' && existing?.status === 'published' && dbPatch.published_at === undefined) {
+      dbPatch.published_at = null
+    }
+
+    try {
+      const admin = await createAdminClient()
+      if (existing) await snapshotContent(admin, id, existing, user.email)
+    } catch (snapErr) {
+      console.warn('content revision snapshot skipped', snapErr)
+    }
 
     const { data, error } = await supabase
       .from('content')
@@ -118,6 +145,9 @@ export async function PATCH(
 
     const item = contentFromDb(data)
     await maybeSendPublishNotification(supabase, id, existing?.status, item)
+    if (nextStatus === 'published' || existing?.status === 'published') {
+      propagatePublicSurfaces({ blogSlug: item.slug })
+    }
 
     return NextResponse.json(item)
   } catch (err) {

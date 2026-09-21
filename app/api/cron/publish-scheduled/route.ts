@@ -1,11 +1,12 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 
-/** Cron: publish scheduled content posts whose scheduled_for has passed */
+/** Cron: publish scheduled blog posts + podcast episodes whose scheduled_for has passed */
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization')
   const cronSecret = process.env.CRON_SECRET
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  // Always require a shared secret — never allow anonymous publish of embargoed content
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -13,27 +14,60 @@ export async function GET(request: Request) {
     const admin = await createAdminClient()
     const now = new Date().toISOString()
 
-    const { data: due, error } = await admin
+    const { data: duePosts, error: postsError } = await admin
       .from('content')
       .select('id')
       .eq('status', 'scheduled')
       .lte('scheduled_for', now)
 
-    if (error) throw error
+    if (postsError) throw postsError
 
-    if (!due?.length) {
-      return NextResponse.json({ published: 0 })
+    let postsPublished = 0
+    const postIds = (duePosts ?? []).map((r) => r.id)
+    if (postIds.length) {
+      const { error: updateError } = await admin
+        .from('content')
+        .update({ status: 'published', published_at: now })
+        .in('id', postIds)
+      if (updateError) throw updateError
+      postsPublished = postIds.length
     }
 
-    const ids = due.map((r) => r.id)
-    const { error: updateError } = await admin
-      .from('content')
-      .update({ status: 'published', published_at: now })
-      .in('id', ids)
+    const { data: dueEps, error: epsError } = await admin
+      .from('podcast_episodes')
+      .select('id')
+      .eq('status', 'scheduled')
+      .lte('scheduled_for', now)
+      .not('audio_url', 'is', null)
 
-    if (updateError) throw updateError
+    if (epsError) {
+      // Table / column may not exist until migrations applied
+      console.warn('Podcast scheduled publish skipped:', epsError.message)
+      return NextResponse.json({
+        published: postsPublished,
+        posts: postIds,
+        podcast_published: 0,
+        podcast_note: epsError.message,
+      })
+    }
 
-    return NextResponse.json({ published: ids.length, ids })
+    let podcastPublished = 0
+    const epIds = (dueEps ?? []).map((r) => r.id)
+    if (epIds.length) {
+      const { error: epUpdateError } = await admin
+        .from('podcast_episodes')
+        .update({ status: 'published', published_at: now, updated_at: now })
+        .in('id', epIds)
+      if (epUpdateError) throw epUpdateError
+      podcastPublished = epIds.length
+    }
+
+    return NextResponse.json({
+      published: postsPublished,
+      posts: postIds,
+      podcast_published: podcastPublished,
+      podcast_ids: epIds,
+    })
   } catch (err) {
     console.error('Scheduled publish cron error:', err)
     return NextResponse.json({ error: 'Cron failed' }, { status: 500 })

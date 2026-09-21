@@ -130,13 +130,14 @@ function StatCard({
 export default async function BlogPage({ 
   searchParams 
 }: { 
-  searchParams: { 
+  searchParams: Promise<{ 
     status?: ContentStatus | 'all'
     template?: PostTemplate | 'all'
     category?: ContentCategory | 'all'
     search?: string
-  } 
+  }>
 }) {
+  const params = await searchParams
   const supabase = await createClient()
   
   // Handle missing Supabase configuration
@@ -180,17 +181,17 @@ export default async function BlogPage({
     .order('updated_at', { ascending: false })
   
   // Apply filters
-  if (searchParams.status && searchParams.status !== 'all') {
-    query = query.eq('status', searchParams.status)
+  if (params.status && params.status !== 'all') {
+    query = query.eq('status', params.status)
   }
-  if (searchParams.template && searchParams.template !== 'all') {
-    query = query.eq('template', searchParams.template)
+  if (params.template && params.template !== 'all') {
+    query = query.eq('template', params.template)
   }
-  if (searchParams.category && searchParams.category !== 'all') {
-    query = query.eq('category', searchParams.category)
+  if (params.category && params.category !== 'all') {
+    query = query.eq('category', params.category)
   }
-  if (searchParams.search) {
-    query = query.or(`title.ilike.%${searchParams.search}%,excerpt.ilike.%${searchParams.search}%,slug.ilike.%${searchParams.search}%`)
+  if (params.search) {
+    query = query.or(`title.ilike.%${params.search}%,excerpt.ilike.%${params.search}%,slug.ilike.%${params.search}%`)
   }
   
   const { data: items } = await query
@@ -200,15 +201,23 @@ export default async function BlogPage({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#F6FAFC]">Blog Studio</h1>
-          <p className="text-sm text-[#A9B8C6]">Create and manage blog posts, stories, and content.</p>
+          <h1 className="text-2xl font-bold text-[#F6FAFC]">Blog production board</h1>
+          <p className="text-sm text-[#A9B8C6]">
+            Drafting, scheduled, and published posts. Start a biweekly package from{' '}
+            <Link href="/admin/studio" className="text-[#8DEBFF] hover:underline">Content Studio</Link>.
+          </p>
         </div>
-        <Button asChild >
-          <Link href="/admin/blog/new">
-            <Plus className="w-4 h-4 mr-2" />
-            New Post
-          </Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button asChild variant="outline">
+            <Link href="/admin/studio">Studio</Link>
+          </Button>
+          <Button asChild >
+            <Link href="/admin/blog/new">
+              <Plus className="w-4 h-4 mr-2" />
+              New Post
+            </Link>
+          </Button>
+        </div>
       </div>
 
       {/* Stats Grid */}
@@ -256,7 +265,7 @@ export default async function BlogPage({
           <input
             type="search"
             name="search"
-            defaultValue={searchParams.search || ''}
+            defaultValue={params.search || ''}
             placeholder="Search posts by title, excerpt, or URL..."
             className="w-full pl-10 pr-4 py-2 border border-[#27313B] rounded-lg text-[#F6FAFC] placeholder-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] transition-colors"
           />
@@ -271,9 +280,9 @@ export default async function BlogPage({
 
         <div className="border-t border-[#27313B] pt-4">
           <Filters 
-            status={searchParams.status || 'all'}
-            category={searchParams.category || 'all'}
-            template={searchParams.template || 'all'}
+            status={params.status || 'all'}
+            category={params.category || 'all'}
+            template={params.template || 'all'}
           />
         </div>
       </div>
@@ -283,12 +292,43 @@ export default async function BlogPage({
         <div className="flex items-center justify-between">
           <p className="text-sm text-[#A9B8C6]">
             Showing <span className="font-medium text-[#F6FAFC]">{items.length}</span> post{items.length !== 1 ? 's' : ''}
-            {searchParams.search && (
-              <span> for &quot;<span className="font-medium">{searchParams.search}</span>&quot;</span>
+            {params.search && (
+              <span> for &quot;<span className="font-medium">{params.search}</span>&quot;</span>
             )}
           </p>
         </div>
       )}
+
+      <div className="grid md:grid-cols-4 gap-3">
+        {(['draft', 'scheduled', 'published', 'archived'] as ContentStatus[]).map((column) => {
+          const columnItems = (items ?? []).filter((item) => item.status === column)
+          const labels: Record<ContentStatus, string> = {
+            draft: 'Drafting',
+            scheduled: 'Scheduled',
+            published: 'Published',
+            archived: 'Archived',
+          }
+          return (
+            <div key={column} className="rounded-2xl border border-[#27313B] bg-[#151B22] p-3 min-h-[180px]">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF] mb-3">
+                {labels[column]} · {columnItems.length}
+              </p>
+              <div className="space-y-2">
+                {columnItems.map((item) => (
+                  <Link
+                    key={item.id}
+                    href={`/admin/blog/${item.id}`}
+                    className="block rounded-lg border border-[#27313B] bg-[#05070A] p-3 hover:border-[#53D6FF]"
+                  >
+                    <p className="text-sm text-[#F6FAFC] leading-snug">{item.title}</p>
+                    <p className="text-[11px] text-[#A9B8C6] mt-1">/{item.slug}</p>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
 
       {/* Content List */}
       <div className="bg-[#151B22] rounded-2xl border border-[#27313B] overflow-hidden">
@@ -349,22 +389,22 @@ export default async function BlogPage({
         ) : (
           <div className="p-12 text-center">
             <div className="w-20 h-20 rounded-2xl bg-[#1A232C]/10 flex items-center justify-center mx-auto mb-5">
-              {searchParams.search ? (
+              {params.search ? (
                 <Search className="w-10 h-10 text-[#A9B8C6]" />
               ) : (
                 <FileText className="w-10 h-10 text-[#A9B8C6]" />
               )}
             </div>
             <h3 className="text-lg font-medium text-[#F6FAFC] mb-2">
-              {searchParams.search ? 'No posts found' : 'No posts yet'}
+              {params.search ? 'No posts found' : 'No posts yet'}
             </h3>
             <p className="text-sm text-[#A9B8C6] mb-5 max-w-md mx-auto">
-              {searchParams.search 
-                ? `We couldn't find any posts matching "${searchParams.search}". Try a different search term.`
+              {params.search 
+                ? `We couldn't find any posts matching "${params.search}". Try a different search term.`
                 : 'Create your first blog post to share survivor stories, events, and updates with your community.'}
             </p>
             <div className="flex items-center justify-center gap-3">
-              {searchParams.search ? (
+              {params.search ? (
                 <Button asChild variant="outline">
                   <Link href="/admin/blog">Clear Search</Link>
                 </Button>

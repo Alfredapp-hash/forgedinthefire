@@ -279,6 +279,10 @@ export function Footer() {
               &copy; {currentYear} {ORG.name}. All rights reserved.
             </span>
             <span aria-hidden="true" className="hidden h-3 w-px bg-[#27313B] sm:inline-block" />
+            <span className="font-medium text-[#F6FAFC]">
+              501(c)(3) · EIN {ORG.ein}
+            </span>
+            <span aria-hidden="true" className="hidden h-3 w-px bg-[#27313B] sm:inline-block" />
             <span className="inline-flex items-center gap-1.5">
               Made with
               <Heart className="h-3.5 w-3.5 fill-heart text-heart" aria-hidden="true" />

@@ -15,6 +15,7 @@ import AddSectionMenu from '@/src/features/content/AddSectionMenu'
 import BlogPostPreview from '@/src/features/content/BlogPostPreview'
 import BlogPublishingChecklist from '@/src/features/content/BlogPublishingChecklist'
 import MediaLibraryModal from '@/src/features/content/MediaLibraryModal'
+import { RevisionHistory } from '@/src/features/content/RevisionHistory'
 import { createBlock } from '@/src/features/content/blockRegistry'
 import { useAutosave, type SaveState } from '@/src/features/content/useAutosave'
 import type { ContentItem, ContentBlock, ContentCategory, ContentCTA, ContentBlockType } from '@/src/features/content/types'
@@ -66,8 +67,9 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
   const [originalItem, setOriginalItem] = useState<ContentItem | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [activeTab, setActiveTab] = useState<'content' | 'seo' | 'preview'>('content')
+  const [activeTab, setActiveTab] = useState<'content' | 'seo' | 'preview' | 'history'>('content')
   const [saveState, setSaveState] = useState<SaveState>('idle')
+  const [notifyState, setNotifyState] = useState<{ count: number; sentAt?: string | null; sending?: boolean; message?: string }>({ count: 0 })
   const [showMedia, setShowMedia] = useState(false)
   const [mediaCallback, setMediaCallback] = useState<((url: string) => void) | null>(null)
   const [lastSaved, setLastSaved] = useState<Date | null>(null)
@@ -87,6 +89,11 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
       setOriginalItem(JSON.parse(JSON.stringify(data))) // Deep copy for comparison
       setLastSaved(new Date(data.updatedAt))
       setLoading(false)
+      const notifyRes = await fetch(`/api/admin/content/${id}/notify`)
+      if (notifyRes.ok) {
+        const notify = await notifyRes.json() as { count?: number; sentAt?: string | null }
+        setNotifyState({ count: notify.count || 0, sentAt: notify.sentAt })
+      }
     }
     loadItem()
   }, [params, router])
@@ -136,17 +143,27 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
 
   const handlePublish = async () => {
     if (!item || slugError) return
+    if (item.template === 'impact-story' && !item.consentConfirmed) {
+      alert('Confirm survivor consent before publishing an impact story.')
+      return
+    }
     // Save first if there are unsaved changes
     if (hasUnsavedChanges) {
       await handleSave()
     }
-    const updated = await publishContentItem(item.id, {
-      sendBlogNotification: item.sendBlogNotification,
-    })
-    if (updated) {
-      setItem(updated)
-      setOriginalItem(JSON.parse(JSON.stringify(updated)))
-      setLastSaved(new Date())
+    try {
+      const updated = await publishContentItem(item.id, {
+        sendBlogNotification: item.sendBlogNotification,
+        template: item.template,
+        consentConfirmed: item.consentConfirmed,
+      })
+      if (updated) {
+        setItem(updated)
+        setOriginalItem(JSON.parse(JSON.stringify(updated)))
+        setLastSaved(new Date())
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Publish failed')
     }
   }
 
@@ -157,6 +174,41 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
       setItem(updated)
       setOriginalItem(JSON.parse(JSON.stringify(updated)))
       setLastSaved(new Date())
+    }
+  }
+
+  const handleSendNotification = async (force = false) => {
+    if (!item) return
+    const already = item.notificationSentAt || notifyState.sentAt
+    const n = notifyState.count
+    const confirmText = already
+      ? `Notification already sent${already ? ` on ${new Date(already).toLocaleString()}` : ''}. Send again to ${n} subscriber${n === 1 ? '' : 's'}?`
+      : `Send this post now to ${n} subscriber${n === 1 ? '' : 's'} who opted into blog notifications?`
+    if (!window.confirm(confirmText)) return
+    setNotifyState((prev) => ({ ...prev, sending: true, message: undefined }))
+    try {
+      if (hasUnsavedChanges) await handleSave()
+      const res = await fetch(`/api/admin/content/${item.id}/notify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Send failed')
+      const sentAt = new Date().toISOString()
+      setItem({ ...item, notificationSentAt: sentAt })
+      setNotifyState((prev) => ({
+        ...prev,
+        sending: false,
+        sentAt,
+        message: data.message || `Sent to ${data.results?.sent ?? 0} subscribers`,
+      }))
+    } catch (err) {
+      setNotifyState((prev) => ({
+        ...prev,
+        sending: false,
+        message: err instanceof Error ? err.message : 'Send failed',
+      }))
     }
   }
 
@@ -320,6 +372,21 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
               <Eye className="w-4 h-4" />
             </Link>
           )}
+          <button
+            type="button"
+            onClick={async () => {
+              const res = await fetch(`/api/admin/content/${item.id}/preview`, { method: 'POST' })
+              const data = await res.json()
+              if (!res.ok) {
+                alert(data.error || 'Could not create preview')
+                return
+              }
+              window.open(data.url, '_blank')
+            }}
+            className="inline-flex items-center px-3 py-2 rounded-lg border border-[#27313B] text-[#A9B8C6] hover:text-[#53D6FF] hover:border-[#53D6FF] transition-colors text-sm"
+          >
+            Draft preview
+          </button>
         </div>
       </div>
 
@@ -355,6 +422,16 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
         >
           Preview
         </button>
+        <button
+          onClick={() => setActiveTab('history')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            activeTab === 'history'
+              ? 'bg-[#53D6FF] text-[#061016]'
+              : 'text-[#A9B8C6] hover:bg-[#1A232C]/10'
+          }`}
+        >
+          History
+        </button>
         {saveState !== 'idle' && (
           <span className="px-3 py-2 text-xs text-[#A9B8C6]">
             {saveState === 'saving' ? 'Autosaving...' : saveState === 'saved' ? 'Saved' : 'Unsaved changes'}
@@ -379,7 +456,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                 type="text"
                 value={item.title}
                 onChange={(e) => setItem({ ...item, title: e.target.value })}
-                className="w-full text-xl font-semibold border border-[#27313B] rounded-lg px-4 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] transition-colors"
+                className="w-full text-xl font-semibold border border-[#27313B] rounded-lg px-4 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] transition-colors"
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -388,7 +465,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                 <select
                   value={item.category}
                   onChange={(e) => setItem({ ...item, category: e.target.value as ContentCategory })}
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                 >
                   {categories.map((cat) => (
                     <option key={cat.value} value={cat.value}>{cat.label}</option>
@@ -415,7 +492,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                 onChange={(e) => setItem({ ...item, excerpt: e.target.value })}
                 placeholder="Brief summary for previews and search results..."
                 rows={2}
-                className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] resize-none"
+                className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] resize-none"
               />
               <p className="text-xs text-[#A9B8C6] mt-1">{item.excerpt?.length || 0}/160 characters</p>
             </div>
@@ -433,7 +510,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                   type="text"
                   value={item.slug}
                   onChange={(e) => handleSlugChange(e.target.value)}
-                  className={`flex-1 border rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] transition-colors ${
+                  className={`flex-1 border rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] transition-colors ${
                     slugError ? 'border-[#8DEBFF]/35 bg-[#8DEBFF]/15' : 'border-[#27313B]'
                   }`}
                 />
@@ -455,7 +532,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                 value={item.tags?.join(', ') || ''}
                 onChange={(e) => setItem({ ...item, tags: e.target.value.split(',').map(t => t.trim()).filter(Boolean) })}
                 placeholder="e.g., survivor stories, advocacy, cleveland, housing..."
-                className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
               />
               {item.tags && item.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
@@ -479,7 +556,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                 value={item.authorName || ''}
                 onChange={(e) => setItem({ ...item, authorName: e.target.value })}
                 placeholder="e.g., Jane Smith"
-                className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
               />
             </div>
           </div>
@@ -556,7 +633,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                     value={item.newsletterCategory || ''}
                     onChange={(e) => setItem({ ...item, newsletterCategory: e.target.value })}
                     placeholder="e.g., Survivor Stories, Events, Volunteer Spotlight"
-                    className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                    className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                   />
                 </div>
               )}
@@ -571,7 +648,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                   value={item.emailSubject || ''}
                   onChange={(e) => setItem({ ...item, emailSubject: e.target.value })}
                   placeholder={`Default: "New from Forged in the Fire: ${item.title}"`}
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                 />
               </div>
 
@@ -585,12 +662,42 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                   onChange={(e) => setItem({ ...item, emailExcerpt: e.target.value })}
                   placeholder={`Default: "${item.excerpt?.slice(0, 100)}..."`}
                   rows={2}
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF] resize-none"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF] resize-none"
                 />
                 <p className="text-xs text-[#A9B8C6] mt-1">
                   A shorter excerpt specifically for email notifications.
                 </p>
               </div>
+
+              {item.status === 'published' && (
+                <div className="rounded-lg border border-[#27313B] bg-[#05070A] p-4 space-y-2">
+                  <p className="text-sm text-[#F6FAFC]">
+                    {notifyState.count} subscriber{notifyState.count === 1 ? '' : 's'} opted into blog notifications
+                    {(item.notificationSentAt || notifyState.sentAt) && (
+                      <span className="text-[#8DEBFF]">
+                        {' '}· last sent {new Date(item.notificationSentAt || notifyState.sentAt || '').toLocaleString()}
+                      </span>
+                    )}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={notifyState.sending}
+                      onClick={() => void handleSendNotification(Boolean(item.notificationSentAt || notifyState.sentAt))}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-semibold disabled:opacity-50"
+                    >
+                      {notifyState.sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      {item.notificationSentAt || notifyState.sentAt
+                        ? `Resend to ${notifyState.count}`
+                        : `Send to ${notifyState.count} now`}
+                    </button>
+                    <Link href="/admin/newsletters/new" className="inline-flex items-center px-4 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]">
+                      Add to monthly newsletter
+                    </Link>
+                  </div>
+                  {notifyState.message && <p className="text-xs text-[#8DEBFF]">{notifyState.message}</p>}
+                </div>
+              )}
             </div>
           </div>
 
@@ -612,7 +719,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                     } 
                   })}
                   placeholder="Image URL"
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                 />
                 <input
                   type="text"
@@ -627,7 +734,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                     } 
                   })}
                   placeholder="Alt text (for accessibility)"
-                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+                  className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
                 />
               </div>
               {item.featuredImage?.url && (
@@ -697,7 +804,7 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                   setItem({ ...item, cta: undefined })
                 }
               }}
-              className="w-full border border-[#27313B] rounded-lg px-3 py-2 text-[#F6FAFC] focus:outline-none focus:border-[#53D6FF]"
+              className="w-full border border-[#27313B] rounded-lg px-3 py-2 bg-[#05070A] text-[#F6FAFC] placeholder:text-[#A9B8C6] focus:outline-none focus:border-[#53D6FF]"
             >
               <option value="">No CTA</option>
               {ctaOptions.map((opt) => (
@@ -726,6 +833,20 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
 
       {activeTab === 'preview' && item && (
         <BlogPostPreview item={item} />
+      )}
+
+      {activeTab === 'history' && item && (
+        <RevisionHistory
+          listUrl={`/api/admin/content/${item.id}/revisions`}
+          onRestored={async () => {
+            const data = await getContentItem(item.id)
+            if (data) {
+              setItem(data)
+              setOriginalItem(JSON.parse(JSON.stringify(data)))
+              setLastSaved(new Date(data.updatedAt))
+            }
+          }}
+        />
       )}
 
       {showMedia && mediaCallback && (
