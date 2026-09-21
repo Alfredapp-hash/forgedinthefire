@@ -11,6 +11,7 @@ import {
   AlertCircle,
   CheckCircle,
   BarChart3,
+  Target,
   Megaphone,
   HeartHandshake,
   Users,
@@ -149,6 +150,7 @@ export default async function AdminPage() {
           <Link href="/admin/podcast" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Podcast</Link>
           <Link href="/admin/seo" className="px-4 py-2 rounded-xl border-2 border-[#8DEBFF] text-[#8DEBFF] text-sm font-bold hover:bg-[#53D6FF]/5">SEO Center</Link>
           <Link href="/admin/campaigns" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Campaigns</Link>
+          <Link href="/admin/ads" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Ad analytics</Link>
           <Link href="/admin/newsletters" className="px-4 py-2 rounded-xl border-2 border-[#27313B] text-[#A9B8C6] text-sm font-bold hover:bg-[#1A232C]/5">Newsletters</Link>
         </div>
       </div>
@@ -163,6 +165,7 @@ export default async function AdminPage() {
             { label: 'Social Publisher', description: 'Promote posts to Facebook, Instagram, TikTok, and LinkedIn.', href: '/admin/social', icon: Megaphone, accent: '#53D6FF' },
             { label: 'Campaigns', description: 'Fundraising goals, matching, donor wall, and advocate pages.', href: '/admin/campaigns', icon: HeartHandshake, accent: GOLD },
             { label: 'Analytics', description: 'Subscriber growth and GA4 traffic summary.', href: '/admin/analytics', icon: BarChart3, accent: GOLD },
+            { label: 'Ad analytics', description: 'Paid spend, ROAS, peer nonprofit ads, and a printable report.', href: '/admin/ads', icon: Target, accent: GOLD },
             { label: 'Admin Users', description: 'Invite team members to the admin portal.', href: '/admin/users', icon: Users, accent: '#A9B8C6' },
           ].map((t) => (
             <Link key={t.href} href={t.href} className="bg-[#151B22] rounded-2xl border p-5 hover:shadow-forge-sm flex items-start gap-4 group">

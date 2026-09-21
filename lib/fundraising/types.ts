@@ -79,6 +79,10 @@ export type FundraisingGift = {
   received_at: string
   external_id: string | null
   notes: string | null
+  utm_source: string | null
+  utm_medium: string | null
+  utm_campaign: string | null
+  utm_content: string | null
   created_by: string | null
   created_at: string
 }

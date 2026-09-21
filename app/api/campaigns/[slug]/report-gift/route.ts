@@ -37,6 +37,10 @@ export async function POST(
     honor_of: campaign.honor_gifts_enabled ? (body.honor_of || null) : null,
     memory_of: campaign.honor_gifts_enabled ? (body.memory_of || null) : null,
     message: String(body.message || '').slice(0, 280) || null,
+    utm_source: body.utm_source || null,
+    utm_medium: body.utm_medium || null,
+    utm_campaign: body.utm_campaign || null,
+    utm_content: body.utm_content || null,
   })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({
