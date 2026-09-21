@@ -125,7 +125,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
       return
     }
     if (!episode.cover_url) {
-      setError('Add episode cover art (Apple wants square artwork; show cover should be ≥1400×1400)')
+      setError('Add episode cover art (Apple: square ≥1400px; aim for 3000×3000 show/episode art)')
       return
     }
     await save(
@@ -208,7 +208,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
       { ok: Boolean(episode.audio_url), label: 'Audio file' },
       { ok: Boolean(episode.file_size && episode.file_size > 0), label: 'Enclosure file size (Apple RSS)' },
       { ok: Boolean(episode.duration_seconds), label: 'Duration measured' },
-      { ok: Boolean(episode.cover_url), label: 'Cover art (prefer 1400×1400+)' },
+      { ok: Boolean(episode.cover_url), label: 'Cover art (square; aim 3000×3000)' },
       { ok: episode.episode_number != null, label: 'Episode number' },
       { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters' },
       { ok: Boolean(episode.transcript), label: 'Transcript → VTT in RSS' },
