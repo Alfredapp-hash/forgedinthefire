@@ -107,6 +107,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.8,
     },
     {
+      url: `${baseUrl}/campaigns`,
+      lastModified: staticLastmod,
+      changeFrequency: 'weekly',
+      priority: 0.8,
+    },
+    {
       url: `${baseUrl}/volunteer`,
       lastModified: staticLastmod,
       changeFrequency: 'weekly',
