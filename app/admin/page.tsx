@@ -12,6 +12,7 @@ import {
   CheckCircle,
   BarChart3,
   Megaphone,
+  HeartHandshake,
   Users,
   Mail,
   Mic2,
@@ -147,7 +148,7 @@ export default async function AdminPage() {
           <Link href="/admin/blog/new" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">New Blog Post</Link>
           <Link href="/admin/podcast" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Podcast</Link>
           <Link href="/admin/seo" className="px-4 py-2 rounded-xl border-2 border-[#8DEBFF] text-[#8DEBFF] text-sm font-bold hover:bg-[#53D6FF]/5">SEO Center</Link>
-          <Link href="/admin/social" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Social Publisher</Link>
+          <Link href="/admin/campaigns" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Campaigns</Link>
           <Link href="/admin/newsletters" className="px-4 py-2 rounded-xl border-2 border-[#27313B] text-[#A9B8C6] text-sm font-bold hover:bg-[#1A232C]/5">Newsletters</Link>
         </div>
       </div>
@@ -160,6 +161,7 @@ export default async function AdminPage() {
             { label: 'Blog', description: 'Block editor, media library, autosave, and publishing checklist.', href: '/admin/blog', icon: FileText, accent: TEAL },
             { label: 'Podcast Console', description: 'Enterprise episode pipeline, RSS, private feeds, and analytics.', href: '/admin/podcast', icon: Mic2, accent: '#53D6FF' },
             { label: 'Social Publisher', description: 'Promote posts to Facebook, Instagram, TikTok, and LinkedIn.', href: '/admin/social', icon: Megaphone, accent: '#53D6FF' },
+            { label: 'Campaigns', description: 'Fundraising goals, matching, donor wall, and advocate pages.', href: '/admin/campaigns', icon: HeartHandshake, accent: GOLD },
             { label: 'Analytics', description: 'Subscriber growth and GA4 traffic summary.', href: '/admin/analytics', icon: BarChart3, accent: GOLD },
             { label: 'Admin Users', description: 'Invite team members to the admin portal.', href: '/admin/users', icon: Users, accent: '#A9B8C6' },
           ].map((t) => (

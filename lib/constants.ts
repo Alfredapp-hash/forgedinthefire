@@ -317,6 +317,7 @@ export const FOOTER_LINKS = {
     { href: '/resources/faq', label: 'FAQ' },
     { href: '/resources/downloads', label: 'Downloads' },
     { href: '/blog', label: 'Blog' },
+    { href: '/campaigns', label: 'Campaigns' },
   ],
   legal: [
     { href: '/privacy', label: 'Privacy Policy' },

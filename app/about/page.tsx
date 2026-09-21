@@ -4,6 +4,7 @@ import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ORG, CORE_VALUES } from '@/lib/constants';
+import { ZEFFY_DONATE_URL } from '@/lib/fundraising/types';
 import { generateMetaTags } from '@/lib/utils';
 import {
   Heart,
@@ -570,7 +571,7 @@ export default function AboutPage() {
                 variant="outline"
                 className="border-[#27313B] text-[#8DEBFF] hover:bg-[#1A232C]/15 px-8 py-6 text-base transition-all duration-300"
               >
-                <a href="https://www.zeffy.com/en-US/donation-form/donate-to-change-lives-13754" target="_blank" rel="noopener noreferrer">
+                <a href={ZEFFY_DONATE_URL} target="_blank" rel="noopener noreferrer">
                   Support Our Mission <Heart className="ml-2 h-5 w-5" />
                 </a>
               </Button>

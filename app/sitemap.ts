@@ -24,6 +24,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${baseUrl}/about`, lastModified: staticLastmod, changeFrequency: 'monthly', priority: 0.8 },
     { url: `${baseUrl}/resources`, lastModified: staticLastmod, changeFrequency: 'monthly', priority: 0.8 },
     { url: `${baseUrl}/donate`, lastModified: staticLastmod, changeFrequency: 'weekly', priority: 0.8 },
+    { url: `${baseUrl}/campaigns`, lastModified: staticLastmod, changeFrequency: 'weekly', priority: 0.8 },
     { url: `${baseUrl}/volunteer`, lastModified: staticLastmod, changeFrequency: 'weekly', priority: 0.7 },
     { url: `${baseUrl}/contact`, lastModified: staticLastmod, changeFrequency: 'monthly', priority: 0.7 },
     { url: `${baseUrl}/blog`, lastModified: staticLastmod, changeFrequency: 'weekly', priority: 0.85 },
@@ -39,7 +40,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   if (url && key) {
     try {
       const supabase = createClient(url, key)
-      const [{ data: posts }, { data: episodes }] = await Promise.all([
+      const [{ data: posts }, { data: episodes }, { data: campaigns }] = await Promise.all([
         supabase
           .from('content')
           .select('slug, published_at, updated_at')
@@ -53,6 +54,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
           .neq('visibility', 'private')
           .order('published_at', { ascending: false })
           .limit(200),
+        supabase
+          .from('fundraising_campaigns')
+          .select('slug, published_at, updated_at')
+          .eq('status', 'live')
+          .order('published_at', { ascending: false })
+          .limit(100),
       ])
 
       for (const post of posts ?? []) {
@@ -71,6 +78,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
           lastModified: ep.published_at || ep.updated_at || staticLastmod,
           changeFrequency: 'monthly',
           priority: 0.7,
+        })
+      }
+      for (const campaign of campaigns ?? []) {
+        if (!campaign.slug) continue
+        dynamic.push({
+          url: `${baseUrl}/campaigns/${campaign.slug}`,
+          lastModified: campaign.published_at || campaign.updated_at || staticLastmod,
+          changeFrequency: 'weekly',
+          priority: 0.75,
         })
       }
     } catch (err) {
