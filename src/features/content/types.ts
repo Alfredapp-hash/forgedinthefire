@@ -183,6 +183,7 @@ export type ContentItem = {
   publishedAt?: string
   scheduledFor?: string
   consentConfirmed?: boolean   // Required for impact-story posts
+  topicId?: string | null      // Links to Studio biweekly content_topics
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

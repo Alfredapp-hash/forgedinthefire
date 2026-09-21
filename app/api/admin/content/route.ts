@@ -53,6 +53,14 @@ export async function POST(request: Request) {
 
     const body = await request.json()
     const dbRow = contentToDb(body)
+    // Never insert client-supplied ids (nanoid is not a UUID)
+    delete dbRow.id
+
+    // Deduplicate slug on conflict
+    let slug = String(dbRow.slug || 'post')
+    const { data: taken } = await supabase.from('content').select('slug').eq('slug', slug).maybeSingle()
+    if (taken) slug = `${slug}-${Date.now().toString(36)}`
+    dbRow.slug = slug
 
     const { data, error } = await supabase
       .from('content')

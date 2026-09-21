@@ -100,12 +100,26 @@ export async function PATCH(
 
     const { data: existing } = await supabase
       .from('content')
-      .select('status')
+      .select('status, template, consent_confirmed')
       .eq('id', id)
       .single()
 
     const body = await request.json()
     const dbPatch = contentToDb(body)
+
+    const nextStatus = (dbPatch.status as string | undefined) ?? existing?.status
+    const nextTemplate = (dbPatch.template as string | undefined) ?? existing?.template
+    const nextConsent =
+      dbPatch.consent_confirmed !== undefined
+        ? Boolean(dbPatch.consent_confirmed)
+        : Boolean(existing?.consent_confirmed)
+
+    if (nextStatus === 'published' && nextTemplate === 'impact-story' && !nextConsent) {
+      return NextResponse.json(
+        { error: 'Survivor consent must be confirmed before publishing an impact story' },
+        { status: 400 },
+      )
+    }
 
     const { data, error } = await supabase
       .from('content')

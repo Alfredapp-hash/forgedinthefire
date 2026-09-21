@@ -1,9 +1,15 @@
 import type { ContentItem, ContentStatus } from '@/src/features/content/types'
 
 /** Map ContentItem (camelCase) to Supabase row (snake_case) */
-export function contentToDb(patch: Partial<ContentItem>): Record<string, unknown> {
+export function contentToDb(patch: Partial<ContentItem> & { publishedAt?: string | null }): Record<string, unknown> {
   const row: Record<string, unknown> = {}
-  if (patch.id !== undefined) row.id = patch.id
+  // Only accept real UUIDs — never client nanoids
+  if (patch.id !== undefined) {
+    const id = String(patch.id)
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+      row.id = id
+    }
+  }
   if (patch.title !== undefined) row.title = patch.title
   if (patch.slug !== undefined) row.slug = patch.slug
   if (patch.template !== undefined) row.template = patch.template
@@ -31,6 +37,7 @@ export function contentToDb(patch: Partial<ContentItem>): Record<string, unknown
   if (patch.publishedAt !== undefined) row.published_at = patch.publishedAt
   if (patch.scheduledFor !== undefined) row.scheduled_for = patch.scheduledFor
   if (patch.consentConfirmed !== undefined) row.consent_confirmed = patch.consentConfirmed
+  if (patch.topicId !== undefined) row.topic_id = patch.topicId
   return row
 }
 
@@ -61,6 +68,7 @@ export function contentFromDb(row: Record<string, unknown>): ContentItem {
     featuredInNewsletter: Boolean(row.featured_in_newsletter),
     newsletterCategory: row.newsletter_category as string | undefined,
     consentConfirmed: Boolean(row.consent_confirmed),
+    topicId: (row.topic_id as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
     publishedAt: row.published_at as string | undefined,

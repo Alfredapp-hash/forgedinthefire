@@ -136,17 +136,27 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
 
   const handlePublish = async () => {
     if (!item || slugError) return
+    if (item.template === 'impact-story' && !item.consentConfirmed) {
+      alert('Confirm survivor consent before publishing an impact story.')
+      return
+    }
     // Save first if there are unsaved changes
     if (hasUnsavedChanges) {
       await handleSave()
     }
-    const updated = await publishContentItem(item.id, {
-      sendBlogNotification: item.sendBlogNotification,
-    })
-    if (updated) {
-      setItem(updated)
-      setOriginalItem(JSON.parse(JSON.stringify(updated)))
-      setLastSaved(new Date())
+    try {
+      const updated = await publishContentItem(item.id, {
+        sendBlogNotification: item.sendBlogNotification,
+        template: item.template,
+        consentConfirmed: item.consentConfirmed,
+      })
+      if (updated) {
+        setItem(updated)
+        setOriginalItem(JSON.parse(JSON.stringify(updated)))
+        setLastSaved(new Date())
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Publish failed')
     }
   }
 
