@@ -57,9 +57,9 @@ type ContentSearchParams = { filter?: string; type?: string }
 export default async function ContentPage({ 
   searchParams,
 }: { 
-  searchParams: Promise<ContentSearchParams> | ContentSearchParams
+  searchParams: Promise<ContentSearchParams>
 }) {
-  const params = await Promise.resolve(searchParams)
+  const params = await searchParams
   const supabase = await createClient()
   
   if (!supabase) {

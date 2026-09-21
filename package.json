@@ -5,7 +5,7 @@
   "description": "Forged in the Fire - Survivor-centered nonprofit website supporting survivors of commercial sex trafficking",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",

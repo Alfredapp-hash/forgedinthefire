@@ -181,9 +181,9 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
     void (async () => {
       setBusy('Loading episode audio…')
       try {
-        const url = `/api/admin/media/file?url=${encodeURIComponent(audioUrl)}`
-        const buffer = await decodeUrl(url)
-        const url = bufferToUrl(buffer)
+        const sourceUrl = `/api/admin/media/file?url=${encodeURIComponent(audioUrl)}`
+        const buffer = await decodeUrl(sourceUrl)
+        const blobUrl = bufferToUrl(buffer)
         let vocalId: string | null = null
         setTracks((prev) => {
           const vocal = prev.find((t) => t.role === 'vocal') || prev[0]
@@ -195,7 +195,7 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
               ? {
                   ...t,
                   buffer: cloneAudioBuffer(buffer),
-                  url,
+                  url: blobUrl,
                   armed: true,
                 }
               : { ...t, armed: false },

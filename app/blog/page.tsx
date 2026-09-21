@@ -248,15 +248,16 @@ function PostCard({ post }: { post: Awaited<ReturnType<typeof getBlogPosts>>[0] 
 export default async function BlogPage({
   searchParams,
 }: {
-  searchParams: { category?: ContentCategory }
+  searchParams: Promise<{ category?: ContentCategory }>
 }) {
+  const params = await searchParams
   // Defensive data fetching with try/catch
   let posts: Awaited<ReturnType<typeof getBlogPosts>> = []
   let fetchError = false
 
   try {
     posts = await getBlogPosts({
-      category: searchParams.category,
+      category: params.category,
     })
   } catch (error) {
     console.error('Blog fetch error:', error)
@@ -270,7 +271,7 @@ export default async function BlogPage({
 
   const featuredPosts = posts.filter(p => p.featured).slice(0, 2)
   const regularPosts = posts.filter(p => !p.featured)
-  const activeCategory = searchParams.category
+  const activeCategory = params.category
 
   return (
     <div className="min-h-screen">
