@@ -17,10 +17,12 @@ import {
   BarChart3,
   Megaphone,
   UserCog,
+  Shield,
 } from 'lucide-react'
 
 const navItems = [
   { label: 'Dashboard', href: '/admin', icon: LayoutDashboard },
+  { label: 'SafeCase', href: '/admin/safecase', icon: Shield },
   { label: 'Studio', href: '/admin/studio', icon: PenSquare },
   { label: 'Blog', href: '/admin/blog', icon: Newspaper },
   { label: 'Podcast', href: '/admin/podcast', icon: Mic2 },
