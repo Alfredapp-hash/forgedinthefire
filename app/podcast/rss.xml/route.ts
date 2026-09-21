@@ -13,26 +13,35 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   const show = await getDefaultShow()
   const meta = showToMeta(show)
+  const subcategory = show?.subcategory
+  const categoryXml = subcategory
+    ? `    <itunes:category text="${escapeXml(meta.category)}">
+      <itunes:category text="${escapeXml(subcategory)}" />
+    </itunes:category>`
+    : `    <itunes:category text="${escapeXml(meta.category)}" />`
+
   const episodes = (await getPublishedEpisodes()).filter((ep) => ep.audio_url)
   const items = episodes.map((ep) => {
     const link = `${meta.site}/podcast/${ep.slug}`
+    const guid = ep.guid || ep.id
     const pub = ep.published_at ? new Date(ep.published_at).toUTCString() : new Date(ep.created_at).toUTCString()
     const duration = itunesDuration(ep.duration_seconds)
+    const dl = `${meta.site}/podcast/dl/${ep.id}`
     const enclosure = ep.audio_url
-      ? `<enclosure url="${escapeXml(ep.audio_url)}" length="${ep.file_size || 0}" type="${escapeXml(ep.audio_mime || 'audio/mpeg')}" />`
+      ? `<enclosure url="${escapeXml(dl)}" length="${ep.file_size || 0}" type="${escapeXml(ep.audio_mime || 'audio/mpeg')}" />`
       : ''
     const description = ep.show_notes || ep.summary || meta.description
     const episodeType = ep.episode_type || 'full'
     return `    <item>
       <title>${escapeXml(ep.title)}</title>
       <link>${escapeXml(link)}</link>
-      <guid isPermaLink="true">${escapeXml(link)}</guid>
+      <guid isPermaLink="false">${escapeXml(guid)}</guid>
       <description>${escapeXml(ep.summary || meta.description)}</description>
       <pubDate>${pub}</pubDate>
       ${enclosure}
       ${description ? `<content:encoded><![CDATA[${description}${ep.transcript ? `\n\n---\nTranscript\n${ep.transcript}` : ''}]]></content:encoded>` : ''}
       <itunes:title>${escapeXml(ep.title)}</itunes:title>
-      <itunes:author>${escapeXml(ep.guest_name ? `${ep.guest_name}; ${meta.author}` : meta.author)}</itunes:author>
+      <itunes:author>${escapeXml(meta.author)}</itunes:author>
       <itunes:summary>${escapeXml(ep.summary || meta.description)}</itunes:summary>
       <itunes:explicit>${ep.explicit ? 'true' : 'false'}</itunes:explicit>
       ${ep.episode_number != null ? `<itunes:episode>${ep.episode_number}</itunes:episode>` : ''}
@@ -41,6 +50,7 @@ export async function GET() {
       ${duration ? `<itunes:duration>${duration}</itunes:duration>` : ''}
       ${ep.cover_url ? `<itunes:image href="${escapeXml(ep.cover_url)}" />` : ''}
       ${(ep.keywords || []).length ? `<itunes:keywords>${escapeXml(ep.keywords.join(','))}</itunes:keywords>` : ''}
+      ${ep.guest_name ? `<podcast:person role="guest" href="${escapeXml(link)}">${escapeXml(ep.guest_name)}</podcast:person>` : ''}
 ${chaptersToRss(ep.chapters)}
       ${ep.transcript ? `<podcast:transcript url="${escapeXml(`${meta.site}/podcast/${ep.slug}/transcript.vtt`)}" type="text/vtt" rel="captions" />` : ''}
     </item>`
@@ -59,6 +69,7 @@ ${chaptersToRss(ep.chapters)}
     <description>${escapeXml(meta.description)}</description>
     <language>${escapeXml(meta.language || 'en-us')}</language>
     <copyright>${escapeXml(meta.copyright || `© ${new Date().getFullYear()} Forged in the Fire`)}</copyright>
+    <generator>Forged in the Fire Studio</generator>
     <lastBuildDate>${new Date().toUTCString()}</lastBuildDate>
     <atom:link href="${meta.feed}" rel="self" type="application/rss+xml" />
     <itunes:author>${escapeXml(meta.author)}</itunes:author>
@@ -69,7 +80,7 @@ ${chaptersToRss(ep.chapters)}
     </itunes:owner>
     <itunes:explicit>${meta.explicit ? 'true' : 'false'}</itunes:explicit>
     <itunes:type>${meta.itunes_type || 'episodic'}</itunes:type>
-    <itunes:category text="${escapeXml(meta.category)}" />
+${categoryXml}
     <itunes:image href="${meta.image}" />
     <image>
       <url>${meta.image}</url>

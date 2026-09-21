@@ -58,15 +58,17 @@ export async function GET(
 
   const items = ((episodes ?? []) as PodcastEpisode[]).map((ep) => {
     const link = `${meta.site}/podcast/${ep.slug}`
+    const guid = ep.guid || ep.id
     const pub = ep.published_at ? new Date(ep.published_at).toUTCString() : new Date(ep.created_at).toUTCString()
     const duration = itunesDuration(ep.duration_seconds)
+    const dl = `${meta.site}/podcast/dl/${ep.id}?token=${encodeURIComponent(token)}`
     const enclosure = ep.audio_url
-      ? `<enclosure url="${escapeXml(ep.audio_url)}" length="${ep.file_size || 0}" type="${escapeXml(ep.audio_mime || 'audio/mpeg')}" />`
+      ? `<enclosure url="${escapeXml(dl)}" length="${ep.file_size || 0}" type="${escapeXml(ep.audio_mime || 'audio/mpeg')}" />`
       : ''
     return `    <item>
       <title>${escapeXml(ep.title)}</title>
       <link>${escapeXml(link)}</link>
-      <guid isPermaLink="false">${escapeXml(`${link}?private=${token.slice(0, 8)}`)}</guid>
+      <guid isPermaLink="false">${escapeXml(guid)}</guid>
       <description>${escapeXml(ep.summary || meta.description)}</description>
       <pubDate>${pub}</pubDate>
       ${enclosure}
@@ -90,6 +92,7 @@ ${chaptersToRss(ep.chapters)}
     <language>${escapeXml(meta.language || 'en-us')}</language>
     <atom:link href="${privateFeed}" rel="self" type="application/rss+xml" />
     <itunes:author>${escapeXml(meta.author)}</itunes:author>
+    <itunes:block>Yes</itunes:block>
     <itunes:image href="${meta.image}" />
 ${items}
   </channel>

@@ -1,15 +1,16 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/admin/auth'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+/** Admin-gated studio access — uses service role after requireAdmin so RLS cannot leak tokens to any authenticated user. */
 export async function withStudioAdmin() {
   const user = await requireAdmin()
-  const supabase = await createClient()
+  const supabase = await createAdminClient()
   if (!supabase) {
     throw new Error('Database not configured')
   }
-  return { user, supabase }
+  return { user, supabase: supabase as SupabaseClient }
 }
 
 export function studioError(err: unknown) {

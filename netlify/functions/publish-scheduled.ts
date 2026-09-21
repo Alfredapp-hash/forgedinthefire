@@ -8,10 +8,14 @@ import type { Config } from '@netlify/functions'
 export default async () => {
   const site = Netlify.env.get('URL') || Netlify.env.get('DEPLOY_PRIME_URL') || 'https://forgedinthefireohio.org'
   const secret = Netlify.env.get('CRON_SECRET')
+  if (!secret) {
+    console.error('CRON_SECRET is not set — refusing to call publish-scheduled')
+    return new Response(JSON.stringify({ error: 'CRON_SECRET missing' }), { status: 500 })
+  }
   const target = `${site.replace(/\/$/, '')}/api/cron/publish-scheduled`
 
   const res = await fetch(target, {
-    headers: secret ? { Authorization: `Bearer ${secret}` } : {},
+    headers: { Authorization: `Bearer ${secret}` },
   })
   const body = await res.text()
   if (!res.ok) {

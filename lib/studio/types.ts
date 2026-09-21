@@ -52,6 +52,7 @@ export type ContentTopic = {
 
 export type PodcastEpisode = {
   id: string
+  guid?: string | null
   topic_id: string | null
   show_id: string | null
   title: string

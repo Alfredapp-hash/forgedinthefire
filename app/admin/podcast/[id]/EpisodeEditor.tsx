@@ -91,12 +91,51 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
     setUploading(true)
     setError(null)
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      fd.append('alt', episode?.title || file.name)
-      const res = await fetch('/api/admin/media', { method: 'POST', body: fd })
-      const asset = await res.json()
-      if (!res.ok) throw new Error(asset.error || 'Upload failed')
+      // Large audio bypasses the ~6MB Netlify function body via signed direct upload
+      const useSigned = kind === 'audio' && file.size > 4.5 * 1024 * 1024
+      let asset: { url: string; mime_type?: string; size_bytes?: number }
+
+      if (useSigned) {
+        const signRes = await fetch('/api/admin/media/sign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: file.name,
+            mime_type: file.type || 'audio/mpeg',
+            size_bytes: file.size,
+          }),
+        })
+        const signed = await signRes.json()
+        if (!signRes.ok) throw new Error(signed.error || 'Could not start upload')
+        const put = await fetch(signed.signedUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': file.type || 'audio/mpeg' },
+          body: file,
+        })
+        if (!put.ok) throw new Error('Direct storage upload failed')
+        const completeRes = await fetch('/api/admin/media/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            path: signed.path,
+            filename: file.name,
+            mime_type: file.type || 'audio/mpeg',
+            size_bytes: file.size,
+            alt: episode?.title || file.name,
+            publicUrl: signed.publicUrl,
+          }),
+        })
+        asset = await completeRes.json()
+        if (!completeRes.ok) throw new Error((asset as { error?: string }).error || 'Upload finalize failed')
+      } else {
+        const fd = new FormData()
+        fd.append('file', file)
+        fd.append('alt', episode?.title || file.name)
+        const res = await fetch('/api/admin/media', { method: 'POST', body: fd })
+        asset = await res.json()
+        if (!res.ok) throw new Error((asset as { error?: string }).error || 'Upload failed')
+      }
+
       if (kind === 'cover') {
         await save({ cover_url: asset.url }, 'Cover saved')
       } else {
