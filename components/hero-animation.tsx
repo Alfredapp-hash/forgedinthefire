@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { HeroAmbientField } from '@/components/hero-ambient-field';
 import { HeroCopy, HERO_HEADING_ID, type HeroCopyStage } from '@/components/hero-copy';
-import { computeHeroCoverTransform } from '@/lib/hero/video-layout';
 
 interface HeroAnimationProps {
   children?: React.ReactNode;
@@ -87,35 +86,7 @@ export function HeroAnimation({ children }: HeroAnimationProps) {
     if (prefersReducedMotion) setCopyStage('brand');
   }, [prefersReducedMotion]);
 
-  // The copy must sit on the anvil, but `object-fit: cover` decides where the anvil
-  // lands on screen and that changes with the viewport's aspect ratio. Publish the
-  // cover transform from the *video stage* (not the padded section) so the overlay
-  // can address rows in the video's own coordinate space.
-  useEffect(() => {
-    const root = visualRef.current;
-    const stage = videoStageRef.current;
-    if (!root || !stage) return;
-
-    const apply = () => {
-      const rootRect = root.getBoundingClientRect();
-      const stageRect = stage.getBoundingClientRect();
-      if (!stageRect.width || !stageRect.height) return;
-      const fit = computeHeroCoverTransform(stageRect.width, stageRect.height);
-      const stageOffsetY = stageRect.top - rootRect.top;
-      root.style.setProperty('--hero-cover-scale', String(fit.scale));
-      root.style.setProperty('--hero-cover-top', `${stageOffsetY + fit.top}px`);
-    };
-
-    apply();
-    const observer = new ResizeObserver(apply);
-    observer.observe(root);
-    observer.observe(stage);
-    return () => observer.disconnect();
-  }, []);
-
-  // A cached video can reach `canplay` before React attaches its listener, which
-  // would strand the black hold overlay on top of a perfectly good frame. Read
-  // readyState directly and keep the events only as a cold-cache fallback.
+  // A cached video can reach `canplay` before React attaches its listener.
   useEffect(() => {
     const intro = introVideoRef.current;
     if (!intro || prefersReducedMotion) return;
@@ -241,9 +212,10 @@ export function HeroAnimation({ children }: HeroAnimationProps) {
       />
 
       {/*
-        Desktop: full-viewport cover, matching a ~16:9 display.
-        Below lg: a 16:9 stage under the nav so portrait cover-crop cannot
-        zoom past the anvil. max-height keeps landscape phones from overflowing.
+        Desktop: full-viewport cover. Below lg: a 16:9 stage under the nav so
+        portrait object-fit:cover cannot zoom past the anvil. The inner cover
+        frame is the 16:9 box that `object-fit: cover` would paint, so copy
+        percentages stay on the same source row as the artwork.
       */}
       <div
         ref={videoStageRef}
@@ -270,9 +242,10 @@ export function HeroAnimation({ children }: HeroAnimationProps) {
               playsInline
               preload="auto"
               poster={HERO_POSTER_SRC}
-              className={`absolute inset-0 h-full w-full object-cover object-center transition-opacity duration-[1200ms] ease-out ${
-                videoReady ? 'opacity-100' : 'opacity-0'
-              }`}
+              onLoadedData={() => setVideoReady(true)}
+              onCanPlay={() => setVideoReady(true)}
+              onPlaying={() => setVideoReady(true)}
+              className="absolute inset-0 z-0 h-full w-full object-cover object-center"
             >
               <source src={HERO_VIDEO_SRC} type="video/mp4" />
             </video>
@@ -296,7 +269,18 @@ export function HeroAnimation({ children }: HeroAnimationProps) {
         ) : null}
       </div>
 
-      <HeroCopy stage={loopActive ? 'brand' : copyStage} />
+      {/*
+        Cover-sized 16:9 overlay, sibling of the video plane so a GPU video
+        layer cannot paint over the wordmark. Sized to match the stage.
+      */}
+      <div className="pointer-events-none absolute inset-x-0 top-20 z-20 aspect-video overflow-hidden [container-type:size] max-lg:max-h-[calc(100dvh-9rem)] lg:inset-0 lg:top-0 lg:aspect-auto">
+        <div
+          className="absolute left-1/2 top-1/2 aspect-video -translate-x-1/2 -translate-y-1/2"
+          style={{ width: 'max(100%, calc(100cqh * 16 / 9))' }}
+        >
+          <HeroCopy stage={loopActive ? 'brand' : copyStage} />
+        </div>
+      </div>
 
       {/* Overlay slot for anything a caller wants above the copy */}
       {children ? (
