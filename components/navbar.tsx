@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -8,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { SubscribeModal } from '@/src/components/subscribe-modal';
 import { NAV_LINKS } from '@/lib/constants';
 import { cn } from '@/lib/utils';
-import { Menu, X, ChevronDown, Mail } from 'lucide-react';
+import { Menu, X, Mail } from 'lucide-react';
 import Image from 'next/image';
 
 const reducedMotionVariants = {
@@ -17,16 +18,11 @@ const reducedMotionVariants = {
   exit: { opacity: 0 },
 };
 
-const defaultVariants = {
-  hidden: { opacity: 0, y: -10 },
-  visible: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: -10 },
-};
-
 export function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isSubscribeOpen, setIsSubscribeOpen] = useState(false);
+  const [portalReady, setPortalReady] = useState(false);
   const pathname = usePathname();
 
   // Hide navbar on admin routes - admin has its own sidebar navigation
@@ -41,6 +37,10 @@ export function Navbar() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
+
   // Close mobile menu on route change
   useEffect(() => {
     setIsOpen(false);
@@ -48,14 +48,25 @@ export function Navbar() {
 
   // Lock body scroll when mobile menu is open
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
-    }
+    if (!isOpen) return;
+    const { body, documentElement } = document;
+    const previousBody = body.style.overflow;
+    const previousHtml = documentElement.style.overflow;
+    body.style.overflow = 'hidden';
+    documentElement.style.overflow = 'hidden';
     return () => {
-      document.body.style.overflow = '';
+      body.style.overflow = previousBody;
+      documentElement.style.overflow = previousHtml;
     };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [isOpen]);
 
   const isActive = (href: string) => {
@@ -72,14 +83,12 @@ export function Navbar() {
     <>
       <header
         className={cn(
-          'fixed top-0 left-0 right-0 z-40 transition-all duration-300',
+          'fixed top-0 left-0 right-0 z-40 transition-[background-color,backdrop-filter,border-color] duration-300',
           // Transparent over the hero on "/" until scroll; everywhere else a
           // near-invisible pane of blurred obsidian with a faint cyan hairline.
-          isScrolled
+          isOpen || isScrolled || pathname !== '/'
             ? 'bg-[rgba(5,7,10,0.45)] backdrop-blur-[18px] border-b border-[rgba(83,214,255,0.08)]'
-            : pathname === '/'
-              ? 'bg-transparent'
-              : 'bg-[rgba(5,7,10,0.45)] backdrop-blur-[18px] border-b border-[rgba(83,214,255,0.08)]'
+            : 'bg-transparent'
         )}
         role="banner"
       >
@@ -179,110 +188,94 @@ export function Navbar() {
         </div>
       </nav>
 
-      {/* Mobile Menu */}
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            id="mobile-menu"
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            variants={defaultVariants}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 top-20 z-30 lg:hidden"
-          >
-            <div
-              className="absolute inset-0 bg-[rgba(5,7,10,0.97)] backdrop-blur-lg"
-              onClick={() => setIsOpen(false)}
-            />
-            <nav
-              className="relative h-full overflow-y-auto px-4 py-8"
-              role="navigation"
-              aria-label="Mobile navigation"
-            >
-              <div className="flex flex-col gap-2">
-                {NAV_LINKS.map((link, index) => (
-                  <motion.div
-                    key={link.href}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.05 }}
-                  >
-                    <Link
-                      href={link.href}
-                      className={cn(
-                        'block px-4 py-4 text-lg font-medium rounded-lg transition-colors',
-                        isActive(link.href)
-                          ? 'bg-[#53D6FF]/20 text-[#53D6FF]'
-                          : 'text-[#B8C4CF] hover:bg-[#53D6FF]/10 hover:text-[#53D6FF]'
-                      )}
-                      aria-current={isActive(link.href) ? 'page' : undefined}
-                      onClick={() => setIsOpen(false)}
-                    >
-                      {link.label}
-                    </Link>
-                  </motion.div>
-                ))}
-              </div>
-
-              {/* Mobile CTA Section */}
-              <div className="mt-8 pt-8 border-t border-[#1A232C]">
-                <div className="flex flex-col gap-3">
-                  <Button
-                    asChild
-                    variant="outline"
-                    size="lg"
-                    className="w-full"
-                  >
-                    <Link href="/get-help" onClick={() => setIsOpen(false)}>
-                      Get Help Now
-                    </Link>
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      setIsOpen(false);
-                      setIsSubscribeOpen(true);
-                    }}
-                    variant="outline"
-                    size="lg"
-                    className="w-full"
-                  >
-                    <Mail className="w-4 h-4 mr-2" />
-                    Subscribe to Updates
-                  </Button>
-                  <Button
-                    asChild
-                    variant="default"
-                    size="lg"
-                    className="w-full"
-                  >
-                    <Link href="/donate" onClick={() => setIsOpen(false)}>
-                      Donate Today
-                    </Link>
-                  </Button>
-                </div>
-
-                {/* Emergency Info */}
-                <div className="mt-6 p-4 bg-[#1A232C] rounded-lg border border-[#27313B]/30">
-                  <p className="text-sm text-[#B8C4CF] font-medium mb-2">
-                    National Human Trafficking Hotline
-                  </p>
-                  <a
-                    href="tel:1-888-373-7888"
-                    className="text-lg font-bold text-[#8DEBFF] hover:text-[#A9B8C6]"
-                  >
-                    1-888-373-7888
-                  </a>
-                  <p className="text-xs text-[#A9B8C6] mt-1">
-                    Text &quot;BEFREE&quot; to 233733
-                  </p>
-                </div>
-              </div>
-            </nav>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </header>
+
+      {portalReady
+        ? createPortal(
+            <AnimatePresence>
+              {isOpen ? (
+                <motion.div
+                  id="mobile-menu"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Site menu"
+                  initial="hidden"
+                  animate="visible"
+                  exit="exit"
+                  variants={reducedMotionVariants}
+                  transition={{ duration: 0.18 }}
+                  className="fixed inset-x-0 bottom-0 top-20 z-[35] lg:hidden"
+                >
+                  <div className="absolute inset-0 bg-[#05070A]" />
+                  <nav
+                    className="relative h-full overflow-y-auto overscroll-contain px-5 pb-28 pt-2"
+                    role="navigation"
+                    aria-label="Mobile navigation"
+                  >
+                    <ul className="flex flex-col">
+                      {NAV_LINKS.map((link) => (
+                        <li key={link.href}>
+                          <Link
+                            href={link.href}
+                            className={cn(
+                              'flex min-h-12 items-center border-b border-[#1A232C] px-1 text-lg font-medium transition-colors',
+                              isActive(link.href)
+                                ? 'text-[#53D6FF]'
+                                : 'text-[#F6FAFC] hover:text-[#53D6FF]'
+                            )}
+                            aria-current={isActive(link.href) ? 'page' : undefined}
+                            onClick={() => setIsOpen(false)}
+                          >
+                            {link.label}
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+
+                    <div className="mt-8 flex flex-col gap-3">
+                      <Button asChild variant="outline" size="lg" className="w-full min-h-12">
+                        <Link href="/get-help" onClick={() => setIsOpen(false)}>
+                          Get Help Now
+                        </Link>
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          setIsOpen(false);
+                          setIsSubscribeOpen(true);
+                        }}
+                        variant="outline"
+                        size="lg"
+                        className="w-full min-h-12"
+                      >
+                        <Mail className="mr-2 h-4 w-4" />
+                        Subscribe to Updates
+                      </Button>
+                      <Button asChild variant="default" size="lg" className="w-full min-h-12">
+                        <Link href="/donate" onClick={() => setIsOpen(false)}>
+                          Donate Today
+                        </Link>
+                      </Button>
+                    </div>
+
+                    <div className="mt-8 rounded-lg border border-[#27313B]/30 bg-[#11161C] p-4">
+                      <p className="mb-2 text-sm font-medium text-[#B8C4CF]">
+                        National Human Trafficking Hotline
+                      </p>
+                      <a
+                        href="tel:1-888-373-7888"
+                        className="text-lg font-bold text-[#8DEBFF] hover:text-[#A9B8C6]"
+                      >
+                        1-888-373-7888
+                      </a>
+                      <p className="mt-1 text-xs text-[#A9B8C6]">Text &quot;BEFREE&quot; to 233733</p>
+                    </div>
+                  </nav>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>,
+            document.body
+          )
+        : null}
     
     {/* Subscribe Modal */}
     <SubscribeModal isOpen={isSubscribeOpen} onClose={() => setIsSubscribeOpen(false)} />
