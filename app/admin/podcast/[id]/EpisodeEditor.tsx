@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -10,11 +10,8 @@ import {
   Code2,
   Copy,
   Loader2,
-  Mic,
   Plus,
-  Square,
   Trash2,
-  Upload,
 } from 'lucide-react'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
 import type {
@@ -36,12 +33,9 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
   const [ok, setOk] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [recording, setRecording] = useState(false)
   const [chapterTitle, setChapterTitle] = useState('')
   const [chapterStart, setChapterStart] = useState('0:00')
   const [copied, setCopied] = useState<string | null>(null)
-  const recorderRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
 
   async function load() {
     const [epRes, tps] = await Promise.all([
@@ -118,46 +112,6 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
       setError(err instanceof Error ? err.message : 'Upload failed')
     } finally {
       setUploading(false)
-    }
-  }
-
-  async function toggleRecord() {
-    if (recording) {
-      recorderRef.current?.stop()
-      return
-    }
-    setError(null)
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/mp4')
-          ? 'audio/mp4'
-          : ''
-      const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
-      chunksRef.current = []
-      recorder.ondataavailable = (event) => {
-        if (event.data.size) chunksRef.current.push(event.data)
-      }
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((track) => track.stop())
-        recorderRef.current = null
-        setRecording(false)
-        const type = recorder.mimeType || 'audio/webm'
-        const ext = type.includes('mp4') ? 'm4a' : type.includes('wav') ? 'wav' : 'webm'
-        const file = new File(chunksRef.current, `recording-${Date.now()}.${ext}`, { type })
-        if (file.size < 64) {
-          setError('Recording was empty')
-          return
-        }
-        await uploadFile(file, 'audio')
-      }
-      recorderRef.current = recorder
-      recorder.start()
-      setRecording(true)
-      setOk('Recording… speak, then stop to save')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Microphone access was blocked')
     }
   }
 
@@ -458,44 +412,44 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         </ul>
       </section>
 
-      <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-3">
-        <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={() => void toggleRecord()}
-            className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${
-              recording ? 'border-red-400 text-red-200' : 'border-[#27313B] text-[#B8C4CF]'
-            }`}
-          >
-            {recording ? <Square size={14} /> : <Mic size={14} />}
-            {recording ? 'Stop recording' : 'Record in browser'}
-          </button>
-          <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF] cursor-pointer">
-            <Upload size={14} />
-            {uploading ? 'Uploading…' : 'Upload audio'}
-            <input type="file" accept="audio/*" className="hidden" onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) void uploadFile(file, 'audio')
-            }} />
-          </label>
-          <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF] cursor-pointer">
-            Upload cover
-            <input type="file" accept="image/*" className="hidden" onChange={(e) => {
-              const file = e.target.files?.[0]
-              if (file) void uploadFile(file, 'cover')
-            }} />
-          </label>
-          {episode.audio_url && <audio controls src={episode.audio_url} className="max-w-sm" />}
+      <section className="space-y-3">
+        <div className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-[#F6FAFC]">Episode audio</p>
+              <p className="text-xs text-[#A9B8C6]">
+                Hosted on forgedinthefireohio.org media storage · served via /podcast and RSS to Apple, Spotify, Amazon
+              </p>
+            </div>
+            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF] cursor-pointer">
+              Upload cover art
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) void uploadFile(file, 'cover')
+              }} />
+            </label>
+          </div>
+          {episode.audio_url && (
+            <audio controls src={episode.audio_url} className="w-full max-w-xl" />
+          )}
+          {episode.cover_url && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={episode.cover_url} alt="" className="h-24 w-24 rounded-lg object-cover border border-[#27313B]" />
+          )}
+          {uploading && <p className="text-sm text-[#8DEBFF]">Uploading to site host…</p>}
         </div>
-        {episode.audio_url && (
-          <PodcastAudioEditor
-            audioUrl={episode.audio_url}
-            title={episode.title}
-            onExported={async (file, duration) => {
-              await uploadFile(file, 'audio', duration)
-            }}
-          />
-        )}
+
+        <PodcastAudioEditor
+          audioUrl={episode.audio_url}
+          title={episode.title}
+          onExported={async (file, duration) => {
+            await uploadFile(file, 'audio', duration)
+            await save({ status: episode.status === 'draft' ? 'editing' : episode.status }, 'Edited audio hosted')
+          }}
+          onPublished={async () => {
+            await publish()
+          }}
+        />
       </section>
 
       <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-3">

@@ -153,11 +153,17 @@ export function PodcastDesk() {
     setOk('Show settings saved')
   }
 
-  async function updateDistribution(row: PodcastDistributionRow, status: string) {
+  async function updateDistribution(
+    row: PodcastDistributionRow,
+    status: string,
+    listing_url?: string | null,
+  ) {
+    const body: Record<string, unknown> = { id: row.id, status }
+    if (listing_url !== undefined) body.listing_url = listing_url
     const res = await fetch('/api/admin/podcast/distribution', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: row.id, status }),
+      body: JSON.stringify(body),
     })
     const data = await res.json()
     if (!res.ok) {
@@ -408,35 +414,78 @@ export function PodcastDesk() {
       )}
 
       {tab === 'distribution' && (
-        <section className="rounded-2xl border border-[#27313B] bg-[#151B22] divide-y divide-[#27313B]">
-          {distribution.length === 0 && (
-            <p className="p-5 text-sm text-[#A9B8C6]">
-              Apply the podcast enterprise migration to seed Apple, Spotify, Amazon, and more.
+        <div className="space-y-4">
+          <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-3">
+            <p className="text-sm font-medium text-[#F6FAFC]">Hosted RSS — submit this URL once</p>
+            <p className="text-xs text-[#A9B8C6]">
+              Episodes you publish are hosted on this site and listed in the public feed. Apple Podcasts,
+              Spotify, and Amazon Music all ingest that feed — you do not re-upload audio to each store.
             </p>
-          )}
-          {distribution.map((row) => (
-            <div key={row.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
-              <div>
-                <p className="text-[#F6FAFC]">{DISTRIBUTION_LABELS[row.platform] || row.platform}</p>
-                <p className="text-xs text-[#A9B8C6]">
-                  {row.status.replace('_', ' ')}
-                  {row.listing_url ? ` · ${row.listing_url}` : ''}
-                </p>
-              </div>
-              <select
-                value={row.status}
-                onChange={(e) => void updateDistribution(row, e.target.value)}
-                className="rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
+            <div className="flex flex-col sm:flex-row gap-2">
+              <code className="flex-1 rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-xs text-[#8DEBFF] break-all">
+                {PODCAST.feed}
+              </code>
+              <button
+                type="button"
+                onClick={() => void copyText('rss', PODCAST.feed)}
+                className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
               >
-                <option value="not_started">not started</option>
-                <option value="submitted">submitted</option>
-                <option value="in_review">in review</option>
-                <option value="live">live</option>
-                <option value="blocked">blocked</option>
-              </select>
+                <Copy size={14} /> {copied === 'rss' ? 'Copied' : 'Copy RSS'}
+              </button>
             </div>
-          ))}
-        </section>
+            <ul className="text-sm text-[#B8C4CF] space-y-2 list-disc pl-5">
+              <li>
+                <strong className="text-[#F6FAFC]">Apple Podcasts:</strong> podcastsconnect.apple.com → Add a show → RSS feed → paste URL → validate artwork (1400×1400+) and owner email.
+              </li>
+              <li>
+                <strong className="text-[#F6FAFC]">Spotify:</strong> podcasters.spotify.com → Add your podcast → RSS → claim with the email on the feed.
+              </li>
+              <li>
+                <strong className="text-[#F6FAFC]">Amazon Music:</strong> podcasters.amazon.com → Add podcast via RSS → complete Amazon Music for Podcasters listing.
+              </li>
+            </ul>
+          </section>
+          <section className="rounded-2xl border border-[#27313B] bg-[#151B22] divide-y divide-[#27313B]">
+            {distribution.length === 0 && (
+              <p className="p-5 text-sm text-[#A9B8C6]">
+                Apply the podcast enterprise migration to seed Apple, Spotify, Amazon, and more — then track submission status here.
+              </p>
+            )}
+            {distribution.map((row) => (
+              <div key={row.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="flex-1 space-y-1">
+                  <p className="text-[#F6FAFC]">{DISTRIBUTION_LABELS[row.platform] || row.platform}</p>
+                  <p className="text-xs text-[#A9B8C6]">
+                    {row.status.replace('_', ' ')}
+                    {row.listing_url ? ` · ${row.listing_url}` : ''}
+                  </p>
+                  <input
+                    defaultValue={row.listing_url || ''}
+                    placeholder="Public listing URL once live"
+                    onBlur={(e) => {
+                      const listing_url = e.target.value.trim() || null
+                      if (listing_url !== (row.listing_url || null)) {
+                        void updateDistribution(row, row.status, listing_url)
+                      }
+                    }}
+                    className="w-full max-w-md rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-1.5 text-xs text-[#F6FAFC]"
+                  />
+                </div>
+                <select
+                  value={row.status}
+                  onChange={(e) => void updateDistribution(row, e.target.value)}
+                  className="rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
+                >
+                  <option value="not_started">not started</option>
+                  <option value="submitted">submitted</option>
+                  <option value="in_review">in review</option>
+                  <option value="live">live</option>
+                  <option value="blocked">blocked</option>
+                </select>
+              </div>
+            ))}
+          </section>
+        </div>
       )}
 
       {tab === 'analytics' && (
