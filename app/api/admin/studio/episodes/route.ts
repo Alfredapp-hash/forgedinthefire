@@ -11,6 +11,7 @@ const ALLOWED = [
   'season', 'episode_number', 'episode_type', 'visibility', 'explicit', 'status',
   'scheduled_for', 'published_at', 'chapters', 'keywords', 'ad_markers',
   'consent_confirmed', 'identity_protection', 'lufs_integrated', 'lufs_true_peak',
+  'content_warning', 'graphic_detail_reviewed', 'identifying_info_reviewed', 'show_public_advisory',
 ] as const
 
 export async function GET(request: Request) {
@@ -104,6 +105,9 @@ export async function PATCH(request: Request) {
     if (patch.lufs_integrated != null) patch.lufs_integrated = Number(patch.lufs_integrated)
     if (patch.lufs_true_peak != null) patch.lufs_true_peak = Number(patch.lufs_true_peak)
     if (patch.consent_confirmed != null) patch.consent_confirmed = Boolean(patch.consent_confirmed)
+    if (patch.graphic_detail_reviewed != null) patch.graphic_detail_reviewed = Boolean(patch.graphic_detail_reviewed)
+    if (patch.identifying_info_reviewed != null) patch.identifying_info_reviewed = Boolean(patch.identifying_info_reviewed)
+    if (patch.show_public_advisory != null) patch.show_public_advisory = Boolean(patch.show_public_advisory)
     const { data: current, error: currentError } = await supabase
       .from('podcast_episodes')
       .select('*')

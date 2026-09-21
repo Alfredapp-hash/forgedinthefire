@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { formatDuration, getPublishedEpisode, PODCAST } from '@/lib/podcast'
 import { BreadcrumbStructuredData } from '@/components/structured-data'
 import { PodcastPlayTracker } from '@/components/podcast/play-tracker'
+import { ContentAdvisory } from '@/components/content-advisory'
 import { ArrowLeft } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
@@ -68,6 +69,9 @@ export default async function PodcastEpisodePage({ params }: { params: Promise<{
           {episode.duration_seconds ? ` · ${formatDuration(episode.duration_seconds)}` : ''}
         </p>
         <h1 className="font-serif text-4xl md:text-5xl font-bold text-[#F6FAFC] mb-6">{episode.title}</h1>
+        {episode.show_public_advisory && (
+          <ContentAdvisory warning={episode.content_warning} />
+        )}
         {episode.summary && <p className="text-lg text-[#B8C4CF] leading-relaxed mb-8">{episode.summary}</p>}
         {episode.cover_url && (
           // eslint-disable-next-line @next/next/no-img-element

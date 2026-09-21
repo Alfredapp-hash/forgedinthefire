@@ -74,7 +74,7 @@ export function contentFromDb(row: Record<string, unknown>): ContentItem {
     previewToken: (row.preview_token as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
-    publishedAt: row.published_at as string | undefined,
+    publishedAt: (row.published_at as string | null | undefined) ?? null,
     scheduledFor: row.scheduled_for as string | undefined,
   }
 }

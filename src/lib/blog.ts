@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { contentFromDb } from '@/lib/content-db'
 import type { ContentItem, ContentCategory, PostTemplate } from '@/src/features/content/types'
 
 /**
@@ -116,30 +117,7 @@ export async function getRelatedPosts(
  * Transform database row to ContentItem
  */
 function transformContentRow(row: Record<string, unknown>): ContentItem {
-  return {
-    id: row.id as string,
-    title: row.title as string,
-    slug: row.slug as string,
-    template: row.template as PostTemplate,
-    category: row.category as ContentCategory,
-    tags: (row.tags as string[]) || [],
-    excerpt: row.excerpt as string,
-    blocks: (row.blocks as ContentItem['blocks']) || [],
-    featuredImage: row.featured_image as ContentItem['featuredImage'],
-    galleryImages: (row.gallery_images as ContentItem['galleryImages']) || [],
-    seo: (row.seo as ContentItem['seo']) || {},
-    cta: row.cta as ContentItem['cta'],
-    status: row.status as ContentItem['status'],
-    featured: row.featured as boolean,
-    authorName: row.author_name as string,
-    authorId: row.author_id as string,
-    sendBlogNotification: row.send_blog_notification as boolean || false,
-    includeInNewsletter: row.include_in_newsletter as boolean || false,
-    featuredInNewsletter: row.featured_in_newsletter as boolean || false,
-    createdAt: row.created_at as string,
-    updatedAt: row.updated_at as string,
-    publishedAt: row.published_at as string,
-  }
+  return contentFromDb(row)
 }
 
 /**
@@ -179,8 +157,10 @@ export function getTemplateLabel(template: PostTemplate): string {
 /**
  * Format date for display
  */
-export function formatDate(dateString: string): string {
+export function formatDate(dateString?: string | null): string {
+  if (!dateString) return ''
   const date = new Date(dateString)
+  if (Number.isNaN(date.getTime())) return ''
   return date.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',

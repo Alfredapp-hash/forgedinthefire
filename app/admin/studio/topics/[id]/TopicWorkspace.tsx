@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Copy, Loader2, Mic2 } from 'lucide-react'
+import { ArrowLeft, Copy, Loader2, Mic2, Sparkles } from 'lucide-react'
 import { StudioCanvasEditor } from '@/components/studio/studio-canvas'
 import { DEFAULT_HASHTAGS, type StudioTemplate, type TopicBundle, type TopicStatus } from '@/lib/studio/types'
 import { emptyCanvas, normalizeCanvas } from '@/lib/studio/canvas'
@@ -174,6 +174,30 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
       return
     }
     setOk('Draft sent to Social Publisher')
+  }
+
+  async function prefillFromNotes() {
+    if (!bundle?.episode) {
+      setError('Create or link an episode first, then prefill from show notes')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/admin/studio/episodes/${bundle.episode.id}/promote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ createCampaign: false }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Prefill failed')
+      setOk(data.clipsUpdated ? `Prefill ${data.clipsUpdated} empty clip${data.clipsUpdated === 1 ? '' : 's'} from show notes` : 'Clips already had copy — empty clips only are filled')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Prefill failed')
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (!bundle) {
@@ -363,6 +387,14 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
                 className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
               >
                 <Copy size={14} /> Copy caption
+              </button>
+              <button
+                type="button"
+                onClick={() => void prefillFromNotes()}
+                disabled={saving || !episode}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#53D6FF] disabled:opacity-40"
+              >
+                <Sparkles size={14} /> Prefill from show notes
               </button>
               <button
                 type="button"

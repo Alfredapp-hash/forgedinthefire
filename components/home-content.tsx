@@ -58,6 +58,7 @@ export function HomeContent() {
               <p className="mt-1 font-mono text-xl font-bold tracking-[0.08em] text-[#F6FAFC] sm:text-2xl">
                 EIN {ORG.ein}
               </p>
+              <p className="mt-1 text-xs text-[#B8C4CF]">Donations are tax-deductible</p>
             </div>
           </div>
         </div>
@@ -101,6 +102,9 @@ export function HomeContent() {
               communities across the greater Northeast Ohio region. We are committed to meeting
               survivors where they are and walking alongside them on their journey toward healing,
               safety, and independence.
+            </p>
+            <p className="mt-6 text-sm font-medium text-[#F6FAFC]">
+              501(c)(3) tax-exempt nonprofit · EIN {ORG.ein} · donations are tax-deductible
             </p>
           </div>
         </div>

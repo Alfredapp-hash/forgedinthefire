@@ -88,6 +88,10 @@ export type PodcastEpisode = {
   preview_token?: string | null
   lufs_integrated?: number | null
   lufs_true_peak?: number | null
+  content_warning?: string | null
+  graphic_detail_reviewed?: boolean
+  identifying_info_reviewed?: boolean
+  show_public_advisory?: boolean
 }
 
 export type PodcastShow = {

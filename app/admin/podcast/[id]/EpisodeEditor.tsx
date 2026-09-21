@@ -10,9 +10,11 @@ import {
   Code2,
   Copy,
   Loader2,
+  Megaphone,
   Plus,
   Trash2,
 } from 'lucide-react'
+import { RevisionHistory } from '@/src/features/content/RevisionHistory'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
 import type {
   ContentTopic,
@@ -227,6 +229,31 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
     }
   }
 
+  async function promoteEpisode() {
+    if (!episode) return
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/admin/studio/episodes/${episode.id}/promote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ createCampaign: true }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Promote failed')
+      const bits = [
+        data.clipsUpdated ? `Prefill ${data.clipsUpdated} clip${data.clipsUpdated === 1 ? '' : 's'}` : null,
+        data.campaignId ? 'draft campaign ready' : null,
+      ].filter(Boolean)
+      setOk(bits.join(' · ') || 'Promote ready')
+      if (data.campaignUrl) window.open(data.campaignUrl, '_blank')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Promote failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function copyText(label: string, text: string) {
     await navigator.clipboard.writeText(text)
     setCopied(label)
@@ -275,6 +302,9 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
       { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters' },
       { ok: Boolean(episode.transcript), label: 'Transcript → VTT in RSS' },
       { ok: Boolean(episode.consent_confirmed), label: 'Survivor consent / no identifying details' },
+      { ok: Boolean(episode.graphic_detail_reviewed), label: 'Graphic / trauma detail reviewed' },
+      { ok: Boolean(episode.identifying_info_reviewed), label: 'Identifying details reviewed' },
+      { ok: !episode.show_public_advisory || Boolean(episode.content_warning?.trim()), label: 'Public advisory written (if enabled)' },
       { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)' },
       { ok: Boolean(episode.topic_id), label: 'Linked biweekly topic' },
     ]
@@ -335,6 +365,14 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
             className="px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
           >
             Preview link
+          </button>
+          <button
+            type="button"
+            onClick={() => void promoteEpisode()}
+            className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#53D6FF]"
+          >
+            <Megaphone size={14} />
+            Promote to social
           </button>
           <button
             type="button"
@@ -464,6 +502,46 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
           />
           I confirm survivor consent is on file, or this episode contains no identifying survivor details.
         </label>
+        <label className="flex items-start gap-2 text-sm text-[#B8C4CF] md:col-span-2">
+          <input
+            type="checkbox"
+            checked={Boolean(episode.graphic_detail_reviewed)}
+            onChange={(e) => void save({ graphic_detail_reviewed: e.target.checked })}
+            className="mt-0.5"
+          />
+          I reviewed this episode for graphic or trauma-heavy detail.
+        </label>
+        <label className="flex items-start gap-2 text-sm text-[#B8C4CF] md:col-span-2">
+          <input
+            type="checkbox"
+            checked={Boolean(episode.identifying_info_reviewed)}
+            onChange={(e) => void save({ identifying_info_reviewed: e.target.checked })}
+            className="mt-0.5"
+          />
+          I confirmed no identifying survivor details appear without consent.
+        </label>
+        <label className="flex items-start gap-2 text-sm text-[#B8C4CF] md:col-span-2">
+          <input
+            type="checkbox"
+            checked={Boolean(episode.show_public_advisory)}
+            onChange={(e) => void save({ show_public_advisory: e.target.checked })}
+            className="mt-0.5"
+          />
+          Show a content advisory on the public episode page.
+        </label>
+        {episode.show_public_advisory && (
+          <div className="md:col-span-2">
+            <Field label="Content advisory">
+              <textarea
+                defaultValue={episode.content_warning || ''}
+                rows={2}
+                onBlur={(e) => void save({ content_warning: e.target.value.trim() || null })}
+                className={input}
+                placeholder="This episode discusses trafficking, violence, or other trauma. Take care while listening."
+              />
+            </Field>
+          </div>
+        )}
         <Field label="Identity protection">
           <select
             value={episode.identity_protection || 'anonymous'}
@@ -629,6 +707,11 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         </ul>
         {saving && <p className="text-xs text-[#A9B8C6] mt-3">Saving…</p>}
       </section>
+
+      <RevisionHistory
+        listUrl={`/api/admin/studio/episodes/${episode.id}/revisions`}
+        onRestored={() => void load()}
+      />
     </div>
   )
 }

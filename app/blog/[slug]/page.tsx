@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Calendar, User, ArrowLeft, Clock, Share2 } from 'lucide-react'
 import { articleJsonLd } from '@/lib/seo/json-ld'
+import { ContentAdvisory } from '@/components/content-advisory'
 
 interface BlogPostPageProps {
   params: Promise<{ slug: string }>
@@ -115,6 +116,9 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
       <main className="py-12">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-4xl mx-auto">
+            {post.seo?.showPublicAdvisory && (
+              <ContentAdvisory warning={post.seo.contentWarning} />
+            )}
             {/* Meta Bar (if hero block was used) */}
             {heroBlock && (
               <div className="flex flex-wrap items-center gap-4 mb-8 pb-8 border-b border-charcoal-700">

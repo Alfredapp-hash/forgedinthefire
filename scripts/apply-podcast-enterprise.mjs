@@ -23,6 +23,7 @@ const files = [
   'supabase/migrations/20260921_podcast_hardening.sql',
   'supabase/migrations/20260921_blog_hardening.sql',
   'supabase/migrations/20260921_studio_p1.sql',
+  'supabase/migrations/20260921_studio_p1_safety.sql',
 ]
 
 const dbUrl = `postgresql://postgres:${encodeURIComponent(password)}@db.${ref}.supabase.co:5432/postgres`

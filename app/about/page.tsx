@@ -86,6 +86,11 @@ export default function AboutPage() {
               pathways, and holistic care for survivors of commercial sex trafficking — meeting
               survivors where they are and walking alongside them toward freedom and healing.
             </p>
+            <p className="mt-6 inline-flex flex-col sm:flex-row items-center gap-1 sm:gap-3 rounded-2xl border border-[#53D6FF]/45 bg-[#151B22] px-5 py-3 text-sm text-[#F6FAFC]">
+              <span className="uppercase tracking-[0.18em] text-[11px] font-semibold text-[#8DEBFF]">501(c)(3)</span>
+              <span className="font-mono font-bold tracking-wide">EIN {ORG.ein}</span>
+              <span className="text-[#A9B8C6]">Donations are tax-deductible</span>
+            </p>
           </div>
         </div>
       </section>

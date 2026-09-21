@@ -15,6 +15,7 @@ import AddSectionMenu from '@/src/features/content/AddSectionMenu'
 import BlogPostPreview from '@/src/features/content/BlogPostPreview'
 import BlogPublishingChecklist from '@/src/features/content/BlogPublishingChecklist'
 import MediaLibraryModal from '@/src/features/content/MediaLibraryModal'
+import { RevisionHistory } from '@/src/features/content/RevisionHistory'
 import { createBlock } from '@/src/features/content/blockRegistry'
 import { useAutosave, type SaveState } from '@/src/features/content/useAutosave'
 import type { ContentItem, ContentBlock, ContentCategory, ContentCTA, ContentBlockType } from '@/src/features/content/types'
@@ -66,8 +67,9 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
   const [originalItem, setOriginalItem] = useState<ContentItem | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [activeTab, setActiveTab] = useState<'content' | 'seo' | 'preview'>('content')
+  const [activeTab, setActiveTab] = useState<'content' | 'seo' | 'preview' | 'history'>('content')
   const [saveState, setSaveState] = useState<SaveState>('idle')
+  const [notifyState, setNotifyState] = useState<{ count: number; sentAt?: string | null; sending?: boolean; message?: string }>({ count: 0 })
   const [showMedia, setShowMedia] = useState(false)
   const [mediaCallback, setMediaCallback] = useState<((url: string) => void) | null>(null)
   const [lastSaved, setLastSaved] = useState<Date | null>(null)
@@ -87,6 +89,11 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
       setOriginalItem(JSON.parse(JSON.stringify(data))) // Deep copy for comparison
       setLastSaved(new Date(data.updatedAt))
       setLoading(false)
+      const notifyRes = await fetch(`/api/admin/content/${id}/notify`)
+      if (notifyRes.ok) {
+        const notify = await notifyRes.json() as { count?: number; sentAt?: string | null }
+        setNotifyState({ count: notify.count || 0, sentAt: notify.sentAt })
+      }
     }
     loadItem()
   }, [params, router])
@@ -167,6 +174,41 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
       setItem(updated)
       setOriginalItem(JSON.parse(JSON.stringify(updated)))
       setLastSaved(new Date())
+    }
+  }
+
+  const handleSendNotification = async (force = false) => {
+    if (!item) return
+    const already = item.notificationSentAt || notifyState.sentAt
+    const n = notifyState.count
+    const confirmText = already
+      ? `Notification already sent${already ? ` on ${new Date(already).toLocaleString()}` : ''}. Send again to ${n} subscriber${n === 1 ? '' : 's'}?`
+      : `Send this post now to ${n} subscriber${n === 1 ? '' : 's'} who opted into blog notifications?`
+    if (!window.confirm(confirmText)) return
+    setNotifyState((prev) => ({ ...prev, sending: true, message: undefined }))
+    try {
+      if (hasUnsavedChanges) await handleSave()
+      const res = await fetch(`/api/admin/content/${item.id}/notify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Send failed')
+      const sentAt = new Date().toISOString()
+      setItem({ ...item, notificationSentAt: sentAt })
+      setNotifyState((prev) => ({
+        ...prev,
+        sending: false,
+        sentAt,
+        message: data.message || `Sent to ${data.results?.sent ?? 0} subscribers`,
+      }))
+    } catch (err) {
+      setNotifyState((prev) => ({
+        ...prev,
+        sending: false,
+        message: err instanceof Error ? err.message : 'Send failed',
+      }))
     }
   }
 
@@ -379,6 +421,16 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
           }`}
         >
           Preview
+        </button>
+        <button
+          onClick={() => setActiveTab('history')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            activeTab === 'history'
+              ? 'bg-[#53D6FF] text-[#061016]'
+              : 'text-[#A9B8C6] hover:bg-[#1A232C]/10'
+          }`}
+        >
+          History
         </button>
         {saveState !== 'idle' && (
           <span className="px-3 py-2 text-xs text-[#A9B8C6]">
@@ -616,6 +668,36 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
                   A shorter excerpt specifically for email notifications.
                 </p>
               </div>
+
+              {item.status === 'published' && (
+                <div className="rounded-lg border border-[#27313B] bg-[#05070A] p-4 space-y-2">
+                  <p className="text-sm text-[#F6FAFC]">
+                    {notifyState.count} subscriber{notifyState.count === 1 ? '' : 's'} opted into blog notifications
+                    {(item.notificationSentAt || notifyState.sentAt) && (
+                      <span className="text-[#8DEBFF]">
+                        {' '}· last sent {new Date(item.notificationSentAt || notifyState.sentAt || '').toLocaleString()}
+                      </span>
+                    )}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={notifyState.sending}
+                      onClick={() => void handleSendNotification(Boolean(item.notificationSentAt || notifyState.sentAt))}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-semibold disabled:opacity-50"
+                    >
+                      {notifyState.sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      {item.notificationSentAt || notifyState.sentAt
+                        ? `Resend to ${notifyState.count}`
+                        : `Send to ${notifyState.count} now`}
+                    </button>
+                    <Link href="/admin/newsletters/new" className="inline-flex items-center px-4 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]">
+                      Add to monthly newsletter
+                    </Link>
+                  </div>
+                  {notifyState.message && <p className="text-xs text-[#8DEBFF]">{notifyState.message}</p>}
+                </div>
+              )}
             </div>
           </div>
 
@@ -751,6 +833,20 @@ export default function EditBlogPostPage({ params }: { params: Promise<{ id: str
 
       {activeTab === 'preview' && item && (
         <BlogPostPreview item={item} />
+      )}
+
+      {activeTab === 'history' && item && (
+        <RevisionHistory
+          listUrl={`/api/admin/content/${item.id}/revisions`}
+          onRestored={async () => {
+            const data = await getContentItem(item.id)
+            if (data) {
+              setItem(data)
+              setOriginalItem(JSON.parse(JSON.stringify(data)))
+              setLastSaved(new Date(data.updatedAt))
+            }
+          }}
+        />
       )}
 
       {showMedia && mediaCallback && (
