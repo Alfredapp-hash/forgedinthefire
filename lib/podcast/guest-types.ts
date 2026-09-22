@@ -50,6 +50,7 @@ export const GUEST_SIGNAL_KINDS = [
   'hangup',
   'record',
   'talkback',
+  'tally',
   'camera',
   'mute',
   'reconnect',
@@ -80,6 +81,21 @@ export type GuestUiPhase =
   | 'expired'
 
 export type GuestUiTone = 'idle' | 'wait' | 'live' | 'rec' | 'warn' | 'fail'
+
+export const GUEST_TALLY_PHASES = ['waiting', 'count-in', 'rec', 'stopped'] as const
+export type GuestTallyPhase = (typeof GUEST_TALLY_PHASES)[number]
+export const GUEST_TALLY_PHASE_SET = new Set<string>(GUEST_TALLY_PHASES)
+
+export function parseTallyPhase(value: unknown): GuestTallyPhase | null {
+  return typeof value === 'string' && GUEST_TALLY_PHASE_SET.has(value) ? (value as GuestTallyPhase) : null
+}
+
+export function describeGuestTally(phase: GuestTallyPhase): { label: string; tone: GuestUiTone } {
+  if (phase === 'count-in') return { label: 'Count-in', tone: 'wait' }
+  if (phase === 'rec') return { label: '● REC', tone: 'rec' }
+  if (phase === 'stopped') return { label: 'Stopped', tone: 'idle' }
+  return { label: 'Waiting', tone: 'wait' }
+}
 
 export function iceLooksUp(ice?: RTCIceConnectionState | '') {
   return ice === 'connected' || ice === 'completed'

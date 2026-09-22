@@ -52,15 +52,40 @@ export function createStudioPeer(iceServers: RTCIceServer[] = STUN_SERVERS) {
   })
 }
 
+function audioSender(peer: RTCPeerConnection) {
+  const live = peer.getSenders().find((s) => s.track?.kind === 'audio')
+  if (live) return live
+  const line = peer.getTransceivers().find((t) => {
+    const kind = t.receiver.track?.kind || t.sender.track?.kind
+    return kind === 'audio'
+  })
+  return line?.sender
+}
+
 export function attachLocalAudio(peer: RTCPeerConnection, stream: MediaStream) {
-  const existing = peer.getSenders().filter((s) => s.track?.kind === 'audio')
   const track = stream.getAudioTracks()[0]
   if (!track) return
-  if (existing[0]) {
-    void existing[0].replaceTrack(track)
+  const existing = audioSender(peer)
+  if (existing) {
+    void existing.replaceTrack(track)
     return
   }
   peer.addTrack(track, stream)
+}
+
+/** Mute host→guest audio without stopping the mic (talkback off). Does not stop tracks. */
+export function detachLocalAudio(peer: RTCPeerConnection) {
+  const sender = audioSender(peer)
+  if (sender?.track?.kind === 'audio') void sender.replaceTrack(null)
+}
+
+/** Host mic on the existing audio m-line only while talkback is on. Not mixed into the Guest take. */
+export function applyTalkback(peer: RTCPeerConnection, stream: MediaStream | null, on: boolean) {
+  if (on && stream?.getAudioTracks().some((t) => t.readyState === 'live')) {
+    attachLocalAudio(peer, stream)
+    return
+  }
+  detachLocalAudio(peer)
 }
 
 export function videoTransceiver(peer: RTCPeerConnection) {

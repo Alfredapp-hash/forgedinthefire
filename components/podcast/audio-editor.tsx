@@ -102,6 +102,7 @@ import { renderSfx, SFX_META, type SfxId } from '@/lib/podcast/sfx'
 import { SfxPad } from '@/components/podcast/sfx-pad'
 import { SessionTimeline } from '@/components/podcast/session-timeline'
 import { GuestInvitePanel } from '@/components/podcast/guest-invite-panel'
+import type { GuestTallyPhase } from '@/lib/podcast/guest-types'
 import { CameraClipReview, CameraLane } from '@/components/podcast/camera-lane'
 import { CameraPreview } from '@/components/podcast/camera-preview'
 import {
@@ -249,6 +250,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [hostTalkStream, setHostTalkStream] = useState<MediaStream | null>(null)
   const [guestTakeUrl, setGuestTakeUrl] = useState<string | null>(null)
   const [guestCameraUrl, setGuestCameraUrl] = useState<string | null>(null)
+  const [recTally, setRecTally] = useState<GuestTallyPhase>('waiting')
 
   const selected = useMemo(
     () => tracks.find((t) => t.id === selectedId) || tracks[0] || null,
@@ -603,6 +605,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       idleStreamRef.current = []
     }
   }, [recording, anyArmed, rawInput, micId, remoteGuest, people, tracks.map((t) => `${t.id}:${t.armed}:${t.personId}`).join('|')])
+
+  useEffect(() => {
+    if (!recording && (recTally === 'count-in' || recTally === 'rec')) {
+      setRecTally('stopped')
+    }
+  }, [recording, recTally])
 
   useEffect(() => {
     if (!recording) {
@@ -1067,6 +1075,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     recordingRef.current = true
     setSelectedId(jobs[0].lane.id)
     setRecording(true)
+    setRecTally(countInBeats > 0 ? 'count-in' : 'rec')
     setError(null)
     setOk(null)
     setInputPeaks({})
@@ -1125,9 +1134,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       }
 
       if (countInBeats > 0) {
+        setRecTally('count-in')
         setOk('Count-in…')
         await playCountIn(countInBeats, bpm, ac.signal)
       }
+
+      setRecTally('rec')
 
       if (cueEnabled) {
         const prepared = await tracksWithInserts(tracks)
@@ -2135,6 +2147,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         <GuestInvitePanel
           episodeId={episodeId}
           recording={recording}
+          recTally={recTally}
           hostStream={hostTalkStream}
           onRemoteStream={onRemoteGuestStream}
           onRemoteVideo={setRemoteGuestVideo}

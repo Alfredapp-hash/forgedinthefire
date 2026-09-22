@@ -13,7 +13,13 @@ import {
   stopStreams,
   type LaneCapture,
 } from '@/lib/podcast/capture'
-import { describeGuestSession, type GuestInvitePublic } from '@/lib/podcast/guest-types'
+import {
+  describeGuestSession,
+  describeGuestTally,
+  parseTallyPhase,
+  type GuestInvitePublic,
+  type GuestTallyPhase,
+} from '@/lib/podcast/guest-types'
 import {
   fetchGuestSession,
   finalizeGuestTake,
@@ -68,6 +74,8 @@ export function GuestPortal({
   const [hostPeak, setHostPeak] = useState(0)
   const [ice, setIce] = useState<RTCIceConnectionState | ''>('')
   const [recording, setRecording] = useState(false)
+  const [tally, setTally] = useState<GuestTallyPhase>('waiting')
+  const [talkback, setTalkback] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [backupUrl, setBackupUrl] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
@@ -90,10 +98,12 @@ export function GuestPortal({
   const mutedRef = useRef(false)
   const muteLockedRef = useRef(false)
   const camLockedRef = useRef(false)
+  const talkbackRef = useRef(false)
   const startingPeerRef = useRef(false)
   mutedRef.current = muted
   muteLockedRef.current = muteLocked
   camLockedRef.current = camLocked
+  talkbackRef.current = talkback
 
   useEffect(() => {
     setMounted(true)
@@ -254,6 +264,7 @@ export function GuestPortal({
         const audio = hostAudioRef.current
         if (audio) {
           audio.srcObject = stream
+          audio.muted = !talkbackRef.current
           void audio.play().catch(() => {})
         }
         stopHostMeterRef.current?.()
@@ -319,8 +330,17 @@ export function GuestPortal({
           if (signal.kind === 'record') {
             const on = Boolean(signal.payload.on)
             setRecording(on)
+            const phase = parseTallyPhase(signal.payload.phase)
+            setTally(phase || (on ? 'rec' : 'stopped'))
             if (on) void startLocalTake()
             else void stopLocalTake()
+          }
+          if (signal.kind === 'tally') {
+            const phase = parseTallyPhase(signal.payload.phase)
+            if (phase) setTally(phase)
+          }
+          if (signal.kind === 'talkback') {
+            setTalkback(Boolean(signal.payload.on))
           }
           if (signal.kind === 'mute') {
             const on = Boolean(signal.payload.on)
@@ -341,6 +361,8 @@ export function GuestPortal({
           }
           if (signal.kind === 'hangup') {
             setError('The host ended this invite')
+            setTalkback(false)
+            setTally('stopped')
             teardown(false)
             setPhase('blocked')
           }
@@ -371,6 +393,11 @@ export function GuestPortal({
       void pushGuestSignal(token, 'mute', { on: muted }).catch(() => {})
     }
   }, [muted, phase, token])
+
+  useEffect(() => {
+    const audio = hostAudioRef.current
+    if (audio) audio.muted = !talkback
+  }, [talkback])
 
   async function startLocalTake() {
     const stream = streamRef.current
@@ -477,18 +504,17 @@ export function GuestPortal({
     ice,
     recording,
   })
+  const tallyUi = describeGuestTally(tally)
   const iceFailed = presence.phase === 'failed'
   const canRetry = presence.phase === 'failed' || presence.phase === 'dropped'
-  const toneClass =
-    presence.tone === 'rec'
+  const tallyToneClass =
+    tallyUi.tone === 'rec'
       ? 'border-red-500/70 bg-[#2A1014]'
-      : presence.tone === 'fail'
-        ? 'border-[#FF7A9A] bg-[#2A1014]'
-        : presence.tone === 'warn'
-          ? 'border-[#FFB86B]/70 bg-[#24180C]'
-          : presence.tone === 'live'
-            ? 'border-[#7CFFB2]/40 bg-[#0C1814]'
-            : 'border-[#27313B] bg-[#11161C]'
+      : tallyUi.tone === 'wait'
+        ? 'border-[#FFB86B]/70 bg-[#24180C]'
+        : 'border-[#27313B] bg-[#11161C]'
+  const tallyLabelTone =
+    tallyUi.tone === 'rec' ? 'text-[#FF7A9A]' : tallyUi.tone === 'wait' ? 'text-[#FFB86B]' : 'text-[#A9B8C6]'
   const labelTone =
     presence.tone === 'live'
       ? 'text-[#7CFFB2]'
@@ -500,13 +526,13 @@ export function GuestPortal({
 
   return (
     <div className="fixed inset-0 z-[80] bg-[#0C141C] text-[#F6FAFC] overflow-auto">
-      <audio ref={hostAudioRef} autoPlay playsInline className="hidden" />
+      <audio ref={hostAudioRef} autoPlay playsInline muted className="hidden" />
       <div className="mx-auto max-w-xl min-h-full px-4 py-8 space-y-5">
         <header className="border-b border-[#27313B] pb-4">
           <p className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Forged in the Fire · Guest booth</p>
           <h1 className="text-xl font-medium mt-1">{session?.episodeTitle || 'Production room'}</h1>
           <p className="text-sm text-[#A9B8C6] mt-1">
-            Mic, camera, mute, and a local backup. The host owns Record, punch, FX, and export.
+            Mic, camera, mute, and a local backup. The host owns Record, talkback, punch, FX, and export.
           </p>
         </header>
 
@@ -614,11 +640,18 @@ export function GuestPortal({
 
         {phase === 'booth' && (
           <div className="space-y-4">
-            <div className={`rounded-2xl border px-4 py-3 flex items-center justify-between gap-3 ${toneClass}`}>
+            <div className={`rounded-2xl border px-4 py-3 flex items-center justify-between gap-3 ${tallyToneClass}`}>
               <div>
-                <p className={`text-sm font-medium ${labelTone}`}>{presence.label}</p>
+                <p className={`text-sm font-medium ${tallyLabelTone}`}>{tallyUi.label}</p>
+                <p className={`text-[11px] mt-0.5 ${labelTone}`}>{presence.label}</p>
                 <p className="text-[11px] text-[#7C8B97] mt-0.5">
-                  {recording ? 'Host Record is on. Keep this tab open.' : 'Host still owns Record, punch, and export.'}
+                  {tally === 'count-in'
+                    ? 'Count-in — stay ready. Host still owns Record.'
+                    : tally === 'rec'
+                      ? 'Host is rolling. Keep this tab open for the local backup.'
+                      : tally === 'stopped'
+                        ? 'Record stopped. Wait for the host.'
+                        : 'Waiting for the host to record. You do not punch Record from here.'}
                 </p>
               </div>
               <p className="text-[11px] font-mono text-[#A9B8C6] shrink-0">{ice || 'waiting'}</p>
@@ -709,12 +742,18 @@ export function GuestPortal({
 
             <div className="rounded-2xl border border-[#1A232C] bg-[#080C10] p-4 space-y-3">
               <p className="text-sm">
-                <span className="inline-block h-2.5 w-2.5 rounded-full mr-2 bg-[#53D6FF]" />
-                Host
+                <span
+                  className={`inline-block h-2.5 w-2.5 rounded-full mr-2 ${
+                    talkback ? 'bg-[#53D6FF]' : 'bg-[#27313B]'
+                  }`}
+                />
+                Host{talkback ? ' · talkback' : ''}
               </p>
-              <Meter label="Host" peak={hostPeak} clip={false} />
+              <Meter label="Host" peak={talkback ? hostPeak : 0} clip={false} />
               <p className="text-[11px] text-[#7C8B97]">
-                You hear the host through this tab. They punch Record on their side.
+                {talkback
+                  ? 'Host talkback is in your headphones. It is not recorded on your take.'
+                  : 'Talkback is off. You will hear the host when they toggle Talkback — not when they hit Record.'}
               </p>
             </div>
 

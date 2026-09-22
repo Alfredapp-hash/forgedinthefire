@@ -1,8 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Copy, Link2, MicOff, Radio, RefreshCw, UserX, Video, VideoOff, Volume2 } from 'lucide-react'
-import { describeGuestSession, type GuestInviteAdmin } from '@/lib/podcast/guest-types'
+import { Copy, Headphones, Link2, MicOff, Radio, RefreshCw, UserX, Video, VideoOff, Volume2 } from 'lucide-react'
+import { openInputStream, stopStreams } from '@/lib/podcast/capture'
+import {
+  describeGuestSession,
+  describeGuestTally,
+  type GuestInviteAdmin,
+  type GuestTallyPhase,
+} from '@/lib/podcast/guest-types'
 import {
   createAdminInvite,
   listAdminInvites,
@@ -14,7 +20,7 @@ import {
 import {
   addIce,
   answerOffer,
-  attachLocalAudio,
+  applyTalkback,
   closePeer,
   collectRemoteStream,
   createStudioPeer,
@@ -26,6 +32,7 @@ import {
 type Props = {
   episodeId?: string | null
   recording: boolean
+  recTally?: GuestTallyPhase
   hostStream: MediaStream | null
   onRemoteStream: (stream: MediaStream | null) => void
   onRemoteVideo?: (live: boolean) => void
@@ -46,6 +53,7 @@ const TONE_CLASS: Record<string, string> = {
 export function GuestInvitePanel({
   episodeId,
   recording,
+  recTally = 'waiting',
   hostStream,
   onRemoteStream,
   onRemoteVideo,
@@ -66,13 +74,18 @@ export function GuestInvitePanel({
   const [guestCamOn, setGuestCamOn] = useState(false)
   const [camLocked, setCamLocked] = useState(false)
   const [reconnecting, setReconnecting] = useState(false)
+  const [talkback, setTalkback] = useState(false)
   const iceCfgRef = useRef<StudioIceConfig | null>(null)
   const peerRef = useRef<RTCPeerConnection | null>(null)
   const afterRef = useRef(0)
   const hostRef = useRef<MediaStream | null>(null)
+  const talkbackRef = useRef(false)
+  const talkbackMicRef = useRef<MediaStream | null>(null)
   hostRef.current = hostStream
+  talkbackRef.current = talkback
   const liveId = invites.find((i) => !i.revoked && !i.expired)?.id || null
   const live = invites.find((i) => i.id === liveId) || null
+  const tally = describeGuestTally(recTally)
 
   useEffect(() => {
     void loadStudioIceServers().then((cfg) => {
@@ -134,12 +147,33 @@ export function GuestInvitePanel({
     }
   }, [liveId])
 
-  useEffect(() => {
+  function talkbackSource() {
+    return hostRef.current || talkbackMicRef.current
+  }
+
+  function pushTalkbackToPeer() {
     const peer = peerRef.current
-    const stream = hostStream
-    if (!peer || !stream) return
-    attachLocalAudio(peer, stream)
-  }, [hostStream])
+    if (!peer) return
+    applyTalkback(peer, talkbackSource(), talkbackRef.current)
+  }
+
+  function releaseTalkbackMic() {
+    const dedicated = talkbackMicRef.current
+    if (!dedicated || dedicated === hostRef.current) {
+      talkbackMicRef.current = null
+      return
+    }
+    stopStreams([dedicated])
+    talkbackMicRef.current = null
+  }
+
+  useEffect(() => {
+    if (hostStream && talkbackMicRef.current && talkbackMicRef.current !== hostStream) {
+      stopStreams([talkbackMicRef.current])
+      talkbackMicRef.current = null
+    }
+    pushTalkbackToPeer()
+  }, [hostStream, talkback])
 
   const recordingRef = useRef(recording)
   useEffect(() => {
@@ -148,13 +182,27 @@ export function GuestInvitePanel({
       return
     }
     recordingRef.current = recording
-    void pushAdminSignal(liveId, 'record', { on: recording }).catch(() => {})
-  }, [recording, liveId])
+    void pushAdminSignal(liveId, 'record', {
+      on: recording,
+      phase: recording ? recTally : 'stopped',
+    }).catch(() => {})
+  }, [recording, liveId, recTally])
+
+  const tallyRef = useRef(recTally)
+  useEffect(() => {
+    if (!liveId || tallyRef.current === recTally) {
+      tallyRef.current = recTally
+      return
+    }
+    tallyRef.current = recTally
+    void pushAdminSignal(liveId, 'tally', { phase: recTally }).catch(() => {})
+  }, [recTally, liveId])
 
   useEffect(() => {
     return () => {
       closePeer(peerRef.current, false)
       peerRef.current = null
+      releaseTalkbackMic()
       onRemoteStream(null)
       onRemoteVideo?.(false)
     }
@@ -168,6 +216,12 @@ export function GuestInvitePanel({
       if (!peer) return
       const desc = await answerOffer(peer, payload as unknown as RTCSessionDescriptionInit)
       if (desc) await pushAdminSignal(inviteId, 'answer', { type: desc.type, sdp: desc.sdp })
+      applyTalkback(peer, talkbackSource(), talkbackRef.current)
+      void pushAdminSignal(inviteId, 'tally', { phase: tallyRef.current }).catch(() => {})
+      if (talkbackRef.current) void pushAdminSignal(inviteId, 'talkback', { on: true }).catch(() => {})
+      if (recordingRef.current) {
+        void pushAdminSignal(inviteId, 'record', { on: true, phase: tallyRef.current }).catch(() => {})
+      }
       setReconnecting(false)
       return
     }
@@ -197,6 +251,8 @@ export function GuestInvitePanel({
       setIce('')
       setGuestMuted(false)
       setGuestCamOn(false)
+      setTalkback(false)
+      releaseTalkbackMic()
       onRemoteStream(null)
       onRemoteVideo?.(false)
     }
@@ -210,7 +266,7 @@ export function GuestInvitePanel({
     const peer = createStudioPeer(iceServers || iceCfgRef.current?.iceServers)
     peerRef.current = peer
     wirePeer(inviteId, peer)
-    if (hostRef.current) attachLocalAudio(peer, hostRef.current)
+    applyTalkback(peer, talkbackSource(), talkbackRef.current)
   }
 
   function wirePeer(inviteId: string, peer: RTCPeerConnection) {
@@ -276,6 +332,25 @@ export function GuestInvitePanel({
     })
   }
 
+  async function setTalkbackOn(on: boolean) {
+    if (!liveId) return
+    setError(null)
+    try {
+      if (on && !talkbackSource()) {
+        talkbackMicRef.current = await openInputStream(undefined, false)
+      }
+      if (!on) releaseTalkbackMic()
+      const peer = peerRef.current
+      if (peer) applyTalkback(peer, on ? talkbackSource() : null, on)
+      talkbackRef.current = on
+      setTalkback(on)
+      await pushAdminSignal(liveId, 'talkback', { on })
+    } catch (err) {
+      if (!on) setTalkback(false)
+      setError(err instanceof Error ? err.message : 'Could not start talkback')
+    }
+  }
+
   async function retryPeer() {
     if (!liveId) return
     setError(null)
@@ -284,6 +359,7 @@ export function GuestInvitePanel({
       const cfg = await readyIce()
       resetPeer(liveId, cfg.iceServers)
       await pushAdminSignal(liveId, 'reconnect', {})
+      if (talkbackRef.current) await pushAdminSignal(liveId, 'talkback', { on: true }).catch(() => {})
     } catch (err) {
       setReconnecting(false)
       setError(err instanceof Error ? err.message : 'Could not reconnect')
@@ -304,6 +380,8 @@ export function GuestInvitePanel({
       setMuteLocked(false)
       setGuestCamOn(false)
       setCamLocked(false)
+      setTalkback(false)
+      releaseTalkbackMic()
       setIce('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create invite')
@@ -336,6 +414,8 @@ export function GuestInvitePanel({
       setMuteLocked(false)
       setGuestCamOn(false)
       setCamLocked(false)
+      setTalkback(false)
+      releaseTalkbackMic()
       setIce('')
       onRemoteStream(null)
       onRemoteVideo?.(false)
@@ -371,13 +451,19 @@ export function GuestInvitePanel({
         </span>
         {live?.guestName && <span className="text-xs text-[#F6FAFC]">{live.guestName}</span>}
         {ice && <span className="text-[11px] font-mono text-[#7C8B97]">{ice}</span>}
+        {liveInvite && (
+          <span className={`text-[11px] font-mono ${TONE_CLASS[tally.tone] || TONE_CLASS.idle}`}>
+            {tally.label}
+          </span>
+        )}
       </div>
       {live && !live.revoked && !live.expired && (
         <p className="text-[11px] text-[#7C8B97]">
           Mic {muteLocked ? 'host muted' : guestMuted ? 'guest muted' : 'live'}
           {' · '}
           Cam {camLocked ? 'host off' : guestCamOn ? 'on' : 'off'}
-          {recording ? ' · host Record on' : ''}
+          {talkback ? ' · talkback on' : ' · talkback off'}
+          {recording ? ` · host ${tally.label}` : ''}
         </p>
       )}
       {!episodeId ? (
@@ -456,6 +542,18 @@ export function GuestInvitePanel({
           </button>
           <button
             type="button"
+            disabled={busy || !guestInBooth}
+            onClick={() => void setTalkbackOn(!talkback)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
+              talkback
+                ? 'bg-[#53D6FF] text-[#061016]'
+                : 'border border-[#27313B] text-[#B8C4CF]'
+            } disabled:opacity-40`}
+          >
+            <Headphones size={14} /> {talkback ? 'Talkback on' : 'Talkback'}
+          </button>
+          <button
+            type="button"
             disabled={busy || reconnecting || !guestInBooth}
             onClick={() => void retryPeer()}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
@@ -472,9 +570,9 @@ export function GuestInvitePanel({
         <p className="text-[11px] font-mono text-[#8DEBFF] break-all">{freshUrl}</p>
       )}
       <p className="text-[11px] text-[#7C8B97]">
-        You can mute the guest and turn their camera off from here — they cannot override until you
-        unmute or allow camera. Guest still has self-view and a local camera backup. You keep Record,
-        punch, FX, mix, and export. Arm Host so they can hear you.{' '}
+        Talkback sends your mic to their headphones only — it is not laid on the Guest take. Mute,
+        camera-off, and Retry are unchanged. Guest still has self-view and a local camera backup.
+        You keep Record, punch, FX, mix, and export.{' '}
         {turnConfigured
           ? 'TURN is on for this site.'
           : 'ICE is STUN-only until TURN_URL, TURN_USERNAME, and TURN_CREDENTIAL are set on Netlify.'}{' '}
