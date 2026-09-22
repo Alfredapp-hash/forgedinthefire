@@ -576,21 +576,42 @@
   }
 }
 
-/* Native <details> mobile nav. The sheet is a descendant of <header> but
-   header itself has no filter/transform, so position:fixed is viewport-based. */
-.mobile-nav-toggle > summary {
-  list-style: none;
+/* Mobile nav: checkbox + sheet are portaled to document.body so header
+   glass (inner pages always, Home after scroll) cannot trap position:fixed.
+   The header control is a <label for> that toggles the checkbox with no JS. */
+.site-mobile-nav-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  padding: 0;
+  margin: -1px;
 }
-.mobile-nav-toggle > summary::-webkit-details-marker,
-.mobile-nav-toggle > summary::marker {
-  display: none;
-  content: none;
+.site-mobile-nav-input:not(:checked) + .mobile-nav-sheet,
+.mobile-nav-sheet {
+  display: none !important;
 }
-.mobile-nav-toggle[open] .mobile-nav-icon-open {
+body:has(.site-mobile-nav-input:checked) .mobile-nav-sheet {
+  display: block !important;
+}
+.mobile-nav-icon-close {
   display: none;
 }
-.mobile-nav-toggle:not([open]) .mobile-nav-icon-close {
+body:has(.site-mobile-nav-input:checked) .mobile-nav-icon-open {
   display: none;
+}
+body:has(.site-mobile-nav-input:checked) .mobile-nav-icon-close {
+  display: block;
+}
+body:has(.site-mobile-nav-input:checked) .header-glass {
+  background-color: #05070a !important;
+  border-color: rgba(83, 214, 255, 0.08) !important;
+}
+body:has(.site-mobile-nav-input:checked) .header-glass::before {
+  display: none !important;
 }
 .header-glass-on {
   background-color: rgba(5, 7, 10, 0.45);
@@ -607,12 +628,9 @@
   background-color: transparent;
   border-color: transparent;
 }
-header:has(.mobile-nav-toggle[open]) .header-glass {
-  background-color: #05070a !important;
-  border-color: rgba(83, 214, 255, 0.08) !important;
-}
-header:has(.mobile-nav-toggle[open]) .header-glass::before {
-  display: none !important;
+.header-glass-solid {
+  background-color: #05070a;
+  border-color: rgba(83, 214, 255, 0.08);
 }
 .mobile-nav-sheet {
   position: fixed !important;
@@ -634,7 +652,9 @@ header:has(.mobile-nav-toggle[open]) .header-glass::before {
 
 @media (min-width: 1024px) {
   .mobile-nav-toggle,
-  .mobile-nav-sheet {
+  .mobile-nav-sheet,
+  .site-mobile-nav-input,
+  body:has(.site-mobile-nav-input:checked) .mobile-nav-sheet {
     display: none !important;
   }
 }

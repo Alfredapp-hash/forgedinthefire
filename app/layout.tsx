@@ -86,8 +86,10 @@ export default async function RootLayout({
       </head>
       {/* Background is owned by globals.css so the page radial gradient shows. */}
       <body className="min-h-screen text-cream-100 antialiased" suppressHydrationWarning>
+        {/* Navbar is a body child, not inside the relative page shell, so the
+            mobile sheet can sit on the viewport instead of inside header glass. */}
+        <Navbar />
         <div className="relative flex min-h-screen flex-col">
-          <Navbar />
           <main className="flex-1" id="main-content">
             {children}
           </main>
