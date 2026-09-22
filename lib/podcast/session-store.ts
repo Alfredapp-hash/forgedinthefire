@@ -169,10 +169,21 @@ export async function saveSession(
 
   try {
     await idbPut(row)
-  } catch {
-    if (packedCams.length === 0) throw new Error('Could not autosave takes on this computer')
+  } catch (err) {
+    const quota = err instanceof DOMException && (err.name === 'QuotaExceededError' || err.code === 22 || err.code === 1014)
+    if (packedCams.length === 0) {
+      throw new Error(
+        quota
+          ? 'This browser is out of space for session autosave. Download takes or free disk before you close the tab.'
+          : 'Could not autosave takes on this computer',
+      )
+    }
     await idbPut({ ...row, cameras: [] })
-    throw new Error('Takes saved; camera files did not fit on this computer')
+    throw new Error(
+      quota
+        ? 'Takes saved. Camera files did not fit in this browser’s storage — download the camera files before you close the tab.'
+        : 'Takes saved; camera files did not fit on this computer',
+    )
   }
 }
 

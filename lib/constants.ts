@@ -28,6 +28,9 @@ export const ORG = {
   address: '15728 Lorain Ave, Unit 146, Lorain County, OH 44111-5542',
   email: 'tracys@forgedinthefireohio.org',
   phone: '1 216-202-0786',
+  /** IRS Employer Identification Number — 501(c)(3) */
+  ein: '39-3438993',
+  ohioCharter: '5445768',
 } as const;
 
 // Core Values
@@ -307,12 +310,12 @@ export const FOOTER_LINKS = {
     { href: '/about', label: 'About Us' },
     { href: '/about#team', label: 'Our Team' },
     { href: '/about#partners', label: 'Partners' },
+    { href: '/campaigns', label: 'Campaigns' },
     { href: '/careers', label: 'Join Our Team' },
   ],
   resources: [
     { href: '/resources', label: 'Education Hub' },
-    { href: '/resources/faq', label: 'FAQ' },
-    { href: '/resources/downloads', label: 'Downloads' },
+    { href: '/podcast', label: 'Podcast' },
     { href: '/blog', label: 'Blog' },
   ],
   legal: [

@@ -312,7 +312,7 @@ export function RecordingStudio({
             Recording, punch-in, effects, and mixdown run in Chrome on this computer. Host and Guest can share one mic
             on a take, or each take a local mic and land on the same punch. Two mics follow the talker (quieter lane
             mutes; both recordings stay). Cam on a voice card is a local 720p preview; Record can write a parallel
-            camera file. RSS publish stays the audio mix.
+            camera file. A-roll / PIP downloads encode as fast as this computer can. RSS publish stays the audio mix.
           </p>
         </div>
 

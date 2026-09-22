@@ -7,7 +7,7 @@ const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  transpilePackages: ['@shiguredo/rnnoise-wasm'],
+  transpilePackages: ['@shiguredo/rnnoise-wasm', 'mediabunny'],
   turbopack: {
     root: projectRoot,
   },

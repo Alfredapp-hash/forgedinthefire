@@ -107,6 +107,7 @@ import { CameraPreview } from '@/components/podcast/camera-preview'
 import {
   CAMERA_ARM_WARNING,
   CAMERA_MB_PER_MIN,
+  cameraStorageHint,
   formatBytes,
   measureVideoDuration,
   newCameraClipId,
@@ -203,6 +204,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [cameraClips, setCameraClips] = useState<CameraClip[]>([])
   const [selectedCamClipId, setSelectedCamClipId] = useState<string | null>(null)
   const [camWarnFor, setCamWarnFor] = useState<string | null>(null)
+  const [camStorageHint, setCamStorageHint] = useState<string | null>(null)
   const camWarnedRef = useRef(false)
   const [inputPeaks, setInputPeaks] = useState<Record<string, number>>({})
   const [clipHolds, setClipHolds] = useState<Record<string, boolean>>({})
@@ -318,6 +320,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   }, [])
 
   cameraStreamsRef.current = cameraStreams
+
+  useEffect(() => {
+    if (!camWarnFor) {
+      setCamStorageHint(null)
+      return
+    }
+    void cameraStorageHint().then(setCamStorageHint)
+  }, [camWarnFor])
 
   const revokeUrl = (url: string | null) => {
     if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
@@ -1719,32 +1729,37 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       setError('Record a camera file first — picture export is a local canvas mix, not the RSS')
       return
     }
-    setBusy(mode === 'pip' ? 'Rendering Host + Guest PIP…' : 'Rendering A-roll…')
+    setBusy(mode === 'pip' ? 'Encoding Host + Guest PIP…' : 'Encoding A-roll…')
     setError(null)
     try {
       const prepared = await tracksWithInserts(tracks)
       let mixed = mixdownTracks(prepared)
       mixed = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
       if (matchLufs) mixed = applyGainAndFades(mixed, gainForTargetLufs(measureLoudness(mixed).lufs, PODCAST_LUFS), 0, 0)
-      const blob = await renderPictureMix({
+      const { blob, realtime: usedRealtime } = await renderPictureMix({
         mode,
         host,
         guest: mode === 'pip' ? guest : null,
         audio: mixed,
-        onProgress: (ratio) => {
+        onProgress: (ratio, info) => {
+          const label = mode === 'pip' ? 'Encoding PIP' : 'Encoding A-roll'
           setBusy(
-            `${mode === 'pip' ? 'Rendering PIP' : 'Rendering A-roll'} ${Math.round(ratio * 100)}% — keep this tab open`,
+            info?.realtime
+              ? `${label} ${Math.round(ratio * 100)}% — keep this tab open`
+              : `${label} ${Math.round(ratio * 100)}%`,
           )
         },
       })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${slugFile(title)}-${mode === 'pip' ? 'pip' : 'a-roll'}.webm`
+      a.download = `${slugFile(title)}-${mode === 'pip' ? 'pip' : 'a-roll'}.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`
       a.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 4000)
       setOk(
-        `${mode === 'pip' ? 'PIP' : 'A-roll'} downloaded locally — public RSS is still the audio mix`,
+        usedRealtime
+          ? `${mode === 'pip' ? 'PIP' : 'A-roll'} downloaded (realtime encode) — public RSS is still the audio mix`
+          : `${mode === 'pip' ? 'PIP' : 'A-roll'} downloaded locally — public RSS is still the audio mix`,
       )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Picture export failed')
@@ -1914,7 +1929,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
         {camWarnFor && (
           <div className="rounded-xl border border-[#FFB86B]/50 bg-[#20180C] px-4 py-3 flex flex-wrap items-center gap-3">
-            <p className="text-sm text-[#F6FAFC] flex-1 min-w-[12rem]">{CAMERA_ARM_WARNING}</p>
+            <p className="text-sm text-[#F6FAFC] flex-1 min-w-[12rem]">
+              {CAMERA_ARM_WARNING}
+              {camStorageHint ? ` ${camStorageHint}.` : ''}
+            </p>
             <button type="button" className={primary} onClick={confirmArmCamera}>
               Arm camera
             </button>
@@ -3149,7 +3167,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             type="button"
             className={btn}
             disabled={!cameraClips.length || Boolean(busy)}
-            title="Local canvas of the host camera + audio mix. Does not change RSS."
+            title="Host camera + audio mix, encoded as fast as this computer can. Local file — RSS stays the mix."
             onClick={() => void downloadPicture('a-roll')}
           >
             {busy?.includes('A-roll') ? busy : 'Download A-roll'}
@@ -3158,7 +3176,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             type="button"
             className={btn}
             disabled={!cameraClips.some((c) => c.personId === 'guest') || Boolean(busy)}
-            title="Host full frame, guest PIP. Local file only — audio_url stays the mix."
+            title="Host full frame, guest PIP, encoded as fast as this computer can. Local file — audio_url stays the mix."
             onClick={() => void downloadPicture('pip')}
           >
             {busy?.includes('PIP') ? busy : 'Download PIP'}
@@ -3168,7 +3186,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         {error && <p className="text-sm text-red-300">{error}</p>}
         {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
         <p className="text-[11px] text-[#A9B8C6]">
-          After the mix lays the next person at the end of the session. After my last take is a pickup. Cue mix plays live from the other lanes — no bounce before Record. Record capture starts with preroll and trims to punch. Two mics auto-mute the quieter lane (recordings keep rolling). Isolate uses RNNoise on the insert rack. Cam on a voice card is a real local preview; Record also writes a parallel camera file (autosaved in this browser, not episode audio_url). Remote guest can send live camera on the same WebRTC peer, plus a local camera backup if the peer is thin. Public feed stays audio. A picks the default audible take; Comp assigns a range to another take; L layers. Drag a range on the music lane to duck without a second track. Export can match −16 LUFS; stems zip is a local download. Mix is hosted on your site (Supabase media). Public feed{' '}
+          After the mix lays the next person at the end of the session. After my last take is a pickup. Cue mix plays live from the other lanes — no bounce before Record. Record capture starts with preroll and trims to punch. Two mics auto-mute the quieter lane (recordings keep rolling). Isolate uses RNNoise on the insert rack. Cam on a voice card is a real local preview; Record also writes a parallel camera file (autosaved in this browser, not episode audio_url). If this browser runs out of space, takes still save and you are told to download the camera files. Remote guest can send live camera on the same WebRTC peer, plus a local camera backup if the peer is thin. Download A-roll / PIP encodes as fast as this computer can (WebCodecs); the public feed stays audio. A picks the default audible take; Comp assigns a range to another take; L layers. Drag a range on the music lane to duck without a second track. Export can match −16 LUFS; stems zip is a local download. Mix is hosted on your site (Supabase media). Public feed{' '}
           <code className="text-[#8DEBFF]">/podcast/rss.xml</code> powers Apple Podcasts, Spotify for
           Podcasters, and Amazon Music — submit that URL once; new published mixes appear automatically.
         </p>

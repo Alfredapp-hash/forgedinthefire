@@ -117,7 +117,28 @@ export function measureVideoDuration(url: string): Promise<number> {
 export function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+export function isQuotaError(err: unknown) {
+  if (err instanceof DOMException) {
+    return err.name === 'QuotaExceededError' || err.code === 22 || err.code === 1014
+  }
+  return err instanceof Error && /quota|storage/i.test(err.message)
+}
+
+/** Remaining IndexedDB/origin space, if the browser will say. */
+export async function cameraStorageHint(): Promise<string | null> {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.storage?.estimate) return null
+    const { usage, quota } = await navigator.storage.estimate()
+    if (!quota) return null
+    const left = Math.max(0, quota - (usage || 0))
+    return `${formatBytes(left)} free of ${formatBytes(quota)} in this browser`
+  } catch {
+    return null
+  }
 }
 
 export function streamHasVideo(stream: MediaStream | null | undefined) {
