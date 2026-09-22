@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Copy, Link2, Radio, UserX } from 'lucide-react'
-import type { GuestInviteAdmin, GuestConnectionState } from '@/lib/podcast/guest-types'
+import { Copy, Link2, MicOff, Radio, RefreshCw, UserX, Video, VideoOff, Volume2 } from 'lucide-react'
+import { describeGuestSession, type GuestInviteAdmin } from '@/lib/podcast/guest-types'
 import {
   createAdminInvite,
   listAdminInvites,
@@ -34,15 +34,13 @@ type Props = {
   onCameraUrl?: (url: string | null) => void
 }
 
-function presenceLabel(invite: GuestInviteAdmin | null, ice: RTCIceConnectionState | '') {
-  if (!invite) return 'No invite'
-  if (invite.revoked) return 'Revoked'
-  if (invite.expired) return 'Expired'
-  if (invite.state === 'recording') return 'Guest recording'
-  if (ice === 'connected' || ice === 'completed' || invite.state === 'connected') return 'Guest connected'
-  if (invite.state === 'joined') return 'Guest in booth — linking'
-  if (invite.state === 'left') return 'Guest left'
-  return 'Waiting for guest'
+const TONE_CLASS: Record<string, string> = {
+  live: 'text-[#7CFFB2]',
+  rec: 'text-[#FF7A9A]',
+  wait: 'text-[#FFB86B]',
+  warn: 'text-[#FFB86B]',
+  fail: 'text-[#FF7A9A]',
+  idle: 'text-[#A9B8C6]',
 }
 
 export function GuestInvitePanel({
@@ -63,6 +61,11 @@ export function GuestInvitePanel({
   const [error, setError] = useState<string | null>(null)
   const [ice, setIce] = useState<RTCIceConnectionState | ''>('')
   const [turnConfigured, setTurnConfigured] = useState(false)
+  const [guestMuted, setGuestMuted] = useState(false)
+  const [muteLocked, setMuteLocked] = useState(false)
+  const [guestCamOn, setGuestCamOn] = useState(false)
+  const [camLocked, setCamLocked] = useState(false)
+  const [reconnecting, setReconnecting] = useState(false)
   const iceCfgRef = useRef<StudioIceConfig | null>(null)
   const peerRef = useRef<RTCPeerConnection | null>(null)
   const afterRef = useRef(0)
@@ -159,13 +162,13 @@ export function GuestInvitePanel({
 
   async function handleSignal(inviteId: string, kind: string, payload: Record<string, unknown>) {
     if (kind === 'offer' && payload.sdp) {
-      const existing = peerRef.current
-      const reuse =
-        existing && existing.signalingState !== 'closed' && existing.connectionState !== 'closed'
       const cfg = await readyIce()
-      const peer = reuse ? existing : (resetPeer(inviteId, cfg.iceServers), ensurePeer(inviteId, cfg.iceServers))
+      resetPeer(inviteId, cfg.iceServers)
+      const peer = peerRef.current
+      if (!peer) return
       const desc = await answerOffer(peer, payload as unknown as RTCSessionDescriptionInit)
       if (desc) await pushAdminSignal(inviteId, 'answer', { type: desc.type, sdp: desc.sdp })
+      setReconnecting(false)
       return
     }
     if (kind === 'ice') {
@@ -174,20 +177,29 @@ export function GuestInvitePanel({
       return
     }
     if (kind === 'camera') {
-      onRemoteVideo?.(Boolean(payload.on))
+      const on = Boolean(payload.on)
+      setGuestCamOn(on)
+      onRemoteVideo?.(on)
+      return
+    }
+    if (kind === 'mute') {
+      setGuestMuted(Boolean(payload.on))
+      return
+    }
+    if (kind === 'reconnect') {
+      const cfg = await readyIce()
+      resetPeer(inviteId, cfg.iceServers)
       return
     }
     if (kind === 'hangup') {
       closePeer(peerRef.current, false)
       peerRef.current = null
       setIce('')
+      setGuestMuted(false)
+      setGuestCamOn(false)
       onRemoteStream(null)
       onRemoteVideo?.(false)
     }
-  }
-
-  function iceConnected(state: RTCIceConnectionState | '') {
-    return state === 'connected' || state === 'completed'
   }
 
   function resetPeer(inviteId: string, iceServers?: RTCIceServer[]) {
@@ -199,15 +211,6 @@ export function GuestInvitePanel({
     peerRef.current = peer
     wirePeer(inviteId, peer)
     if (hostRef.current) attachLocalAudio(peer, hostRef.current)
-  }
-
-  function ensurePeer(inviteId: string, iceServers?: RTCIceServer[]) {
-    if (peerRef.current) return peerRef.current
-    const peer = createStudioPeer(iceServers || iceCfgRef.current?.iceServers)
-    peerRef.current = peer
-    wirePeer(inviteId, peer)
-    if (hostRef.current) attachLocalAudio(peer, hostRef.current)
-    return peer
   }
 
   function wirePeer(inviteId: string, peer: RTCPeerConnection) {
@@ -230,6 +233,7 @@ export function GuestInvitePanel({
     peer.oniceconnectionstatechange = () => {
       setIce(peer.iceConnectionState)
       if (peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed') {
+        setReconnecting(false)
         void setAdminInviteState(inviteId, 'connected').catch(() => {})
       }
       if (peer.iceConnectionState === 'failed') {
@@ -241,6 +245,48 @@ export function GuestInvitePanel({
         onRemoteStream(null)
         onRemoteVideo?.(false)
       }
+    }
+    peer.onconnectionstatechange = () => {
+      if (peer.connectionState === 'failed') {
+        setError(iceFailedHint(iceCfgRef.current?.turnConfigured || false))
+        onRemoteStream(null)
+        onRemoteVideo?.(false)
+      }
+    }
+  }
+
+  async function setGuestMute(on: boolean) {
+    if (!liveId) return
+    setMuteLocked(on)
+    setGuestMuted(on)
+    await pushAdminSignal(liveId, 'mute', { on }).catch((err) => {
+      setError(err instanceof Error ? err.message : 'Could not mute guest')
+    })
+  }
+
+  async function setGuestCamera(on: boolean) {
+    if (!liveId) return
+    setCamLocked(!on)
+    if (!on) {
+      setGuestCamOn(false)
+      onRemoteVideo?.(false)
+    }
+    await pushAdminSignal(liveId, 'camera', { on }).catch((err) => {
+      setError(err instanceof Error ? err.message : 'Could not change guest camera')
+    })
+  }
+
+  async function retryPeer() {
+    if (!liveId) return
+    setError(null)
+    setReconnecting(true)
+    try {
+      const cfg = await readyIce()
+      resetPeer(liveId, cfg.iceServers)
+      await pushAdminSignal(liveId, 'reconnect', {})
+    } catch (err) {
+      setReconnecting(false)
+      setError(err instanceof Error ? err.message : 'Could not reconnect')
     }
   }
 
@@ -254,6 +300,11 @@ export function GuestInvitePanel({
       setFreshUrl(data.invite.url || null)
       afterRef.current = 0
       setCopied(false)
+      setGuestMuted(false)
+      setMuteLocked(false)
+      setGuestCamOn(false)
+      setCamLocked(false)
+      setIce('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create invite')
     } finally {
@@ -281,6 +332,11 @@ export function GuestInvitePanel({
       setFreshUrl(null)
       closePeer(peerRef.current, false)
       peerRef.current = null
+      setGuestMuted(false)
+      setMuteLocked(false)
+      setGuestCamOn(false)
+      setCamLocked(false)
+      setIce('')
       onRemoteStream(null)
       onRemoteVideo?.(false)
       onGuestName(null)
@@ -292,26 +348,38 @@ export function GuestInvitePanel({
     }
   }
 
-  const state = (live?.state || 'pending') as GuestConnectionState
+  const presence = describeGuestSession({
+    side: 'admin',
+    hasInvite: Boolean(live),
+    state: live?.state,
+    revoked: live?.revoked,
+    expired: live?.expired,
+    ice,
+    recording: recording || live?.state === 'recording',
+  })
+  const liveInvite = Boolean(live) && !live?.revoked && !live?.expired
+  const guestInBooth = liveInvite && live?.state !== 'pending' && live?.state !== 'left'
+  const canRetry = presence.phase === 'failed' || presence.phase === 'dropped'
 
   return (
     <div className="rounded-xl border border-[#1A232C] bg-[#0A1016] p-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <Link2 size={14} className="text-[#8DEBFF]" />
         <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Remote guest</p>
-        <span
-          className={`text-[11px] font-mono ${
-            iceConnected(ice) || state === 'connected' || state === 'recording'
-              ? 'text-[#7CFFB2]'
-              : state === 'joined'
-                ? 'text-[#FFB86B]'
-                : 'text-[#A9B8C6]'
-          }`}
-        >
-          {presenceLabel(live, ice)}
+        <span className={`text-[11px] font-mono ${TONE_CLASS[presence.tone] || TONE_CLASS.idle}`}>
+          {presence.label}
         </span>
         {live?.guestName && <span className="text-xs text-[#F6FAFC]">{live.guestName}</span>}
+        {ice && <span className="text-[11px] font-mono text-[#7C8B97]">{ice}</span>}
       </div>
+      {live && !live.revoked && !live.expired && (
+        <p className="text-[11px] text-[#7C8B97]">
+          Mic {muteLocked ? 'host muted' : guestMuted ? 'guest muted' : 'live'}
+          {' · '}
+          Cam {camLocked ? 'host off' : guestCamOn ? 'on' : 'off'}
+          {recording ? ' · host Record on' : ''}
+        </p>
+      )}
       {!episodeId ? (
         <p className="text-xs text-[#A9B8C6]">Open an episode to send a guest link.</p>
       ) : (
@@ -358,20 +426,72 @@ export function GuestInvitePanel({
           )}
         </div>
       )}
+      {liveInvite && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void setGuestMute(!muteLocked)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
+              muteLocked
+                ? 'bg-red-500/90 text-white'
+                : 'border border-[#27313B] text-[#B8C4CF]'
+            }`}
+          >
+            {muteLocked ? <Volume2 size={14} /> : <MicOff size={14} />}
+            {muteLocked ? 'Unmute guest' : 'Mute guest'}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void setGuestCamera(camLocked)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
+              camLocked
+                ? 'border border-[#FF7A9A]/50 text-[#FF7A9A]'
+                : 'border border-[#27313B] text-[#B8C4CF]'
+            }`}
+          >
+            {camLocked ? <Video size={14} /> : <VideoOff size={14} />}
+            {camLocked ? 'Allow camera' : 'Camera off'}
+          </button>
+          <button
+            type="button"
+            disabled={busy || reconnecting || !guestInBooth}
+            onClick={() => void retryPeer()}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
+              canRetry
+                ? 'bg-[#53D6FF] text-[#061016]'
+                : 'border border-[#27313B] text-[#B8C4CF]'
+            } disabled:opacity-40`}
+          >
+            <RefreshCw size={14} /> {reconnecting ? 'Reconnecting…' : canRetry ? 'Retry' : 'Reconnect'}
+          </button>
+        </div>
+      )}
       {freshUrl && (
         <p className="text-[11px] font-mono text-[#8DEBFF] break-all">{freshUrl}</p>
       )}
       <p className="text-[11px] text-[#7C8B97]">
-        Guest gets camera on/off, mute, self-view, and a local camera backup. You keep Record, punch,
-        FX, mix, and export. Arm Host so they can hear you.{' '}
+        You can mute the guest and turn their camera off from here — they cannot override until you
+        unmute or allow camera. Guest still has self-view and a local camera backup. You keep Record,
+        punch, FX, mix, and export. Arm Host so they can hear you.{' '}
         {turnConfigured
           ? 'TURN is on for this site.'
-          : 'ICE is STUN plus optional TURN — set TURN_URL, TURN_USERNAME, and TURN_CREDENTIAL on Netlify if a locked NAT fails.'}{' '}
-        If the peer fails, their booth can still upload a camera file.
+          : 'ICE is STUN-only until TURN_URL, TURN_USERNAME, and TURN_CREDENTIAL are set on Netlify.'}{' '}
+        Retry uses the same invite — no new token. If the peer fails, their booth can still upload a
+        camera file.
       </p>
-      {ice === 'failed' && (
-        <div className="rounded-lg border border-[#FF7A9A]/60 bg-[#2A1014] px-3 py-2 text-xs text-[#FFB3C3]">
-          {iceFailedHint(turnConfigured)}
+      {canRetry && (
+        <div className="rounded-lg border border-[#FF7A9A]/60 bg-[#2A1014] px-3 py-2 text-xs text-[#FFB3C3] space-y-2">
+          <p>{iceFailedHint(turnConfigured)}</p>
+          <button
+            type="button"
+            disabled={reconnecting}
+            onClick={() => void retryPeer()}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium disabled:opacity-40"
+          >
+            <RefreshCw size={14} /> {reconnecting ? 'Reconnecting…' : 'Retry connection'}
+          </button>
         </div>
       )}
       {error && <p className="text-xs text-[#FF7A9A]">{error}</p>}

@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server'
 import { denyGuest, loadInviteByToken, sessionPayload, touchInvite } from '@/lib/podcast/guest-access'
-import type { GuestSignal } from '@/lib/podcast/guest-types'
+import { GUEST_SIGNAL_KIND_SET, type GuestSignal } from '@/lib/podcast/guest-types'
 
 export const dynamic = 'force-dynamic'
 
 const ROLES = new Set(['admin', 'guest'])
-const KINDS = new Set(['offer', 'answer', 'ice', 'hangup', 'record', 'talkback'])
 
 export async function GET(
   request: Request,
@@ -59,7 +58,7 @@ export async function POST(
       payload?: Record<string, unknown>
     }
     if (!ROLES.has(String(body.role))) return NextResponse.json({ error: 'role required' }, { status: 400 })
-    if (!KINDS.has(String(body.kind))) return NextResponse.json({ error: 'Unknown signal' }, { status: 400 })
+    if (!GUEST_SIGNAL_KIND_SET.has(String(body.kind))) return NextResponse.json({ error: 'Unknown signal' }, { status: 400 })
     const { error } = await supabase.from('podcast_guest_signals').insert({
       invite_id: row.id,
       from_role: body.role,

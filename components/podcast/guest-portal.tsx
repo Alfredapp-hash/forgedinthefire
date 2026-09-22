@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Download, Headphones, Mic2, PhoneOff, Video, VideoOff, Volume2, VolumeX } from 'lucide-react'
+import { Download, Headphones, Mic2, PhoneOff, RefreshCw, Video, VideoOff, Volume2, VolumeX } from 'lucide-react'
 import { CameraPreview } from '@/components/podcast/camera-preview'
 import { openCameraStream, startCameraCapture, type CameraCapture } from '@/lib/podcast/camera'
 import { attachInputMeter } from '@/lib/podcast/record-session'
@@ -13,7 +13,7 @@ import {
   stopStreams,
   type LaneCapture,
 } from '@/lib/podcast/capture'
-import type { GuestInvitePublic } from '@/lib/podcast/guest-types'
+import { describeGuestSession, type GuestInvitePublic } from '@/lib/podcast/guest-types'
 import {
   fetchGuestSession,
   finalizeGuestTake,
@@ -59,7 +59,10 @@ export function GuestPortal({
   const [camId, setCamId] = useState('')
   const [camOn, setCamOn] = useState(false)
   const [camStream, setCamStream] = useState<MediaStream | null>(null)
+  const [camLocked, setCamLocked] = useState(false)
   const [muted, setMuted] = useState(false)
+  const [muteLocked, setMuteLocked] = useState(false)
+  const [reconnecting, setReconnecting] = useState(false)
   const [peak, setPeak] = useState(0)
   const [clip, setClip] = useState(false)
   const [hostPeak, setHostPeak] = useState(0)
@@ -84,6 +87,13 @@ export function GuestPortal({
   const stopMeterRef = useRef<(() => void) | null>(null)
   const stopHostMeterRef = useRef<(() => void) | null>(null)
   const backupUrlRef = useRef<string | null>(null)
+  const mutedRef = useRef(false)
+  const muteLockedRef = useRef(false)
+  const camLockedRef = useRef(false)
+  const startingPeerRef = useRef(false)
+  mutedRef.current = muted
+  muteLockedRef.current = muteLocked
+  camLockedRef.current = camLocked
 
   useEffect(() => {
     setMounted(true)
@@ -170,6 +180,7 @@ export function GuestPortal({
   }
 
   async function toggleCamera() {
+    if (camLockedRef.current && !camOn) return
     setError(null)
     try {
       if (camOn) await closeGuestCamera()
@@ -177,6 +188,11 @@ export function GuestPortal({
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Camera access was blocked')
     }
+  }
+
+  function toggleMute() {
+    if (muteLockedRef.current) return
+    setMuted((v) => !v)
   }
 
   async function changeCameraDevice(deviceId: string) {
@@ -213,41 +229,74 @@ export function GuestPortal({
   }
 
   async function startPeer() {
-    closePeer(peerRef.current, false)
-    const cfg = iceCfgRef.current || (await loadStudioIceServers())
-    iceCfgRef.current = cfg
-    setTurnConfigured(cfg.turnConfigured)
-    const peer = createStudioPeer(cfg.iceServers)
-    peerRef.current = peer
-    ensureVideoTransceiver(peer, 'sendonly')
-    if (streamRef.current) attachLocalAudio(peer, streamRef.current)
-    if (camStreamRef.current) attachLocalVideo(peer, camStreamRef.current)
-    peer.onicecandidate = (event) => {
-      if (event.candidate) void pushGuestSignal(token, 'ice', { candidate: event.candidate.toJSON() })
-    }
-    peer.ontrack = (event) => {
-      const stream = event.streams[0] || new MediaStream([event.track])
-      hostStreamRef.current = stream
-      const audio = hostAudioRef.current
-      if (audio) {
-        audio.srcObject = stream
-        void audio.play().catch(() => {})
+    if (startingPeerRef.current) return
+    startingPeerRef.current = true
+    try {
+      closePeer(peerRef.current, false)
+      const cfg = iceCfgRef.current || (await loadStudioIceServers())
+      iceCfgRef.current = cfg
+      setTurnConfigured(cfg.turnConfigured)
+      const peer = createStudioPeer(cfg.iceServers)
+      peerRef.current = peer
+      ensureVideoTransceiver(peer, 'sendonly')
+      if (streamRef.current) {
+        attachLocalAudio(peer, streamRef.current)
+        const track = streamRef.current.getAudioTracks()[0]
+        if (track) track.enabled = !mutedRef.current
       }
-      stopHostMeterRef.current?.()
-      stopHostMeterRef.current = attachInputMeter(stream, setHostPeak)
-    }
-    peer.oniceconnectionstatechange = () => {
-      setIce(peer.iceConnectionState)
-      if (peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed') {
+      if (camStreamRef.current && !camLockedRef.current) attachLocalVideo(peer, camStreamRef.current)
+      peer.onicecandidate = (event) => {
+        if (event.candidate) void pushGuestSignal(token, 'ice', { candidate: event.candidate.toJSON() })
+      }
+      peer.ontrack = (event) => {
+        const stream = event.streams[0] || new MediaStream([event.track])
+        hostStreamRef.current = stream
+        const audio = hostAudioRef.current
+        if (audio) {
+          audio.srcObject = stream
+          void audio.play().catch(() => {})
+        }
+        stopHostMeterRef.current?.()
+        stopHostMeterRef.current = attachInputMeter(stream, setHostPeak)
+      }
+      const markLive = () => {
         void postGuestSession(token, { action: 'connected' }).catch(() => {})
-        if (camStreamRef.current) void pushGuestSignal(token, 'camera', { on: true }).catch(() => {})
+        if (camStreamRef.current && !camLockedRef.current) {
+          void pushGuestSignal(token, 'camera', { on: true }).catch(() => {})
+        }
+        void pushGuestSignal(token, 'mute', { on: mutedRef.current }).catch(() => {})
+        setError(null)
+        setReconnecting(false)
       }
-      if (peer.iceConnectionState === 'failed') {
-        setError(iceFailedHint(iceCfgRef.current?.turnConfigured || false))
+      peer.oniceconnectionstatechange = () => {
+        setIce(peer.iceConnectionState)
+        if (peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed') markLive()
+        if (peer.iceConnectionState === 'failed') {
+          setError(iceFailedHint(iceCfgRef.current?.turnConfigured || false))
+        }
       }
+      peer.onconnectionstatechange = () => {
+        if (peer.connectionState === 'failed') {
+          setError(iceFailedHint(iceCfgRef.current?.turnConfigured || false))
+        }
+      }
+      const offer = await makeOffer(peer, false)
+      if (offer) await pushGuestSignal(token, 'offer', { type: offer.type, sdp: offer.sdp })
+    } finally {
+      startingPeerRef.current = false
     }
-    const offer = await makeOffer(peer, false)
-    if (offer) await pushGuestSignal(token, 'offer', { type: offer.type, sdp: offer.sdp })
+  }
+
+  async function retryPeer() {
+    setError(null)
+    setReconnecting(true)
+    setOk('Reconnecting on this invite…')
+    try {
+      await startPeer()
+    } catch (err) {
+      setReconnecting(false)
+      setError(err instanceof Error ? err.message : 'Could not reconnect')
+    }
   }
 
   useEffect(() => {
@@ -272,6 +321,23 @@ export function GuestPortal({
             setRecording(on)
             if (on) void startLocalTake()
             else void stopLocalTake()
+          }
+          if (signal.kind === 'mute') {
+            const on = Boolean(signal.payload.on)
+            setMuteLocked(on)
+            setMuted(on)
+          }
+          if (signal.kind === 'camera') {
+            if (Boolean(signal.payload.on)) {
+              setCamLocked(false)
+            } else {
+              setCamLocked(true)
+              await closeGuestCamera()
+            }
+          }
+          if (signal.kind === 'reconnect') {
+            setOk('Host asked to reconnect')
+            void retryPeer()
           }
           if (signal.kind === 'hangup') {
             setError('The host ended this invite')
@@ -301,7 +367,10 @@ export function GuestPortal({
   useEffect(() => {
     const track = streamRef.current?.getAudioTracks()[0]
     if (track) track.enabled = !muted
-  }, [muted])
+    if (phase === 'booth') {
+      void pushGuestSignal(token, 'mute', { on: muted }).catch(() => {})
+    }
+  }, [muted, phase, token])
 
   async function startLocalTake() {
     const stream = streamRef.current
@@ -401,8 +470,33 @@ export function GuestPortal({
     setError('You left the booth')
   }
 
-  const linked = ice === 'connected' || ice === 'completed'
-  const iceFailed = ice === 'failed'
+  const presence = describeGuestSession({
+    side: 'guest',
+    hasInvite: Boolean(session),
+    state: session?.state,
+    ice,
+    recording,
+  })
+  const iceFailed = presence.phase === 'failed'
+  const canRetry = presence.phase === 'failed' || presence.phase === 'dropped'
+  const toneClass =
+    presence.tone === 'rec'
+      ? 'border-red-500/70 bg-[#2A1014]'
+      : presence.tone === 'fail'
+        ? 'border-[#FF7A9A] bg-[#2A1014]'
+        : presence.tone === 'warn'
+          ? 'border-[#FFB86B]/70 bg-[#24180C]'
+          : presence.tone === 'live'
+            ? 'border-[#7CFFB2]/40 bg-[#0C1814]'
+            : 'border-[#27313B] bg-[#11161C]'
+  const labelTone =
+    presence.tone === 'live'
+      ? 'text-[#7CFFB2]'
+      : presence.tone === 'rec' || presence.tone === 'fail'
+        ? 'text-[#FF7A9A]'
+        : presence.tone === 'wait' || presence.tone === 'warn'
+          ? 'text-[#FFB86B]'
+          : 'text-[#A9B8C6]'
 
   return (
     <div className="fixed inset-0 z-[80] bg-[#0C141C] text-[#F6FAFC] overflow-auto">
@@ -520,29 +614,30 @@ export function GuestPortal({
 
         {phase === 'booth' && (
           <div className="space-y-4">
-            <div
-              className={`rounded-2xl border px-4 py-3 flex items-center justify-between ${
-                recording ? 'border-red-500/70 bg-[#2A1014]' : iceFailed ? 'border-[#FF7A9A] bg-[#2A1014]' : 'border-[#27313B] bg-[#11161C]'
-              }`}
-            >
-              <p className="text-sm font-medium">
-                {recording
-                  ? '● REC — host is rolling'
-                  : iceFailed
-                    ? 'Peer failed'
-                    : linked
-                      ? 'Live with host'
-                      : 'Waiting for host'}
-              </p>
-              <p className="text-[11px] font-mono text-[#A9B8C6]">{ice || 'connecting'}</p>
+            <div className={`rounded-2xl border px-4 py-3 flex items-center justify-between gap-3 ${toneClass}`}>
+              <div>
+                <p className={`text-sm font-medium ${labelTone}`}>{presence.label}</p>
+                <p className="text-[11px] text-[#7C8B97] mt-0.5">
+                  {recording ? 'Host Record is on. Keep this tab open.' : 'Host still owns Record, punch, and export.'}
+                </p>
+              </div>
+              <p className="text-[11px] font-mono text-[#A9B8C6] shrink-0">{ice || 'waiting'}</p>
             </div>
-            {iceFailed && (
-              <div className="rounded-xl border border-[#FF7A9A]/70 bg-[#2A1014] px-4 py-3 text-sm text-[#FFB3C3] space-y-1">
+            {(iceFailed || presence.phase === 'dropped') && (
+              <div className="rounded-xl border border-[#FF7A9A]/70 bg-[#2A1014] px-4 py-3 text-sm text-[#FFB3C3] space-y-2">
                 <p>{iceFailedHint(turnConfigured)}</p>
                 <p className="text-[11px] text-[#A9B8C6]">
-                  Keep this tab open. When the host punches Record your local camera backup still
-                  uploads. Try a phone hotspot if you need live talk.
+                  Same invite — no new link. Keep this tab open. When the host punches Record your
+                  local camera backup still uploads.
                 </p>
+                <button
+                  type="button"
+                  disabled={reconnecting}
+                  onClick={() => void retryPeer()}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium disabled:opacity-40"
+                >
+                  <RefreshCw size={14} /> {reconnecting ? 'Reconnecting…' : 'Retry connection'}
+                </button>
               </div>
             )}
 
@@ -555,31 +650,45 @@ export function GuestPortal({
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    disabled={recording}
+                    disabled={recording || (camLocked && !camOn)}
                     onClick={() => void toggleCamera()}
                     className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
-                      camOn ? 'bg-[#53D6FF] text-[#061016]' : 'border border-[#27313B] text-[#B8C4CF]'
+                      camLocked
+                        ? 'border border-[#FF7A9A]/50 text-[#FF7A9A]'
+                        : camOn
+                          ? 'bg-[#53D6FF] text-[#061016]'
+                          : 'border border-[#27313B] text-[#B8C4CF]'
                     }`}
                   >
                     {camOn ? <Video size={14} /> : <VideoOff size={14} />}
-                    {camOn ? 'Cam on' : 'Cam'}
+                    {camLocked ? 'Host cam off' : camOn ? 'Cam on' : 'Cam'}
                   </button>
                   <button
                     type="button"
-                    onClick={() => setMuted((v) => !v)}
+                    disabled={muteLocked}
+                    onClick={() => toggleMute()}
                     className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
                       muted ? 'bg-red-500/90 text-white' : 'border border-[#27313B] text-[#B8C4CF]'
                     }`}
                   >
                     {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-                    {muted ? 'Muted' : 'Mute'}
+                    {muteLocked ? 'Host muted you' : muted ? 'Muted' : 'Mute'}
                   </button>
                 </div>
               </div>
+              {(muteLocked || camLocked) && (
+                <p className="text-[11px] text-[#FFB86B]">
+                  {muteLocked && camLocked
+                    ? 'Host muted you and turned the camera off. You cannot override until they unmute or allow camera.'
+                    : muteLocked
+                      ? 'Host muted you. Wait for them to unmute — you cannot unmute from here.'
+                      : 'Host turned your camera off. Wait for them to allow camera.'}
+                </p>
+              )}
               {camOn && (
                 <select
                   value={camId}
-                  disabled={recording}
+                  disabled={recording || camLocked}
                   onChange={(e) => void changeCameraDevice(e.target.value)}
                   className="w-full rounded-lg border border-[#27313B] bg-[#151B22] px-3 py-2 text-sm text-[#B8C4CF]"
                 >
@@ -610,6 +719,16 @@ export function GuestPortal({
             </div>
 
             <div className="flex flex-wrap gap-2">
+              {canRetry && (
+                <button
+                  type="button"
+                  disabled={reconnecting}
+                  onClick={() => void retryPeer()}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF] disabled:opacity-40"
+                >
+                  <RefreshCw size={14} /> {reconnecting ? 'Reconnecting…' : 'Retry'}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => void leave()}

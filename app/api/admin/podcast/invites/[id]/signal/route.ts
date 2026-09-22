@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server'
 import { studioError, withStudioAdmin } from '@/lib/studio/api'
 import { adminInvite, inviteIsLive } from '@/lib/podcast/guest-invite'
-import type { GuestInviteRow, GuestSignal } from '@/lib/podcast/guest-types'
-
-const KINDS = new Set(['offer', 'answer', 'ice', 'hangup', 'record', 'talkback'])
+import { GUEST_SIGNAL_KIND_SET, type GuestInviteRow, type GuestSignal } from '@/lib/podcast/guest-types'
 
 export async function GET(
   request: Request,
@@ -45,7 +43,7 @@ export async function POST(
     const { supabase } = await withStudioAdmin()
     const { id } = await context.params
     const body = (await request.json()) as { kind?: string; payload?: Record<string, unknown> }
-    if (!KINDS.has(String(body.kind))) return NextResponse.json({ error: 'Unknown signal' }, { status: 400 })
+    if (!GUEST_SIGNAL_KIND_SET.has(String(body.kind))) return NextResponse.json({ error: 'Unknown signal' }, { status: 400 })
     const { data: row } = await supabase.from('podcast_guest_invites').select('id, revoked_at, expires_at').eq('id', id).maybeSingle()
     if (!row) return NextResponse.json({ error: 'Invite not found' }, { status: 404 })
     if (!inviteIsLive(row as GuestInviteRow)) return NextResponse.json({ error: 'Invite is not live' }, { status: 410 })
