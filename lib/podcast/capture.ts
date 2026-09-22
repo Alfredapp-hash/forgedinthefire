@@ -58,11 +58,13 @@ export function recorderMime(): string {
 
 export type LaneCapture = {
   key: string
-  recorder: MediaRecorder
+  recorder: MediaRecorder | null
+  kind: 'worklet' | 'media-recorder'
+  stop: () => void
   done: Promise<Blob>
 }
 
-export function startLaneCapture(key: string, stream: MediaStream): LaneCapture {
+function startMediaRecorderCapture(key: string, stream: MediaStream): LaneCapture {
   const audioOnly = new MediaStream(stream.getAudioTracks())
   const mime = recorderMime()
   const recorder = mime ? new MediaRecorder(audioOnly, { mimeType: mime }) : new MediaRecorder(audioOnly)
@@ -77,7 +79,30 @@ export function startLaneCapture(key: string, stream: MediaStream): LaneCapture 
     recorder.onerror = () => reject(new Error('Recorder failed'))
   })
   recorder.start(250)
-  return { key, recorder, done }
+  return {
+    key,
+    recorder,
+    kind: 'media-recorder',
+    stop: () => {
+      if (recorder.state !== 'inactive') recorder.stop()
+    },
+    done,
+  }
+}
+
+export async function startLaneCapture(key: string, stream: MediaStream): Promise<LaneCapture> {
+  try {
+    const { startWorkletCapture } = await import('@/lib/podcast/worklet-capture')
+    const worklet = await startWorkletCapture(key, stream)
+    if (worklet) return worklet
+  } catch {
+    /* Chrome-only path; MediaRecorder stays the fallback */
+  }
+  return startMediaRecorderCapture(key, stream)
+}
+
+export function stopLaneCapture(capture: LaneCapture) {
+  capture.stop()
 }
 
 export function stopStreams(streams: Iterable<MediaStream | null | undefined>) {

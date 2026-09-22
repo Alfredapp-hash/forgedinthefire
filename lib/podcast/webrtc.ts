@@ -1,27 +1,53 @@
 /**
  * Two-person guest path without a paid SFU.
  *
- * Live talk + admin punch use P2P WebRTC (STUN only). Guest mic + optional
- * camera arrive on the admin tab as one MediaStream. Audio is recorded with
- * startLaneCapture; inbound video is a parallel camera file on the same punch
- * clock. Do not mux video into the take AudioBuffer or episode.audio_url.
+ * Live talk + admin punch use P2P WebRTC. ICE starts with public STUN.
+ * TURN is optional via /api/studio/ice (TURN_URL, TURN_USERNAME, TURN_CREDENTIAL).
+ * Guest mic + optional camera arrive on the admin tab as one MediaStream.
+ * Audio is recorded with startLaneCapture; inbound video is a parallel camera
+ * file on the same punch clock. Do not mux video into the take AudioBuffer
+ * or episode.audio_url.
  *
- * Tradeoff: no TURN. Most home NATs work; corporate / symmetric NAT will fail
- * more often once video is on. Guest also records a local camera backup they
- * can upload if the live peer is thin or never connects.
+ * Guest also records a local camera backup they can upload if ICE fails.
  */
 
-export const ICE_SERVERS: RTCIceServer[] = [
+export const STUN_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
 ]
 
-export const ICE_FAILED_HINT =
-  'Peer failed. This booth is STUN-only — a strict office NAT often cannot connect. Stay on this tab for a local camera backup, or try a phone hotspot.'
+/** @deprecated use STUN_SERVERS or loadStudioIceServers() */
+export const ICE_SERVERS = STUN_SERVERS
 
-export function createStudioPeer() {
+export const ICE_FAILED_HINT =
+  'Peer failed. This booth is STUN-only until TURN_URL, TURN_USERNAME, and TURN_CREDENTIAL are set on Netlify. Stay on this tab for a local camera backup, or try a phone hotspot.'
+
+export function iceFailedHint(turnConfigured: boolean) {
+  return turnConfigured
+    ? 'Peer failed even with TURN. Stay on this tab for a local camera backup, or try another network.'
+    : ICE_FAILED_HINT
+}
+
+export type StudioIceConfig = {
+  iceServers: RTCIceServer[]
+  turnConfigured: boolean
+}
+
+export async function loadStudioIceServers(): Promise<StudioIceConfig> {
+  try {
+    const res = await fetch('/api/studio/ice', { cache: 'no-store' })
+    if (!res.ok) throw new Error('ice')
+    const data = (await res.json()) as StudioIceConfig
+    if (Array.isArray(data.iceServers) && data.iceServers.length) return data
+  } catch {
+    /* STUN-only until the route is up */
+  }
+  return { iceServers: STUN_SERVERS, turnConfigured: false }
+}
+
+export function createStudioPeer(iceServers: RTCIceServer[] = STUN_SERVERS) {
   return new RTCPeerConnection({
-    iceServers: ICE_SERVERS,
+    iceServers: iceServers.length ? iceServers : STUN_SERVERS,
     iceCandidatePoolSize: 2,
   })
 }

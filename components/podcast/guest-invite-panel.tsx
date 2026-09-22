@@ -18,7 +18,9 @@ import {
   closePeer,
   collectRemoteStream,
   createStudioPeer,
-  ICE_FAILED_HINT,
+  iceFailedHint,
+  loadStudioIceServers,
+  type StudioIceConfig,
 } from '@/lib/podcast/webrtc'
 
 type Props = {
@@ -60,12 +62,29 @@ export function GuestInvitePanel({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [ice, setIce] = useState<RTCIceConnectionState | ''>('')
+  const [turnConfigured, setTurnConfigured] = useState(false)
+  const iceCfgRef = useRef<StudioIceConfig | null>(null)
   const peerRef = useRef<RTCPeerConnection | null>(null)
   const afterRef = useRef(0)
   const hostRef = useRef<MediaStream | null>(null)
   hostRef.current = hostStream
   const liveId = invites.find((i) => !i.revoked && !i.expired)?.id || null
   const live = invites.find((i) => i.id === liveId) || null
+
+  useEffect(() => {
+    void loadStudioIceServers().then((cfg) => {
+      iceCfgRef.current = cfg
+      setTurnConfigured(cfg.turnConfigured)
+    })
+  }, [])
+
+  async function readyIce() {
+    if (iceCfgRef.current) return iceCfgRef.current
+    const cfg = await loadStudioIceServers()
+    iceCfgRef.current = cfg
+    setTurnConfigured(cfg.turnConfigured)
+    return cfg
+  }
 
   useEffect(() => {
     if (!episodeId) return
@@ -143,7 +162,8 @@ export function GuestInvitePanel({
       const existing = peerRef.current
       const reuse =
         existing && existing.signalingState !== 'closed' && existing.connectionState !== 'closed'
-      const peer = reuse ? existing : (resetPeer(inviteId), ensurePeer(inviteId))
+      const cfg = await readyIce()
+      const peer = reuse ? existing : (resetPeer(inviteId, cfg.iceServers), ensurePeer(inviteId, cfg.iceServers))
       const desc = await answerOffer(peer, payload as unknown as RTCSessionDescriptionInit)
       if (desc) await pushAdminSignal(inviteId, 'answer', { type: desc.type, sdp: desc.sdp })
       return
@@ -170,20 +190,20 @@ export function GuestInvitePanel({
     return state === 'connected' || state === 'completed'
   }
 
-  function resetPeer(inviteId: string) {
+  function resetPeer(inviteId: string, iceServers?: RTCIceServer[]) {
     closePeer(peerRef.current, false)
     peerRef.current = null
     onRemoteStream(null)
     onRemoteVideo?.(false)
-    const peer = createStudioPeer()
+    const peer = createStudioPeer(iceServers || iceCfgRef.current?.iceServers)
     peerRef.current = peer
     wirePeer(inviteId, peer)
     if (hostRef.current) attachLocalAudio(peer, hostRef.current)
   }
 
-  function ensurePeer(inviteId: string) {
+  function ensurePeer(inviteId: string, iceServers?: RTCIceServer[]) {
     if (peerRef.current) return peerRef.current
-    const peer = createStudioPeer()
+    const peer = createStudioPeer(iceServers || iceCfgRef.current?.iceServers)
     peerRef.current = peer
     wirePeer(inviteId, peer)
     if (hostRef.current) attachLocalAudio(peer, hostRef.current)
@@ -213,7 +233,7 @@ export function GuestInvitePanel({
         void setAdminInviteState(inviteId, 'connected').catch(() => {})
       }
       if (peer.iceConnectionState === 'failed') {
-        setError(ICE_FAILED_HINT)
+        setError(iceFailedHint(iceCfgRef.current?.turnConfigured || false))
         onRemoteStream(null)
         onRemoteVideo?.(false)
       }
@@ -343,9 +363,17 @@ export function GuestInvitePanel({
       )}
       <p className="text-[11px] text-[#7C8B97]">
         Guest gets camera on/off, mute, self-view, and a local camera backup. You keep Record, punch,
-        FX, mix, and export. Arm Host so they can hear you. STUN-only — no TURN. If the peer fails,
-        their booth can still upload a camera file.
+        FX, mix, and export. Arm Host so they can hear you.{' '}
+        {turnConfigured
+          ? 'TURN is on for this site.'
+          : 'ICE is STUN plus optional TURN — set TURN_URL, TURN_USERNAME, and TURN_CREDENTIAL on Netlify if a locked NAT fails.'}{' '}
+        If the peer fails, their booth can still upload a camera file.
       </p>
+      {ice === 'failed' && (
+        <div className="rounded-lg border border-[#FF7A9A]/60 bg-[#2A1014] px-3 py-2 text-xs text-[#FFB3C3]">
+          {iceFailedHint(turnConfigured)}
+        </div>
+      )}
       {error && <p className="text-xs text-[#FF7A9A]">{error}</p>}
     </div>
   )

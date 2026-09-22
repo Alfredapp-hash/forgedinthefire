@@ -90,9 +90,11 @@ import {
 import {
   openInputStreams,
   startLaneCapture,
+  stopLaneCapture,
   stopStreams,
   type LaneCapture,
 } from '@/lib/podcast/capture'
+import { renderPictureMix, type PictureMode } from '@/lib/podcast/picture'
 import { applyFollowTalker } from '@/lib/podcast/auto-mix'
 import { gainForTargetLufs, measureLoudness, PODCAST_LUFS } from '@/lib/podcast/lufs'
 import { slugFile, zipStore } from '@/lib/podcast/zip'
@@ -214,7 +216,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     episodeId ? 'checking' : 'open',
   )
 
-  const recorderRef = useRef<MediaRecorder[]>([])
+  const recorderRef = useRef<LaneCapture[]>([])
   const capturesRef = useRef<LaneCapture[]>([])
   const cameraCapturesRef = useRef<CameraCapture[]>([])
   const cameraStreamsRef = useRef<Record<string, MediaStream>>({})
@@ -997,9 +999,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     if (recordingRef.current) {
       if (!recLiveRef.current) {
         abortRef.current?.abort()
-        capturesRef.current.forEach((c) => {
-          if (c.recorder.state !== 'inactive') c.recorder.stop()
-        })
+        capturesRef.current.forEach(stopLaneCapture)
         stopCameraRecorders()
         cameraCapturesRef.current = []
         finishRecCleanup()
@@ -1009,9 +1009,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         setOk('Record cancelled')
         return
       }
-      capturesRef.current.forEach((c) => {
-        if (c.recorder.state !== 'inactive') c.recorder.stop()
-      })
+      capturesRef.current.forEach(stopLaneCapture)
       stopCameraRecorders()
       return
     }
@@ -1132,15 +1130,17 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
 
       const recTrim = Math.max(0, prerollSec)
-      const captures = jobs.map((job) => {
-        const stream = streams.get(job.key)
-        if (!stream) {
-          throw new Error(`No microphone stream for ${job.sharedNames.join(' + ') || 'this voice'}`)
-        }
-        return { job, capture: startLaneCapture(job.lane.id, stream) }
-      })
+      const captures = await Promise.all(
+        jobs.map(async (job) => {
+          const stream = streams.get(job.key)
+          if (!stream) {
+            throw new Error(`No microphone stream for ${job.sharedNames.join(' + ') || 'this voice'}`)
+          }
+          return { job, capture: await startLaneCapture(job.lane.id, stream) }
+        }),
+      )
       capturesRef.current = captures.map((c) => c.capture)
-      recorderRef.current = captures.map((c) => c.capture.recorder)
+      recorderRef.current = captures.map((c) => c.capture)
       const camJobs = liveCameraJobs()
       const camCaptures = camJobs.map((job) => startCameraCapture(job.person.id, job.stream))
       cameraCapturesRef.current = camCaptures
@@ -1319,10 +1319,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       recLiveRef.current = true
       recStartedAtRef.current = performance.now()
       const camCount = cameraCapturesRef.current.length
+      const punchKind = captures.some((c) => c.capture.kind === 'worklet')
+        ? ' · AudioWorklet punch'
+        : ' · MediaRecorder punch'
       setOk(
         `● REC ${recLabel} at ${formatClock(punch)}${cueEnabled ? ' · mix in headphones' : ''}${
           camCount ? ` · ${camCount} camera${camCount === 1 ? '' : 's'}` : ''
-        }`,
+        }${punchKind}`,
       )
     } catch (err) {
       finishRecCleanup()
@@ -1704,6 +1707,47 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       setSelectedId(master.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Master bus failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function downloadPicture(mode: PictureMode) {
+    const host = cameraClips.find((c) => c.personId === 'host') || cameraClips[0] || null
+    const guest = cameraClips.find((c) => c.personId === 'guest') || null
+    if (!host && !guest) {
+      setError('Record a camera file first — picture export is a local canvas mix, not the RSS')
+      return
+    }
+    setBusy(mode === 'pip' ? 'Rendering Host + Guest PIP…' : 'Rendering A-roll…')
+    setError(null)
+    try {
+      const prepared = await tracksWithInserts(tracks)
+      let mixed = mixdownTracks(prepared)
+      mixed = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
+      if (matchLufs) mixed = applyGainAndFades(mixed, gainForTargetLufs(measureLoudness(mixed).lufs, PODCAST_LUFS), 0, 0)
+      const blob = await renderPictureMix({
+        mode,
+        host,
+        guest: mode === 'pip' ? guest : null,
+        audio: mixed,
+        onProgress: (ratio) => {
+          setBusy(
+            `${mode === 'pip' ? 'Rendering PIP' : 'Rendering A-roll'} ${Math.round(ratio * 100)}% — keep this tab open`,
+          )
+        },
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${slugFile(title)}-${mode === 'pip' ? 'pip' : 'a-roll'}.webm`
+      a.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 4000)
+      setOk(
+        `${mode === 'pip' ? 'PIP' : 'A-roll'} downloaded locally — public RSS is still the audio mix`,
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Picture export failed')
     } finally {
       setBusy(null)
     }
@@ -3100,6 +3144,24 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             onClick={() => void downloadStems()}
           >
             {busy?.includes('stems') ? busy : 'Download stems zip'}
+          </button>
+          <button
+            type="button"
+            className={btn}
+            disabled={!cameraClips.length || Boolean(busy)}
+            title="Local canvas of the host camera + audio mix. Does not change RSS."
+            onClick={() => void downloadPicture('a-roll')}
+          >
+            {busy?.includes('A-roll') ? busy : 'Download A-roll'}
+          </button>
+          <button
+            type="button"
+            className={btn}
+            disabled={!cameraClips.some((c) => c.personId === 'guest') || Boolean(busy)}
+            title="Host full frame, guest PIP. Local file only — audio_url stays the mix."
+            onClick={() => void downloadPicture('pip')}
+          >
+            {busy?.includes('PIP') ? busy : 'Download PIP'}
           </button>
         </div>
 

@@ -159,14 +159,23 @@ export function CameraClipReview({ clip, label, onDiscard }: ReviewProps) {
         <p className="text-[11px] text-[#B8C4CF]">
           {label} camera · {formatClock(clip.offset)} · {formatClock(clip.duration)} · {formatBytes(clip.bytes)}
         </p>
-        <p className="text-[10px] text-[#7C8B97]">Separate file — not in the RSS mix.</p>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
-          onClick={onDiscard}
-        >
-          Discard camera take
-        </button>
+        <p className="text-[10px] text-[#7C8B97]">Separate file — not in the RSS mix. Download stays local unless you upload it yourself.</p>
+        <div className="flex flex-wrap gap-2">
+          <a
+            href={clip.url}
+            download={`camera-${clip.personId}-${clip.id}.${clip.mime.includes('mp4') ? 'mp4' : 'webm'}`}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
+          >
+            Download camera file
+          </a>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
+            onClick={onDiscard}
+          >
+            Discard camera take
+          </button>
+        </div>
       </div>
     </div>
   )

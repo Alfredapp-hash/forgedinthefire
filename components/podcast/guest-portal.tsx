@@ -5,7 +5,14 @@ import { Download, Headphones, Mic2, PhoneOff, Video, VideoOff, Volume2, VolumeX
 import { CameraPreview } from '@/components/podcast/camera-preview'
 import { openCameraStream, startCameraCapture, type CameraCapture } from '@/lib/podcast/camera'
 import { attachInputMeter } from '@/lib/podcast/record-session'
-import { openInputStream, recorderMime, startLaneCapture, stopStreams } from '@/lib/podcast/capture'
+import {
+  openInputStream,
+  recorderMime,
+  startLaneCapture,
+  stopLaneCapture,
+  stopStreams,
+  type LaneCapture,
+} from '@/lib/podcast/capture'
 import type { GuestInvitePublic } from '@/lib/podcast/guest-types'
 import {
   fetchGuestSession,
@@ -24,7 +31,9 @@ import {
   createStudioPeer,
   detachLocalVideo,
   ensureVideoTransceiver,
-  ICE_FAILED_HINT,
+  iceFailedHint,
+  loadStudioIceServers,
+  type StudioIceConfig,
   makeOffer,
 } from '@/lib/podcast/webrtc'
 
@@ -67,7 +76,10 @@ export function GuestPortal({
   const hostAudioRef = useRef<HTMLAudioElement | null>(null)
   const peerRef = useRef<RTCPeerConnection | null>(null)
   const afterRef = useRef(0)
-  const captureRef = useRef<ReturnType<typeof startLaneCapture> | null>(null)
+  const captureRef = useRef<LaneCapture | null>(null)
+  const captureStartRef = useRef<Promise<LaneCapture> | null>(null)
+  const iceCfgRef = useRef<StudioIceConfig | null>(null)
+  const [turnConfigured, setTurnConfigured] = useState(false)
   const camCaptureRef = useRef<CameraCapture | null>(null)
   const stopMeterRef = useRef<(() => void) | null>(null)
   const stopHostMeterRef = useRef<(() => void) | null>(null)
@@ -75,6 +87,10 @@ export function GuestPortal({
 
   useEffect(() => {
     setMounted(true)
+    void loadStudioIceServers().then((cfg) => {
+      iceCfgRef.current = cfg
+      setTurnConfigured(cfg.turnConfigured)
+    })
   }, [])
 
   useEffect(() => {
@@ -198,7 +214,10 @@ export function GuestPortal({
 
   async function startPeer() {
     closePeer(peerRef.current, false)
-    const peer = createStudioPeer()
+    const cfg = iceCfgRef.current || (await loadStudioIceServers())
+    iceCfgRef.current = cfg
+    setTurnConfigured(cfg.turnConfigured)
+    const peer = createStudioPeer(cfg.iceServers)
     peerRef.current = peer
     ensureVideoTransceiver(peer, 'sendonly')
     if (streamRef.current) attachLocalAudio(peer, streamRef.current)
@@ -224,7 +243,7 @@ export function GuestPortal({
         if (camStreamRef.current) void pushGuestSignal(token, 'camera', { on: true }).catch(() => {})
       }
       if (peer.iceConnectionState === 'failed') {
-        setError(ICE_FAILED_HINT)
+        setError(iceFailedHint(iceCfgRef.current?.turnConfigured || false))
       }
     }
     const offer = await makeOffer(peer, false)
@@ -251,7 +270,7 @@ export function GuestPortal({
           if (signal.kind === 'record') {
             const on = Boolean(signal.payload.on)
             setRecording(on)
-            if (on) startLocalTake()
+            if (on) void startLocalTake()
             else void stopLocalTake()
           }
           if (signal.kind === 'hangup') {
@@ -284,10 +303,12 @@ export function GuestPortal({
     if (track) track.enabled = !muted
   }, [muted])
 
-  function startLocalTake() {
+  async function startLocalTake() {
     const stream = streamRef.current
-    if (stream && !captureRef.current) {
-      captureRef.current = startLaneCapture('guest', stream)
+    if (stream && !captureRef.current && !captureStartRef.current) {
+      captureStartRef.current = startLaneCapture('guest', stream)
+      captureRef.current = await captureStartRef.current
+      captureStartRef.current = null
     }
     const cam = camStreamRef.current
     if (cam && !camCaptureRef.current) {
@@ -312,11 +333,15 @@ export function GuestPortal({
   }
 
   async function stopLocalTake() {
+    if (captureStartRef.current) {
+      captureRef.current = await captureStartRef.current.catch(() => null)
+      captureStartRef.current = null
+    }
     const capture = captureRef.current
     const camCapture = camCaptureRef.current
     captureRef.current = null
     camCaptureRef.current = null
-    if (capture && capture.recorder.state !== 'inactive') capture.recorder.stop()
+    if (capture) stopLaneCapture(capture)
     if (camCapture && camCapture.recorder.state !== 'inactive') camCapture.recorder.stop()
     if (!capture && !camCapture) return
     setUploading(true)
@@ -346,9 +371,7 @@ export function GuestPortal({
   function teardown(stopMic: boolean) {
     stopMeterRef.current?.()
     stopHostMeterRef.current?.()
-    if (captureRef.current && captureRef.current.recorder.state !== 'inactive') {
-      captureRef.current.recorder.stop()
-    }
+    if (captureRef.current) stopLaneCapture(captureRef.current)
     if (camCaptureRef.current && camCaptureRef.current.recorder.state !== 'inactive') {
       camCaptureRef.current.recorder.stop()
     }
@@ -513,6 +536,15 @@ export function GuestPortal({
               </p>
               <p className="text-[11px] font-mono text-[#A9B8C6]">{ice || 'connecting'}</p>
             </div>
+            {iceFailed && (
+              <div className="rounded-xl border border-[#FF7A9A]/70 bg-[#2A1014] px-4 py-3 text-sm text-[#FFB3C3] space-y-1">
+                <p>{iceFailedHint(turnConfigured)}</p>
+                <p className="text-[11px] text-[#A9B8C6]">
+                  Keep this tab open. When the host punches Record your local camera backup still
+                  uploads. Try a phone hotspot if you need live talk.
+                </p>
+              </div>
+            )}
 
             <div className="rounded-2xl border border-[#1A232C] bg-[#080C10] p-4 space-y-3">
               <div className="flex items-center justify-between gap-2">
