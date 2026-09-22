@@ -24,9 +24,9 @@ async (page) => {
     const dark = paras.find((p) => p.textContent.includes('world grows dark'));
     const forged = paras.find((p) => p.textContent.includes('It is forged'));
     const op = (el) => (el ? +parseFloat(getComputedStyle(el).opacity).toFixed(2) : null);
-    // The hold overlay is the last child of the video stage.
-    const stage = videos[0]?.parentElement;
-    const hold = stage ? [...stage.children].find((c) => c.tagName === 'DIV') : null;
+    // Poster still is the first child of the video stage; videos fade over it.
+    const stage = section.querySelector('[aria-hidden="true"]') || videos[0]?.parentElement;
+    const poster = stage?.querySelector('img');
     return {
       videoCount: videos.length,
       introTime: videos[0] ? +videos[0].currentTime.toFixed(2) : null,
@@ -35,7 +35,8 @@ async (page) => {
       loopOpacity: videos[1] ? op(videos[1]) : null,
       loopTime: videos[1] ? +videos[1].currentTime.toFixed(2) : null,
       loopPaused: videos[1] ? videos[1].paused : null,
-      holdOpacity: hold ? op(hold) : null,
+      posterPresent: Boolean(poster?.getAttribute('src')),
+      holdOpacity: 0,
       copy: { dark: op(dark), forged: op(forged), brand: op(wordmark?.parentElement) },
       headingText: wordmark?.textContent,
       taglineText: wordmark?.parentElement?.querySelector('p')?.textContent?.trim(),
@@ -66,9 +67,10 @@ async (page) => {
     await page.waitForTimeout(600);
   }
   out.cachedLoad = {
-    // The black hold must be gone almost immediately on a warm cache.
+    // The poster still is painted immediately; the intro should be visible shortly after.
     firstSample: timeline[0],
     holdOpacitySamples: timeline.map((s) => s.holdOpacity),
+    posterPresent: timeline.every((s) => s.posterPresent),
     // Copy stage against the video's own clock, to confirm the beats track it.
     sequence: timeline.map((s) => ({
       t: s.introTime,
@@ -84,7 +86,7 @@ async (page) => {
       forged: s.copy.forged,
       brand: s.copy.brand,
     })),
-    everAllBlack: timeline.some((s) => s.holdOpacity === 1 && s.introTime > 1),
+    everAllBlack: timeline.some((s) => !s.posterPresent && s.introOpacity === 0 && s.introTime > 1),
   };
 
   // ---- 3. Handoff into the loop ----------------------------------------------

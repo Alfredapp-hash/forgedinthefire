@@ -1,13 +1,52 @@
 import type { CSSProperties } from 'react';
 
+/** Intrinsic size of both hero videos and the poster still. */
+export const HERO_VIDEO_SIZE = {
+  width: 1280,
+  height: 720,
+} as const;
+
 /** Single source of truth for hero video geometry + placement */
 export const HERO_VIDEO_LAYOUT = {
-  aspectRatio: 16 / 9,
+  aspectRatio: HERO_VIDEO_SIZE.width / HERO_VIDEO_SIZE.height,
   bleedCss: '0.35in',
   objectPosition: { x: 0.5, y: 0.45 },
   scale: 1.04,
   maskCenter: { x: 50, y: 42 },
 } as const;
+
+export interface HeroCoverTransform {
+  scale: number;
+  top: number;
+  left: number;
+}
+
+/**
+ * CSS `object-fit: cover` mapping from a viewport box into the video's own
+ * 1280×720 space. Copy overlays use this so a source row stays on the same
+ * piece of artwork as the cover crop moves.
+ *
+ * When the box is itself 16:9 (the mobile hero stage), cover equals contain
+ * and the full anvil / flame / heart lockup is visible. A 100dvh portrait
+ * box is much taller than 16:9, so cover would zoom to ~26% of the source
+ * width and clip the anvil — that is why the mobile stage is aspect-video.
+ */
+export function computeHeroCoverTransform(
+  viewportW: number,
+  viewportH: number,
+  videoW = HERO_VIDEO_SIZE.width,
+  videoH = HERO_VIDEO_SIZE.height
+): HeroCoverTransform {
+  if (!viewportW || !viewportH) {
+    return { scale: 1, top: 0, left: 0 };
+  }
+  const scale = Math.max(viewportW / videoW, viewportH / videoH);
+  return {
+    scale,
+    top: (viewportH - videoH * scale) / 2,
+    left: (viewportW - videoW * scale) / 2,
+  };
+}
 
 export const HERO_PLACEMENT = {
   /** Matches navbar h-20 */
