@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { DONATION_TIERS } from '@/lib/constants';
+import { ZEFFY_DONATE_URL } from '@/lib/fundraising/types';
 import { formatCurrency } from '@/lib/utils';
 import { Heart, Shield, Check, ChevronRight, Lock, Receipt } from 'lucide-react';
 
@@ -13,11 +14,9 @@ export default function DonatePageContent() {
   const [customAmount, setCustomAmount] = useState('');
   const [isRecurring, setIsRecurring] = useState(false);
 
-  const ZEFFY_URL = 'https://www.zeffy.com/en-US/donation-form/donate-to-change-lives-13754';
-
   const handleDonate = () => {
     const amount = selectedAmount || Number(customAmount);
-    const url = amount ? `${ZEFFY_URL}?amount=${amount}` : ZEFFY_URL;
+    const url = amount ? `${ZEFFY_DONATE_URL}?amount=${amount}` : ZEFFY_DONATE_URL;
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 

@@ -2,40 +2,11 @@ export const dynamic = 'force-dynamic'
 
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import Link from 'next/link'
+import { AdminSidebarNav } from '@/components/admin/admin-sidebar-nav'
 
 function normalizeEmail(email: string | undefined): string {
   return (email || '').trim().toLowerCase()
 }
-
-import {
-  LayoutDashboard,
-  FileText,
-  PenSquare,
-  Search,
-  Settings,
-  Users,
-  Mail,
-  LogOut,
-  ExternalLink,
-  BarChart3,
-  Megaphone,
-  UserCog,
-} from 'lucide-react'
-
-const navItems = [
-  { label: 'Dashboard', href: '/admin', icon: LayoutDashboard },
-  { label: 'Content', href: '/admin/content', icon: FileText },
-  { label: 'Blog Studio', href: '/admin/blog', icon: PenSquare },
-  { label: 'Careers', href: '/admin/careers', icon: ExternalLink },
-  { label: 'Subscribers', href: '/admin/subscribers', icon: Users },
-  { label: 'Newsletters', href: '/admin/newsletters', icon: Mail },
-  { label: 'Social', href: '/admin/social', icon: Megaphone },
-  { label: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
-  { label: 'SEO Center', href: '/admin/seo', icon: Search },
-  { label: 'Users', href: '/admin/users', icon: UserCog },
-  { label: 'Settings', href: '/admin/settings', icon: Settings },
-]
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   try {
@@ -81,41 +52,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <p className="font-bold text-base text-[#8DEBFF]">Forged in the Fire</p>
           <p className="text-xs text-[#A9B8C6]">Admin Portal</p>
         </div>
-        <nav className="flex-1 py-4 space-y-0.5 px-2 overflow-y-auto">
-          {navItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-[#B8C4CF] hover:bg-[#1A232C] hover:text-[#F6FAFC] transition-colors"
-            >
-              <item.icon size={16} />
-              {item.label}
-            </Link>
-          ))}
-          <div className="my-4 border-t border-[#27313B]" />
-          <Link
-            href="/"
-            target="_blank"
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-[#B8C4CF] hover:bg-[#1A232C] hover:text-[#F6FAFC] transition-colors"
-          >
-            <ExternalLink size={16} />
-            View Site
-          </Link>
-        </nav>
-        <div className="px-2 py-4 border-t border-[#27313B]">
-          <p className="text-xs text-[#A9B8C6] px-3 mb-2 truncate" title={user.email ?? ''}>
-            {user.email}
-          </p>
-          <form action="/api/auth/logout" method="POST">
-            <button
-              type="submit"
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-[#A9B8C6] hover:bg-[#1A232C] hover:text-[#F6FAFC] transition-colors w-full"
-            >
-              <LogOut size={16} />
-              Sign Out
-            </button>
-          </form>
-        </div>
+        <AdminSidebarNav email={user.email ?? ''} />
       </aside>
 
       {/* Main */}
