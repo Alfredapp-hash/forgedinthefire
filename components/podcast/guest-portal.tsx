@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Download, Headphones, Mic2, PhoneOff, RefreshCw, Video, VideoOff, Volume2, VolumeX } from 'lucide-react'
+import { Download, Headphones, Mic2, Music2, PhoneOff, RefreshCw, Video, VideoOff, Volume2, VolumeX } from 'lucide-react'
+import { createGuestHeadphoneMix, type GuestHeadphoneMix } from '@/lib/podcast/guest-cue'
 import { CameraPreview } from '@/components/podcast/camera-preview'
 import { openCameraStream, startCameraCapture, type CameraCapture } from '@/lib/podcast/camera'
 import { attachInputMeter } from '@/lib/podcast/record-session'
@@ -36,11 +37,13 @@ import {
   closePeer,
   createStudioPeer,
   detachLocalVideo,
+  ensureCueRecvTransceiver,
   ensureVideoTransceiver,
   iceFailedHint,
   loadStudioIceServers,
   type StudioIceConfig,
   makeOffer,
+  remoteAudioByRole,
 } from '@/lib/podcast/webrtc'
 
 type Phase = 'loading' | 'blocked' | 'lobby' | 'booth'
@@ -76,6 +79,9 @@ export function GuestPortal({
   const [recording, setRecording] = useState(false)
   const [tally, setTally] = useState<GuestTallyPhase>('waiting')
   const [talkback, setTalkback] = useState(false)
+  const [cueOn, setCueOn] = useState(false)
+  const [cueLive, setCueLive] = useState(false)
+  const [cueVolume, setCueVolume] = useState(0.85)
   const [uploading, setUploading] = useState(false)
   const [backupUrl, setBackupUrl] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
@@ -99,11 +105,14 @@ export function GuestPortal({
   const muteLockedRef = useRef(false)
   const camLockedRef = useRef(false)
   const talkbackRef = useRef(false)
+  const cueLiveRef = useRef(false)
+  const phonesRef = useRef<GuestHeadphoneMix | null>(null)
   const startingPeerRef = useRef(false)
   mutedRef.current = muted
   muteLockedRef.current = muteLocked
   camLockedRef.current = camLocked
   talkbackRef.current = talkback
+  cueLiveRef.current = cueLive
 
   useEffect(() => {
     setMounted(true)
@@ -229,6 +238,11 @@ export function GuestPortal({
     setError(null)
     try {
       if (!streamRef.current) await prepareMic()
+      if (!phonesRef.current) {
+        const mix = createGuestHeadphoneMix()
+        mix.setCueVolume(cueVolume)
+        phonesRef.current = mix
+      }
       const next = await postGuestSession(token, { action: 'join', name: display })
       setSession(next)
       setPhase('booth')
@@ -254,21 +268,30 @@ export function GuestPortal({
         const track = streamRef.current.getAudioTracks()[0]
         if (track) track.enabled = !mutedRef.current
       }
+      ensureCueRecvTransceiver(peer)
       if (camStreamRef.current && !camLockedRef.current) attachLocalVideo(peer, camStreamRef.current)
       peer.onicecandidate = (event) => {
         if (event.candidate) void pushGuestSignal(token, 'ice', { candidate: event.candidate.toJSON() })
       }
       peer.ontrack = (event) => {
-        const stream = event.streams[0] || new MediaStream([event.track])
-        hostStreamRef.current = stream
+        if (event.track.kind !== 'audio') return
+        const { talk, cue } = remoteAudioByRole(peer)
+        const talkLive = talk.getAudioTracks().length ? talk : null
+        const cueLiveStream = cue.getAudioTracks().length ? cue : null
+        hostStreamRef.current = talkLive || cueLiveStream
+        const phones = phonesRef.current
+        phones?.attach(talkLive, cueLiveStream)
+        phones?.setTalkbackOn(talkbackRef.current)
+        phones?.setCueLive(cueLiveRef.current)
         const audio = hostAudioRef.current
         if (audio) {
-          audio.srcObject = stream
-          audio.muted = !talkbackRef.current
+          audio.srcObject = talkLive || cueLiveStream
+          audio.muted = true
           void audio.play().catch(() => {})
         }
         stopHostMeterRef.current?.()
-        stopHostMeterRef.current = attachInputMeter(stream, setHostPeak)
+        const meterStream = talkLive || cueLiveStream
+        stopHostMeterRef.current = meterStream ? attachInputMeter(meterStream, setHostPeak) : null
       }
       const markLive = () => {
         void postGuestSession(token, { action: 'connected' }).catch(() => {})
@@ -340,7 +363,17 @@ export function GuestPortal({
             if (phase) setTally(phase)
           }
           if (signal.kind === 'talkback') {
-            setTalkback(Boolean(signal.payload.on))
+            const on = Boolean(signal.payload.on)
+            setTalkback(on)
+            phonesRef.current?.setTalkbackOn(on)
+          }
+          if (signal.kind === 'cue') {
+            const on = Boolean(signal.payload.on)
+            const live = Boolean(signal.payload.live)
+            setCueOn(on)
+            setCueLive(live)
+            cueLiveRef.current = live
+            phonesRef.current?.setCueLive(live)
           }
           if (signal.kind === 'mute') {
             const on = Boolean(signal.payload.on)
@@ -362,6 +395,11 @@ export function GuestPortal({
           if (signal.kind === 'hangup') {
             setError('The host ended this invite')
             setTalkback(false)
+            setCueOn(false)
+            setCueLive(false)
+            cueLiveRef.current = false
+            phonesRef.current?.setTalkbackOn(false)
+            phonesRef.current?.setCueLive(false)
             setTally('stopped')
             teardown(false)
             setPhase('blocked')
@@ -395,9 +433,27 @@ export function GuestPortal({
   }, [muted, phase, token])
 
   useEffect(() => {
+    phonesRef.current?.setTalkbackOn(talkback)
     const audio = hostAudioRef.current
-    if (audio) audio.muted = !talkback
+    if (audio) audio.muted = true
   }, [talkback])
+
+  useEffect(() => {
+    phonesRef.current?.setCueVolume(cueVolume)
+  }, [cueVolume])
+
+  useEffect(() => {
+    if (phase !== 'booth') return
+    const mix = phonesRef.current || createGuestHeadphoneMix()
+    mix.setCueVolume(cueVolume)
+    mix.setTalkbackOn(talkbackRef.current)
+    mix.setCueLive(cueLiveRef.current)
+    phonesRef.current = mix
+    return () => {
+      mix.stop()
+      if (phonesRef.current === mix) phonesRef.current = null
+    }
+  }, [phase])
 
   async function startLocalTake() {
     const stream = streamRef.current
@@ -482,6 +538,8 @@ export function GuestPortal({
       setCamStream(null)
       setCamOn(false)
     }
+    phonesRef.current?.stop()
+    phonesRef.current = null
     if (hostAudioRef.current) hostAudioRef.current.srcObject = null
   }
 
@@ -532,7 +590,7 @@ export function GuestPortal({
           <p className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Forged in the Fire · Guest booth</p>
           <h1 className="text-xl font-medium mt-1">{session?.episodeTitle || 'Production room'}</h1>
           <p className="text-sm text-[#A9B8C6] mt-1">
-            Mic, camera, mute, and a local backup. The host owns Record, talkback, punch, FX, and export.
+            Mic, camera, mute, and a local backup. The host owns Record, talkback, cue mix, punch, FX, and export.
           </p>
         </header>
 
@@ -619,7 +677,7 @@ export function GuestPortal({
               <input type="checkbox" checked={phones} onChange={(e) => setPhones(e.target.checked)} className="mt-1" />
               <span className="flex gap-2">
                 <Headphones size={16} className="text-[#8DEBFF] shrink-0 mt-0.5" />
-                I am wearing headphones. Speakers will echo into the recording.
+                I am wearing headphones. Talkback and the host mix will leak into your take if you use speakers.
               </span>
             </label>
             <button
@@ -754,6 +812,52 @@ export function GuestPortal({
                 {talkback
                   ? 'Host talkback is in your headphones. It is not recorded on your take.'
                   : 'Talkback is off. You will hear the host when they toggle Talkback — not when they hit Record.'}
+              </p>
+            </div>
+
+            <div
+              className={`rounded-2xl border p-4 space-y-3 ${
+                cueLive
+                  ? 'border-[#53D6FF]/50 bg-[#0A161C]'
+                  : 'border-[#1A232C] bg-[#080C10]'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm">
+                  <span
+                    className={`inline-block h-2.5 w-2.5 rounded-full mr-2 ${
+                      cueLive ? 'bg-[#53D6FF]' : cueOn ? 'bg-[#FFB86B]' : 'bg-[#27313B]'
+                    }`}
+                  />
+                  Cue{cueLive ? ' · live' : cueOn ? ' · standing by' : ''}
+                </p>
+                {cueLive && (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-mono text-[#8DEBFF]">
+                    <Music2 size={12} /> LIVE
+                  </span>
+                )}
+              </div>
+              <label className="flex items-center gap-3 text-xs text-[#A9B8C6]">
+                Volume {cueVolume.toFixed(2)}
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={cueVolume}
+                  onChange={(e) => setCueVolume(Number(e.target.value))}
+                  className="flex-1 accent-[#53D6FF]"
+                />
+              </label>
+              <p className="text-[11px] text-[#7C8B97] flex items-start gap-2">
+                <Headphones size={14} className="text-[#8DEBFF] shrink-0 mt-0.5" />
+                <span>
+                  {cueLive
+                    ? 'Program mix is in your headphones — other lanes, beds, SFX. It is not recorded on your take. Keep phones on so it does not leak into your mic.'
+                    : cueOn
+                      ? 'Cue is armed. You will hear the mix when the host plays or records it. Headphones only.'
+                      : 'Cue is off. When the host sends the program mix it will appear here. Wear headphones so speakers do not loop into your take.'}
+                </span>
               </p>
             </div>
 

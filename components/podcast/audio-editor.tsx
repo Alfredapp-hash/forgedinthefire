@@ -194,6 +194,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [countInBeats, setCountInBeats] = useState(0)
   const [cueEnabled, setCueEnabled] = useState(true)
   const [cueGain, setCueGain] = useState(0.85)
+  const [cueToGuest, setCueToGuest] = useState(false)
+  const [guestCueStream, setGuestCueStream] = useState<MediaStream | null>(null)
   const [replaceArmed, setReplaceArmed] = useState(false)
   const [rawInput, setRawInput] = useState(false)
   const [autoMuteQuiet, setAutoMuteQuiet] = useState(true)
@@ -233,6 +235,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const recordingRef = useRef(false)
   const cueRef = useRef<CueHandle | null>(null)
   const mixRef = useRef<CueHandle | null>(null)
+  const cueToGuestRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
   const punchRef = useRef(0)
   const recStartedAtRef = useRef(0)
@@ -274,13 +277,20 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setPlayhead(next)
   }, [])
 
+  cueToGuestRef.current = cueToGuest
+
+  const publishGuestCue = useCallback((handle: CueHandle | null) => {
+    setGuestCueStream(handle?.stream ?? null)
+  }, [])
+
   const stopMix = useCallback(() => {
     mixRef.current?.stop()
     mixRef.current = null
     if (playRafRef.current) cancelAnimationFrame(playRafRef.current)
     playRafRef.current = null
     setPlaying(false)
-  }, [])
+    if (!cueRef.current) publishGuestCue(null)
+  }, [publishGuestCue])
 
   const pushHistory = useCallback(() => {
     historyRef.current.push({
@@ -710,6 +720,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       return
     }
     mixRef.current = handle
+    publishGuestCue(handle)
     setPlaying(true)
     const tick = () => {
       const live = mixRef.current
@@ -723,6 +734,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           void tracksWithInserts(tracks).then((againTracks) => {
             const again = startLiveMix(againTracks, { fromSec: range.start, gain: masterGain * cueGain })
             mixRef.current = again
+            publishGuestCue(again)
             if (!again) {
               stopMix()
               return
@@ -1141,10 +1153,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
       setRecTally('rec')
 
-      if (cueEnabled) {
+      if (cueEnabled || cueToGuestRef.current) {
         const prepared = await tracksWithInserts(tracks)
-        const cue = startLiveMix(prepared, { fromSec: cueStart, excludeIds, gain: cueGain })
+        const cue = startLiveMix(prepared, {
+          fromSec: cueStart,
+          excludeIds,
+          gain: cueGain,
+          monitor: cueEnabled,
+        })
         cueRef.current = cue
+        publishGuestCue(cue)
         if (cue) await cue.ctx.resume()
       }
 
@@ -1346,6 +1364,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         : ' · MediaRecorder punch'
       setOk(
         `● REC ${recLabel} at ${formatClock(punch)}${cueEnabled ? ' · mix in headphones' : ''}${
+          cueToGuestRef.current ? ' · cue to guest' : ''
+        }${
           camCount ? ` · ${camCount} camera${camCount === 1 ? '' : 's'}` : ''
         }${punchKind}`,
       )
@@ -1368,6 +1388,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   function finishRecCleanup() {
     cueRef.current?.stop()
     cueRef.current = null
+    publishGuestCue(mixRef.current)
     stopMeterRef.current.forEach((fn) => fn())
     stopMeterRef.current = []
   }
@@ -2149,6 +2170,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           recording={recording}
           recTally={recTally}
           hostStream={hostTalkStream}
+          cueStream={guestCueStream}
+          onCueToGuest={setCueToGuest}
           onRemoteStream={onRemoteGuestStream}
           onRemoteVideo={setRemoteGuestVideo}
           onGuestName={onRemoteGuestName}

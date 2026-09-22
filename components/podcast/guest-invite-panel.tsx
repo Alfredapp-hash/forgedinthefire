@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Copy, Headphones, Link2, MicOff, Radio, RefreshCw, UserX, Video, VideoOff, Volume2 } from 'lucide-react'
+import { Copy, Headphones, Link2, MicOff, Music2, Radio, RefreshCw, UserX, Video, VideoOff, Volume2 } from 'lucide-react'
 import { openInputStream, stopStreams } from '@/lib/podcast/capture'
+import { createHostFallbackSendMix, type HostFallbackSendMix } from '@/lib/podcast/guest-cue'
 import {
   describeGuestSession,
   describeGuestTally,
@@ -20,12 +21,14 @@ import {
 import {
   addIce,
   answerOffer,
+  applyProgramCue,
   applyTalkback,
   closePeer,
   collectRemoteStream,
   createStudioPeer,
   iceFailedHint,
   loadStudioIceServers,
+  programCueSender,
   type StudioIceConfig,
 } from '@/lib/podcast/webrtc'
 
@@ -34,6 +37,8 @@ type Props = {
   recording: boolean
   recTally?: GuestTallyPhase
   hostStream: MediaStream | null
+  cueStream?: MediaStream | null
+  onCueToGuest?: (on: boolean) => void
   onRemoteStream: (stream: MediaStream | null) => void
   onRemoteVideo?: (live: boolean) => void
   onGuestName: (name: string | null) => void
@@ -55,6 +60,8 @@ export function GuestInvitePanel({
   recording,
   recTally = 'waiting',
   hostStream,
+  cueStream = null,
+  onCueToGuest,
   onRemoteStream,
   onRemoteVideo,
   onGuestName,
@@ -75,14 +82,21 @@ export function GuestInvitePanel({
   const [camLocked, setCamLocked] = useState(false)
   const [reconnecting, setReconnecting] = useState(false)
   const [talkback, setTalkback] = useState(false)
+  const [cueToGuest, setCueToGuest] = useState(false)
   const iceCfgRef = useRef<StudioIceConfig | null>(null)
   const peerRef = useRef<RTCPeerConnection | null>(null)
   const afterRef = useRef(0)
   const hostRef = useRef<MediaStream | null>(null)
   const talkbackRef = useRef(false)
   const talkbackMicRef = useRef<MediaStream | null>(null)
+  const cueToGuestRef = useRef(false)
+  const cueStreamRef = useRef<MediaStream | null>(null)
+  const fallbackMixRef = useRef<HostFallbackSendMix | null>(null)
   hostRef.current = hostStream
   talkbackRef.current = talkback
+  cueToGuestRef.current = cueToGuest
+  cueStreamRef.current = cueStream
+  const cueLive = cueToGuest && Boolean(cueStream?.getAudioTracks().some((t) => t.readyState === 'live'))
   const liveId = invites.find((i) => !i.revoked && !i.expired)?.id || null
   const live = invites.find((i) => i.id === liveId) || null
   const tally = describeGuestTally(recTally)
@@ -151,10 +165,44 @@ export function GuestInvitePanel({
     return hostRef.current || talkbackMicRef.current
   }
 
-  function pushTalkbackToPeer() {
+  function stopFallbackMix() {
+    fallbackMixRef.current?.stop()
+    fallbackMixRef.current = null
+  }
+
+  function pushHeadphonesToPeer() {
     const peer = peerRef.current
     if (!peer) return
-    applyTalkback(peer, talkbackSource(), talkbackRef.current)
+    const talkOn = talkbackRef.current
+    const talk = talkOn ? talkbackSource() : null
+    const cueOn = cueToGuestRef.current
+    const cue = cueOn ? cueStreamRef.current : null
+    const cueReady = Boolean(cue?.getAudioTracks().some((t) => t.readyState === 'live'))
+
+    if (programCueSender(peer) || applyProgramCue(peer, cueReady ? cue : null, cueReady)) {
+      stopFallbackMix()
+      applyTalkback(peer, talk, talkOn)
+      applyProgramCue(peer, cueReady ? cue : null, cueReady)
+      return
+    }
+
+    if (cueReady && talkOn && talk) {
+      const mix = fallbackMixRef.current || createHostFallbackSendMix()
+      fallbackMixRef.current = mix
+      mix.update(talk, cue, true, true)
+      applyTalkback(peer, mix.stream, true)
+      return
+    }
+
+    stopFallbackMix()
+    if (cueReady) applyTalkback(peer, cue, true)
+    else applyTalkback(peer, talk, talkOn)
+  }
+
+  function signalCue(inviteId: string | null = liveId) {
+    if (!inviteId) return
+    const live = cueToGuestRef.current && Boolean(cueStreamRef.current?.getAudioTracks().some((t) => t.readyState === 'live'))
+    void pushAdminSignal(inviteId, 'cue', { on: cueToGuestRef.current, live }).catch(() => {})
   }
 
   function releaseTalkbackMic() {
@@ -172,8 +220,16 @@ export function GuestInvitePanel({
       stopStreams([talkbackMicRef.current])
       talkbackMicRef.current = null
     }
-    pushTalkbackToPeer()
-  }, [hostStream, talkback])
+    pushHeadphonesToPeer()
+  }, [hostStream, talkback, cueToGuest, cueStream])
+
+  useEffect(() => {
+    onCueToGuest?.(cueToGuest)
+  }, [cueToGuest, onCueToGuest])
+
+  useEffect(() => {
+    signalCue()
+  }, [cueToGuest, cueLive, liveId])
 
   const recordingRef = useRef(recording)
   useEffect(() => {
@@ -203,6 +259,7 @@ export function GuestInvitePanel({
       closePeer(peerRef.current, false)
       peerRef.current = null
       releaseTalkbackMic()
+      stopFallbackMix()
       onRemoteStream(null)
       onRemoteVideo?.(false)
     }
@@ -216,9 +273,10 @@ export function GuestInvitePanel({
       if (!peer) return
       const desc = await answerOffer(peer, payload as unknown as RTCSessionDescriptionInit)
       if (desc) await pushAdminSignal(inviteId, 'answer', { type: desc.type, sdp: desc.sdp })
-      applyTalkback(peer, talkbackSource(), talkbackRef.current)
+      pushHeadphonesToPeer()
       void pushAdminSignal(inviteId, 'tally', { phase: tallyRef.current }).catch(() => {})
       if (talkbackRef.current) void pushAdminSignal(inviteId, 'talkback', { on: true }).catch(() => {})
+      if (cueToGuestRef.current) signalCue(inviteId)
       if (recordingRef.current) {
         void pushAdminSignal(inviteId, 'record', { on: true, phase: tallyRef.current }).catch(() => {})
       }
@@ -252,7 +310,9 @@ export function GuestInvitePanel({
       setGuestMuted(false)
       setGuestCamOn(false)
       setTalkback(false)
+      setCueToGuest(false)
       releaseTalkbackMic()
+      stopFallbackMix()
       onRemoteStream(null)
       onRemoteVideo?.(false)
     }
@@ -266,7 +326,7 @@ export function GuestInvitePanel({
     const peer = createStudioPeer(iceServers || iceCfgRef.current?.iceServers)
     peerRef.current = peer
     wirePeer(inviteId, peer)
-    applyTalkback(peer, talkbackSource(), talkbackRef.current)
+    pushHeadphonesToPeer()
   }
 
   function wirePeer(inviteId: string, peer: RTCPeerConnection) {
@@ -341,14 +401,22 @@ export function GuestInvitePanel({
       }
       if (!on) releaseTalkbackMic()
       const peer = peerRef.current
-      if (peer) applyTalkback(peer, on ? talkbackSource() : null, on)
       talkbackRef.current = on
       setTalkback(on)
+      pushHeadphonesToPeer()
       await pushAdminSignal(liveId, 'talkback', { on })
     } catch (err) {
       if (!on) setTalkback(false)
       setError(err instanceof Error ? err.message : 'Could not start talkback')
     }
+  }
+
+  function setCueToGuestOn(on: boolean) {
+    if (!liveId) return
+    cueToGuestRef.current = on
+    setCueToGuest(on)
+    pushHeadphonesToPeer()
+    signalCue(liveId)
   }
 
   async function retryPeer() {
@@ -360,6 +428,7 @@ export function GuestInvitePanel({
       resetPeer(liveId, cfg.iceServers)
       await pushAdminSignal(liveId, 'reconnect', {})
       if (talkbackRef.current) await pushAdminSignal(liveId, 'talkback', { on: true }).catch(() => {})
+      if (cueToGuestRef.current) signalCue(liveId)
     } catch (err) {
       setReconnecting(false)
       setError(err instanceof Error ? err.message : 'Could not reconnect')
@@ -381,7 +450,9 @@ export function GuestInvitePanel({
       setGuestCamOn(false)
       setCamLocked(false)
       setTalkback(false)
+      setCueToGuest(false)
       releaseTalkbackMic()
+      stopFallbackMix()
       setIce('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create invite')
@@ -415,7 +486,9 @@ export function GuestInvitePanel({
       setGuestCamOn(false)
       setCamLocked(false)
       setTalkback(false)
+      setCueToGuest(false)
       releaseTalkbackMic()
+      stopFallbackMix()
       setIce('')
       onRemoteStream(null)
       onRemoteVideo?.(false)
@@ -463,6 +536,7 @@ export function GuestInvitePanel({
           {' · '}
           Cam {camLocked ? 'host off' : guestCamOn ? 'on' : 'off'}
           {talkback ? ' · talkback on' : ' · talkback off'}
+          {cueLive ? ' · cue live' : cueToGuest ? ' · cue armed' : ' · cue off'}
           {recording ? ` · host ${tally.label}` : ''}
         </p>
       )}
@@ -554,6 +628,20 @@ export function GuestInvitePanel({
           </button>
           <button
             type="button"
+            disabled={busy || !guestInBooth}
+            onClick={() => setCueToGuestOn(!cueToGuest)}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
+              cueLive
+                ? 'bg-[#53D6FF] text-[#061016]'
+                : cueToGuest
+                  ? 'border border-[#53D6FF]/70 text-[#8DEBFF]'
+                  : 'border border-[#27313B] text-[#B8C4CF]'
+            } disabled:opacity-40`}
+          >
+            <Music2 size={14} /> {cueLive ? 'Cue live' : cueToGuest ? 'Cue armed' : 'Cue to guest'}
+          </button>
+          <button
+            type="button"
             disabled={busy || reconnecting || !guestInBooth}
             onClick={() => void retryPeer()}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
@@ -570,9 +658,10 @@ export function GuestInvitePanel({
         <p className="text-[11px] font-mono text-[#8DEBFF] break-all">{freshUrl}</p>
       )}
       <p className="text-[11px] text-[#7C8B97]">
-        Talkback sends your mic to their headphones only — it is not laid on the Guest take. Mute,
-        camera-off, and Retry are unchanged. Guest still has self-view and a local camera backup.
-        You keep Record, punch, FX, mix, and export.{' '}
+        Talkback is your mic in their phones. Cue to guest sends the live mix (other lanes, beds,
+        SFX — not the Guest take being recorded) on a second audio line. Neither is laid on the
+        Guest take or their local backup. Mute, camera-off, and Retry are unchanged. You keep
+        Record, punch, FX, mix, and export.{' '}
         {turnConfigured
           ? 'TURN is on for this site.'
           : 'ICE is STUN-only until TURN_URL, TURN_USERNAME, and TURN_CREDENTIAL are set on Netlify.'}{' '}

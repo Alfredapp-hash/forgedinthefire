@@ -8,6 +8,10 @@
  * file on the same punch clock. Do not mux video into the take AudioBuffer
  * or episode.audio_url.
  *
+ * Host→guest audio is two m-lines: talkback (host mic) then program/cue
+ * (MediaStreamDestination tap of startLiveMix). Neither is recorded on the
+ * Guest take. Guest local backup stays their mic only.
+ *
  * Guest also records a local camera backup they can upload if ICE fails.
  */
 
@@ -52,20 +56,34 @@ export function createStudioPeer(iceServers: RTCIceServer[] = STUN_SERVERS) {
   })
 }
 
-function audioSender(peer: RTCPeerConnection) {
-  const live = peer.getSenders().find((s) => s.track?.kind === 'audio')
-  if (live) return live
-  const line = peer.getTransceivers().find((t) => {
+function audioTransceivers(peer: RTCPeerConnection) {
+  return peer.getTransceivers().filter((t) => {
     const kind = t.receiver.track?.kind || t.sender.track?.kind
     return kind === 'audio'
   })
-  return line?.sender
+}
+
+/** First audio m-line: guest mic in / host talkback out. Never the program/cue sender. */
+function talkbackSender(peer: RTCPeerConnection) {
+  return (
+    audioTransceivers(peer)[0]?.sender ||
+    peer.getSenders().find((s) => s.track?.kind === 'audio')
+  )
+}
+
+/** Second audio m-line: live mix / program cue to guest headphones. */
+export function programCueSender(peer: RTCPeerConnection) {
+  return audioTransceivers(peer)[1]?.sender
+}
+
+function liveAudioTrack(stream: MediaStream | null) {
+  return stream?.getAudioTracks().find((t) => t.readyState === 'live') || null
 }
 
 export function attachLocalAudio(peer: RTCPeerConnection, stream: MediaStream) {
-  const track = stream.getAudioTracks()[0]
+  const track = liveAudioTrack(stream)
   if (!track) return
-  const existing = audioSender(peer)
+  const existing = talkbackSender(peer)
   if (existing) {
     void existing.replaceTrack(track)
     return
@@ -75,17 +93,47 @@ export function attachLocalAudio(peer: RTCPeerConnection, stream: MediaStream) {
 
 /** Mute host→guest audio without stopping the mic (talkback off). Does not stop tracks. */
 export function detachLocalAudio(peer: RTCPeerConnection) {
-  const sender = audioSender(peer)
-  if (sender?.track?.kind === 'audio') void sender.replaceTrack(null)
+  const sender = talkbackSender(peer)
+  if (sender) void sender.replaceTrack(null)
 }
 
-/** Host mic on the existing audio m-line only while talkback is on. Not mixed into the Guest take. */
+/** Host mic on the first audio m-line only while talkback is on. Not mixed into the Guest take. */
 export function applyTalkback(peer: RTCPeerConnection, stream: MediaStream | null, on: boolean) {
-  if (on && stream?.getAudioTracks().some((t) => t.readyState === 'live')) {
-    attachLocalAudio(peer, stream)
+  if (on && liveAudioTrack(stream)) {
+    attachLocalAudio(peer, stream!)
     return
   }
   detachLocalAudio(peer)
+}
+
+/**
+ * Guest adds a recvonly audio m-line before createOffer so the host can
+ * replaceTrack the live mix without renegotiating or touching talkback.
+ */
+export function ensureCueRecvTransceiver(peer: RTCPeerConnection) {
+  if (programCueSender(peer)) return audioTransceivers(peer)[1]
+  return peer.addTransceiver('audio', { direction: 'recvonly' })
+}
+
+/** Live mix on the cue m-line. Returns false if the peer has no second audio line. */
+export function applyProgramCue(peer: RTCPeerConnection, stream: MediaStream | null, on: boolean) {
+  const sender = programCueSender(peer)
+  if (!sender) return false
+  void sender.replaceTrack(on ? liveAudioTrack(stream) : null)
+  return true
+}
+
+export function remoteAudioByRole(peer: RTCPeerConnection) {
+  const talk = new MediaStream()
+  const cue = new MediaStream()
+  for (const line of audioTransceivers(peer)) {
+    const track = line.receiver.track
+    if (!track || track.kind !== 'audio' || track.readyState === 'ended') continue
+    const recvOnly = line.direction === 'recvonly' || line.currentDirection === 'recvonly'
+    if (recvOnly) cue.addTrack(track)
+    else talk.addTrack(track)
+  }
+  return { talk, cue }
 }
 
 export function videoTransceiver(peer: RTCPeerConnection) {

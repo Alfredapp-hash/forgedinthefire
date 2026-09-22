@@ -67,6 +67,8 @@ export type CueHandle = {
   ctx: AudioContext
   stop: () => void
   sessionTime: () => number
+  /** Live mix tap for guest headphones. Never feed this into a Guest take. */
+  stream: MediaStream
 }
 
 function audibleCueTracks(tracks: StudioTrack[], excludeIds: string[]) {
@@ -80,6 +82,8 @@ export function startLiveMix(
     fromSec: number
     excludeIds?: string[]
     gain?: number
+    /** Host speakers/phones. Default on. Guest tap is always created. */
+    monitor?: boolean
   },
 ): CueHandle | null {
   const fromSec = Math.max(0, opts.fromSec)
@@ -90,7 +94,17 @@ export function startLiveMix(
   void ctx.resume()
   const master = ctx.createGain()
   master.gain.value = opts.gain ?? 1
-  master.connect(ctx.destination)
+  if (opts.monitor !== false) master.connect(ctx.destination)
+  let stream = new MediaStream()
+  try {
+    const dest = ctx.createMediaStreamDestination()
+    master.connect(dest)
+    stream = dest.stream
+    const tap = stream.getAudioTracks()[0]
+    if (tap && 'contentHint' in tap) tap.contentHint = 'music'
+  } catch {
+    /* captureStream / MediaStreamDestination missing — host still hears the mix */
+  }
 
   const sources: AudioBufferSourceNode[] = []
   const origin = ctx.currentTime
@@ -156,6 +170,7 @@ export function startLiveMix(
 
   return {
     ctx,
+    stream,
     sessionTime() {
       if (ctx.state === 'closed') return fromSec
       return fromSec + Math.max(0, ctx.currentTime - origin)
@@ -166,6 +181,13 @@ export function startLiveMix(
           source.stop()
         } catch {
           /* already stopped */
+        }
+      }
+      for (const track of stream.getAudioTracks()) {
+        try {
+          track.stop()
+        } catch {
+          /* already ended */
         }
       }
       void ctx.close()

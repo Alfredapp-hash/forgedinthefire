@@ -50,6 +50,7 @@ export const GUEST_SIGNAL_KINDS = [
   'hangup',
   'record',
   'talkback',
+  'cue',
   'tally',
   'camera',
   'mute',
