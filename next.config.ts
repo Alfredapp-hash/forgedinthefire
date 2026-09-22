@@ -7,6 +7,7 @@ const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  transpilePackages: ['@shiguredo/rnnoise-wasm'],
   turbopack: {
     root: projectRoot,
   },
@@ -45,7 +46,7 @@ const nextConfig: NextConfig = {
           },
           {
             key: 'Permissions-Policy',
-            value: 'camera=(), microphone=(self), geolocation=()',
+            value: 'camera=(self), microphone=(self), geolocation=()',
           },
         ],
       },

@@ -1,14 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import WaveSurfer from 'wavesurfer.js'
-import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
 import {
   applyGainAndFades,
   decodeUrl,
   encodeMp3,
   encodeWav,
   formatClock,
+  parseClock,
+  sliceBuffer,
 } from '@/lib/podcast/audio'
 import {
   EFFECT_META,
@@ -18,43 +18,131 @@ import {
   type EffectId,
 } from '@/lib/podcast/effects'
 import {
+  INSERT_FX,
+  RENDER_ONLY_FX,
+  VOICE_CLEANUP_INSERTS,
+  invalidateInsertCache,
+  isInsertFx,
+  tracksWithInserts,
+} from '@/lib/podcast/inserts'
+import {
+  DEFAULT_PEOPLE,
   TRACK_COLORS,
-  appendBuffers,
   cloneAudioBuffer,
+  clipsOf,
   createEmptyTrack,
   dbFromLinear,
   defaultSessionTracks,
+  emptyTakeForPerson,
+  emptyTakesForPerson,
+  ensurePersonLanes,
   mixdownTracks,
+  newClipId,
+  newPersonId,
+  nextTakeNumber,
   peakMeter,
+  roleForPerson,
   sessionDuration,
-  splitBuffer,
+  assignCompRange,
+  clearCompRanges,
+  isVoiceRole,
+  withListenTake,
+  type SessionPerson,
   type StudioTrack,
+  type TrackClip,
 } from '@/lib/podcast/multitrack'
 import {
+  clearAutomation,
+  cropToRange,
+  deleteRange,
+  duplicateClipAt,
+  fullClipForBuffer,
+  joinAdjacentClips,
+  mapTrack,
+  moveClip,
+  muteRange,
+  pasteClip,
+  setClipFades,
+  setVolumeInRange,
+  splitRange,
+  splitTrackAt,
+  trimClip,
+} from '@/lib/podcast/edit'
+import {
+  REC_MODE_META,
+  attachInputMeter,
+  playCountIn,
+  punchInTime,
+  sharedPunchInTime,
+  sleep,
+  startLiveMix,
+  waitUntilContextTime,
+  type CueHandle,
+  type RecMode,
+} from '@/lib/podcast/record-session'
+import {
+  clearSession,
+  loadSession,
+  peekSession,
+  saveSession,
+  type SessionPeek,
+} from '@/lib/podcast/session-store'
+import {
+  openInputStreams,
+  startLaneCapture,
+  stopStreams,
+  type LaneCapture,
+} from '@/lib/podcast/capture'
+import { applyFollowTalker } from '@/lib/podcast/auto-mix'
+import { gainForTargetLufs, measureLoudness, PODCAST_LUFS } from '@/lib/podcast/lufs'
+import { slugFile, zipStore } from '@/lib/podcast/zip'
+import { renderSfx, SFX_META, type SfxId } from '@/lib/podcast/sfx'
+import { SfxPad } from '@/components/podcast/sfx-pad'
+import { SessionTimeline } from '@/components/podcast/session-timeline'
+import { GuestInvitePanel } from '@/components/podcast/guest-invite-panel'
+import { CameraClipReview, CameraLane } from '@/components/podcast/camera-lane'
+import { CameraPreview } from '@/components/podcast/camera-preview'
+import {
+  CAMERA_ARM_WARNING,
+  CAMERA_MB_PER_MIN,
+  formatBytes,
+  measureVideoDuration,
+  newCameraClipId,
+  openCameraStream,
+  startCameraCapture,
+  streamHasLiveVideo,
+  type CameraCapture,
+  type CameraClip,
+} from '@/lib/podcast/camera'
+
+const REMOTE_GUEST_KEY = 'remote:guest'
+import {
+  BookmarkPlus,
   CopyPlus,
+  Headphones,
   Mic2,
   Minus,
   Pause,
   Play,
   Plus,
+  Scissors,
   SkipBack,
   SkipForward,
   Square,
   Trash2,
   Undo2,
+  Video,
+  VideoOff,
+  VolumeX,
 } from 'lucide-react'
 
-type RegionApi = {
-  start: number
-  end: number
-  setOptions: (opts: { start?: number; end?: number }) => void
-}
-
 type Props = {
+  episodeId?: string | null
   audioUrl?: string | null
   title: string
   onExported: (file: File, durationSeconds: number) => Promise<void>
   onPublished?: () => Promise<void>
+  onMarkChapter?: (seconds: number) => void
 }
 
 type Snapshot = {
@@ -65,23 +153,29 @@ type Snapshot = {
 function snapshotTracks(tracks: StudioTrack[]): StudioTrack[] {
   return tracks.map((t) => ({
     ...t,
-    buffer: t.buffer ? cloneAudioBuffer(t.buffer) : null,
-    // URLs stay shared; buffers are what matter for undo
+    clips: (t.clips || []).map((c) => ({ ...c })),
+    automation: (t.automation || []).map((p) => ({ ...p })),
+    compRanges: (t.compRanges || []).map((r) => ({ ...r })),
+    buffer: t.buffer,
   }))
 }
 
-export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }: Props) {
+export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter }: Props) {
   const [tracks, setTracks] = useState<StudioTrack[]>(() => defaultSessionTracks())
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [masterUrl, setMasterUrl] = useState<string | null>(null)
-  const [ready, setReady] = useState(false)
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  const [sectionLevel, setSectionLevel] = useState(0.25)
+  const [applyRangeAll, setApplyRangeAll] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [recording, setRecording] = useState(false)
   const [range, setRange] = useState({ start: 0, end: 0, total: 0 })
+  const rangeRef = useRef({ start: 0, end: 0, total: 0 })
+  rangeRef.current = range
   const [masterGain, setMasterGain] = useState(1)
   const [masterFadeIn, setMasterFadeIn] = useState(0.15)
   const [masterFadeOut, setMasterFadeOut] = useState(0.4)
   const [zoom, setZoom] = useState(48)
+  const [timelineScroll, setTimelineScroll] = useState(0)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
@@ -90,20 +184,67 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
   const [loop, setLoop] = useState(false)
   const [metronome, setMetronome] = useState(false)
   const [bpm, setBpm] = useState(90)
+  const [people, setPeople] = useState<SessionPerson[]>(() => DEFAULT_PEOPLE)
+  const [recMode, setRecMode] = useState<RecMode>('after_mix')
+  const [preroll, setPreroll] = useState(3)
+  const [countInBeats, setCountInBeats] = useState(0)
+  const [cueEnabled, setCueEnabled] = useState(true)
+  const [cueGain, setCueGain] = useState(0.85)
+  const [replaceArmed, setReplaceArmed] = useState(false)
+  const [rawInput, setRawInput] = useState(false)
+  const [autoMuteQuiet, setAutoMuteQuiet] = useState(true)
+  const [voiceIsolate, setVoiceIsolate] = useState(true)
+  const [micId, setMicId] = useState('')
+  const [mics, setMics] = useState<MediaDeviceInfo[]>([])
+  const [cams, setCams] = useState<MediaDeviceInfo[]>([])
+  const [cameraStreams, setCameraStreams] = useState<Record<string, MediaStream>>({})
+  const [cameraClips, setCameraClips] = useState<CameraClip[]>([])
+  const [selectedCamClipId, setSelectedCamClipId] = useState<string | null>(null)
+  const [camWarnFor, setCamWarnFor] = useState<string | null>(null)
+  const camWarnedRef = useRef(false)
+  const [inputPeaks, setInputPeaks] = useState<Record<string, number>>({})
+  const [clipHolds, setClipHolds] = useState<Record<string, boolean>>({})
+  const [matchLufs, setMatchLufs] = useState(true)
+  const [loudness, setLoudness] = useState<{ lufs: number; peakDb: number } | null>(null)
+  const [recClock, setRecClock] = useState(0)
+  const [personDraft, setPersonDraft] = useState('')
+  const [playhead, setPlayhead] = useState(0)
+  const [recover, setRecover] = useState<SessionPeek | null>(null)
+  const [sessionStatus, setSessionStatus] = useState<'checking' | 'offer' | 'open'>(
+    episodeId ? 'checking' : 'open',
+  )
 
-  const masterHostRef = useRef<HTMLDivElement>(null)
-  const waveRef = useRef<WaveSurfer | null>(null)
-  const regionRef = useRef<RegionApi | null>(null)
-  const trackWaveRefs = useRef<Record<string, WaveSurfer | null>>({})
-  const trackHostRefs = useRef<Record<string, HTMLDivElement | null>>({})
-  const recorderRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
-  const streamRef = useRef<MediaStream | null>(null)
+  const recorderRef = useRef<MediaRecorder[]>([])
+  const capturesRef = useRef<LaneCapture[]>([])
+  const cameraCapturesRef = useRef<CameraCapture[]>([])
+  const cameraStreamsRef = useRef<Record<string, MediaStream>>({})
+  const streamRef = useRef<MediaStream[]>([])
+  const clipClipboardRef = useRef<TrackClip | null>(null)
   const historyRef = useRef<Snapshot[]>([])
   const [historyLen, setHistoryLen] = useState(0)
   const metroRef = useRef<number | null>(null)
   const metroCtxRef = useRef<AudioContext | null>(null)
   const seededRef = useRef(false)
+  const recordingRef = useRef(false)
+  const cueRef = useRef<CueHandle | null>(null)
+  const mixRef = useRef<CueHandle | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const punchRef = useRef(0)
+  const recStartedAtRef = useRef(0)
+  const stopMeterRef = useRef<Array<() => void>>([])
+  const recRafRef = useRef<number | null>(null)
+  const playheadRef = useRef(0)
+  const playRafRef = useRef<number | null>(null)
+  const recLiveRef = useRef(false)
+  const idleStreamRef = useRef<MediaStream[]>([])
+  const idleStopRef = useRef<Array<() => void>>([])
+  const clipTimerRef = useRef<Record<string, number>>({})
+  const remoteGuestRef = useRef<MediaStream | null>(null)
+  const [remoteGuest, setRemoteGuest] = useState<MediaStream | null>(null)
+  const [remoteGuestVideo, setRemoteGuestVideo] = useState(false)
+  const [hostTalkStream, setHostTalkStream] = useState<MediaStream | null>(null)
+  const [guestTakeUrl, setGuestTakeUrl] = useState<string | null>(null)
+  const [guestCameraUrl, setGuestCameraUrl] = useState<string | null>(null)
 
   const selected = useMemo(
     () => tracks.find((t) => t.id === selectedId) || tracks[0] || null,
@@ -111,6 +252,29 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
   )
 
   const hasAudio = tracks.some((t) => Boolean(t.buffer))
+  const sessionLen = sessionDuration(tracks)
+  const ready = hasAudio
+  const anyArmed = tracks.some((t) => t.armed)
+  const personIdsArmed = new Set(tracks.filter((t) => t.armed).map((t) => t.personId)).size
+  const armedDeviceCount = new Set(
+    tracks
+      .filter((t) => t.armed)
+      .map((t) => people.find((p) => p.id === t.personId)?.inputDeviceId || micId || ''),
+  ).size
+
+  const setHead = useCallback((sec: number) => {
+    const next = Math.max(0, sec)
+    playheadRef.current = next
+    setPlayhead(next)
+  }, [])
+
+  const stopMix = useCallback(() => {
+    mixRef.current?.stop()
+    mixRef.current = null
+    if (playRafRef.current) cancelAnimationFrame(playRafRef.current)
+    playRafRef.current = null
+    setPlaying(false)
+  }, [])
 
   const pushHistory = useCallback(() => {
     historyRef.current.push({
@@ -120,6 +284,38 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
     if (historyRef.current.length > 20) historyRef.current.shift()
     setHistoryLen(historyRef.current.length)
   }, [tracks, selectedId])
+
+  const onRemoteGuestStream = useCallback((stream: MediaStream | null) => {
+    remoteGuestRef.current = stream
+    setRemoteGuest(stream)
+    if (!stream) return
+    const guestCam = cameraStreamsRef.current.guest
+    if (guestCam) {
+      stopStreams([guestCam])
+      setCameraStreams((prev) => {
+        const next = { ...prev }
+        delete next.guest
+        return next
+      })
+    }
+    setTracks((prev) => {
+      const guest = emptyTakeForPerson(prev, 'guest') || prev.find((t) => t.personId === 'guest')
+      if (!guest) return prev
+      return prev.map((t) => (t.personId === 'guest' ? { ...t, armed: t.id === guest.id } : t))
+    })
+    setOk(
+      streamHasLiveVideo(stream)
+        ? 'Remote guest is live — Guest lane records their booth. Camera file writes if their cam is on.'
+        : 'Remote guest is live — Guest lane records their booth. Waiting for their camera.',
+    )
+  }, [])
+
+  const onRemoteGuestName = useCallback((name: string | null) => {
+    if (!name) return
+    setPeople((prev) => prev.map((p) => (p.id === 'guest' ? { ...p, name } : p)))
+  }, [])
+
+  cameraStreamsRef.current = cameraStreams
 
   const revokeUrl = (url: string | null) => {
     if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
@@ -134,11 +330,17 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
   const assignBufferToTrack = useCallback(
     (id: string, buffer: AudioBuffer, label?: string) => {
       const url = bufferToUrl(buffer)
+      invalidateInsertCache(id)
       setTracks((prev) =>
         prev.map((t) => {
           if (t.id !== id) return t
           revokeUrl(t.url)
-          return { ...t, buffer: cloneAudioBuffer(buffer), url }
+          return {
+            ...t,
+            buffer: cloneAudioBuffer(buffer),
+            url,
+            clips: [fullClipForBuffer(buffer, t.offset, t.fadeIn, t.fadeOut)],
+          }
         }),
       )
       setSelectedId(id)
@@ -148,34 +350,48 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
   )
 
   const rebuildMasterPreview = useCallback(async () => {
+    if (recordingRef.current) return
     if (!tracks.some((t) => t.buffer)) {
-      setMasterUrl((prev) => {
-        revokeUrl(prev)
-        return null
-      })
       setMeter(null)
-      setReady(false)
+      setLoudness(null)
       return
     }
-    setBusy('Mixing preview…')
     try {
-      const mixed = mixdownTracks(tracks)
+      const mixed = mixdownTracks(await tracksWithInserts(tracks))
       const shaped = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
       setMeter(peakMeter(shaped))
-      const url = bufferToUrl(shaped)
-      setMasterUrl((prev) => {
-        revokeUrl(prev)
-        return url
-      })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Mix failed')
-    } finally {
-      setBusy(null)
+      const loud = measureLoudness(shaped)
+      setLoudness(Number.isFinite(loud.lufs) ? { lufs: loud.lufs, peakDb: loud.peakDb } : null)
+    } catch {
+      /* preview meter is optional */
     }
   }, [tracks, masterGain, masterFadeIn, masterFadeOut])
 
-  // Seed first vocal track from existing episode audio once
   useEffect(() => {
+    if (!episodeId) {
+      setSessionStatus('open')
+      return
+    }
+    let cancelled = false
+    void peekSession(episodeId).then((peek) => {
+      if (cancelled) return
+      if (peek && (peek.takeCount > 0 || peek.cameraCount > 0)) {
+        setRecover(peek)
+        setSessionStatus('offer')
+      } else {
+        setSessionStatus('open')
+      }
+    }).catch(() => {
+      if (!cancelled) setSessionStatus('open')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [episodeId])
+
+  // Seed first vocal track from existing episode audio once — skipped if a local session can be recovered
+  useEffect(() => {
+    if (sessionStatus !== 'open') return
     if (!audioUrl || seededRef.current) return
     seededRef.current = true
     void (async () => {
@@ -209,136 +425,52 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
         setBusy(null)
       }
     })()
-  }, [audioUrl])
+  }, [audioUrl, sessionStatus])
 
-  const trackWaveKey = tracks.map((t) => `${t.id}:${t.url || ''}:${t.color}:${t.offset}`).join('|')
-
-  // Per-track mini waveforms
   useEffect(() => {
-    for (const track of tracks) {
-      const host = trackHostRefs.current[track.id]
-      if (!host) continue
-      const existing = trackWaveRefs.current[track.id]
-      if (!track.url) {
-        existing?.destroy()
-        trackWaveRefs.current[track.id] = null
-        host.innerHTML = ''
-        continue
-      }
-      existing?.destroy()
-      const trackId = track.id
-      const trackOffset = track.offset
-      const ws = WaveSurfer.create({
-        container: host,
-        height: 56,
-        waveColor: track.color + '99',
-        progressColor: track.color,
-        cursorColor: '#8DEBFF',
-        cursorWidth: 1,
-        barWidth: 2,
-        barGap: 1,
-        barRadius: 1,
-        minPxPerSec: zoom,
-        url: track.url,
-        interact: true,
+    if (!episodeId || recording || sessionStatus !== 'open') return
+    if (!tracks.some((t) => t.buffer)) return
+    const t = window.setTimeout(() => {
+      void saveSession(episodeId, people, tracks, cameraClips).catch((err) => {
+        setError(err instanceof Error ? err.message : 'Could not autosave takes on this computer')
       })
-      trackWaveRefs.current[trackId] = ws
-      ws.on('interaction', () => {
-        setSelectedId(trackId)
-        const t = ws.getCurrentTime() + trackOffset
-        const master = waveRef.current
-        if (master) master.setTime(Math.min(master.getDuration() || t, t))
-      })
-    }
-  }, [trackWaveKey, zoom, tracks])
-
-  // Master waveform + export region
-  useEffect(() => {
-    if (!masterHostRef.current || !masterUrl) {
-      waveRef.current?.destroy()
-      waveRef.current = null
-      regionRef.current = null
-      setReady(false)
-      return
-    }
-    waveRef.current?.destroy()
-    const ws = WaveSurfer.create({
-      container: masterHostRef.current,
-      height: 120,
-      waveColor: '#3A4654',
-      progressColor: '#53D6FF',
-      cursorColor: '#8DEBFF',
-      cursorWidth: 2,
-      barWidth: 2,
-      barGap: 1,
-      barRadius: 2,
-      minPxPerSec: zoom,
-      url: masterUrl,
-      interact: true,
-    })
-    const regions = ws.registerPlugin(RegionsPlugin.create())
-    waveRef.current = ws
-
-    const sync = (region: RegionApi) => {
-      regionRef.current = region
-      setRange((prev) => ({ ...prev, start: region.start, end: region.end }))
-    }
-
-    ws.on('ready', () => {
-      const total = ws.getDuration()
-      const region =
-        regions.getRegions()[0] ||
-        regions.addRegion({
-          start: 0,
-          end: total,
-          color: 'rgba(83, 214, 255, 0.18)',
-          drag: true,
-          resize: true,
-        })
-      sync(region as RegionApi)
-      setRange({ start: region.start, end: region.end, total })
-      setReady(true)
-    })
-    ws.on('play', () => setPlaying(true))
-    ws.on('pause', () => setPlaying(false))
-    ws.on('finish', () => {
-      setPlaying(false)
-      if (loop) {
-        const r = regionRef.current
-        if (r) {
-          ws.setTime(r.start)
-          void ws.play()
-        }
-      }
-    })
-    regions.on('region-updated', (region: RegionApi) => sync(region))
-    regions.on('region-created', (region: RegionApi) => sync(region))
-
-    return () => {
-      ws.destroy()
-      if (waveRef.current === ws) waveRef.current = null
-    }
-  }, [masterUrl, loop])
+    }, 1600)
+    return () => window.clearTimeout(t)
+  }, [episodeId, people, tracks, cameraClips, recording, sessionStatus])
 
   useEffect(() => {
-    waveRef.current?.zoom(zoom)
-    Object.values(trackWaveRefs.current).forEach((ws) => ws?.zoom(zoom))
-  }, [zoom])
+    setRange((prev) => {
+      const total = sessionLen
+      if (total <= 0) return { start: 0, end: 0, total: 0 }
+      const start = Math.min(prev.start, total)
+      const end = prev.end <= 0 || prev.end >= prev.total - 0.05 ? total : Math.min(prev.end, total)
+      return { start, end, total }
+    })
+  }, [sessionLen])
 
-  // Debounced remaster when tracks / master bus change
   useEffect(() => {
-    const t = window.setTimeout(() => void rebuildMasterPreview(), 280)
+    if (recordingRef.current) return
+    const t = window.setTimeout(() => void rebuildMasterPreview(), 1200)
     return () => window.clearTimeout(t)
   }, [rebuildMasterPreview])
 
   useEffect(() => {
     return () => {
-      Object.values(trackWaveRefs.current).forEach((ws) => ws?.destroy())
-      waveRef.current?.destroy()
       tracks.forEach((t) => revokeUrl(t.url))
-      revokeUrl(masterUrl)
+      cameraClips.forEach((clip) => revokeUrl(clip.url))
       stopMetronome()
-      streamRef.current?.getTracks().forEach((tr) => tr.stop())
+      stopMix()
+      stopStreams(streamRef.current)
+      stopStreams(idleStreamRef.current)
+      stopStreams(Object.values(cameraStreamsRef.current))
+      cameraCapturesRef.current.forEach((c) => {
+        if (c.recorder.state !== 'inactive') c.recorder.stop()
+      })
+      cueRef.current?.stop()
+      stopMeterRef.current.forEach((fn) => fn())
+      idleStopRef.current.forEach((fn) => fn())
+      abortRef.current?.abort()
+      if (recRafRef.current) cancelAnimationFrame(recRafRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -377,19 +509,216 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
     return () => stopMetronome()
   }, [metronome, bpm])
 
+  useEffect(() => {
+    if (!navigator.mediaDevices?.enumerateDevices) return
+    const load = async () => {
+      try {
+        const list = await navigator.mediaDevices.enumerateDevices()
+        setMics(list.filter((d) => d.kind === 'audioinput'))
+        setCams(list.filter((d) => d.kind === 'videoinput'))
+      } catch {
+        /* permission comes on first record */
+      }
+    }
+    void load()
+    navigator.mediaDevices.addEventListener?.('devicechange', load)
+    return () => navigator.mediaDevices.removeEventListener?.('devicechange', load)
+  }, [])
+
+  useEffect(() => {
+    if (recording || !anyArmed || !navigator.mediaDevices?.getUserMedia) return
+    let cancelled = false
+    const armed = tracks.filter((t) => t.armed)
+    const keys = [
+      ...new Set(
+        (armed.length ? armed : []).map((t) => deviceKey(t.personId)).filter((key) => key !== REMOTE_GUEST_KEY),
+      ),
+    ]
+    if (keys.length === 0 && !remoteGuest) keys.push(micId || '')
+    void (async () => {
+      try {
+        const streams = keys.length ? await openInputStreams(keys, rawInput) : new Map<string, MediaStream>()
+        if (cancelled || recordingRef.current) {
+          stopStreams(streams.values())
+          return
+        }
+        if (remoteGuest) streams.set(REMOTE_GUEST_KEY, remoteGuest)
+        idleStreamRef.current = [...streams.values()].filter((stream) => stream !== remoteGuest)
+        const hostKey = people.find((p) => p.id === 'host')?.inputDeviceId || micId || ''
+        setHostTalkStream(streams.get(hostKey) || [...streams.values()].find((s) => s !== remoteGuest) || null)
+        try {
+          const list = await navigator.mediaDevices.enumerateDevices()
+          if (!cancelled) {
+            setMics(list.filter((d) => d.kind === 'audioinput'))
+            setCams(list.filter((d) => d.kind === 'videoinput'))
+          }
+        } catch {
+          /* labels appear after permission */
+        }
+        idleStopRef.current = [...streams.entries()].map(([key, stream]) => {
+          if (!stream) return () => {}
+          const names = [
+            ...new Set(
+              (armed.length ? armed : []).map((lane) => {
+                const laneKey = deviceKey(lane.personId)
+                if (laneKey !== key) return null
+                return people.find((p) => p.id === lane.personId)?.name || null
+              }).filter((n): n is string => Boolean(n)),
+            ),
+          ]
+          const meterKey = names.join(' + ') || (key === REMOTE_GUEST_KEY ? 'Guest' : 'Mic')
+          return attachInputMeter(stream, (peak) => {
+            setInputPeaks((prev) => ({ ...prev, [meterKey]: peak }))
+            if (peak >= 0.98) {
+              setClipHolds((prev) => ({ ...prev, [meterKey]: true }))
+              const timers = clipTimerRef.current
+              if (timers[meterKey]) window.clearTimeout(timers[meterKey])
+              timers[meterKey] = window.setTimeout(() => {
+                setClipHolds((prev) => ({ ...prev, [meterKey]: false }))
+              }, 1600)
+            }
+          })
+        })
+      } catch {
+        /* permission comes on Record */
+      }
+    })()
+    return () => {
+      cancelled = true
+      idleStopRef.current.forEach((fn) => fn())
+      idleStopRef.current = []
+      stopStreams(idleStreamRef.current)
+      idleStreamRef.current = []
+    }
+  }, [recording, anyArmed, rawInput, micId, remoteGuest, people, tracks.map((t) => `${t.id}:${t.armed}:${t.personId}`).join('|')])
+
+  useEffect(() => {
+    if (!recording) {
+      setRecClock(punchRef.current)
+      if (recRafRef.current) cancelAnimationFrame(recRafRef.current)
+      recRafRef.current = null
+      return
+    }
+    const tick = () => {
+      const elapsed = (performance.now() - recStartedAtRef.current) / 1000
+      const t = punchRef.current + Math.max(0, elapsed)
+      setRecClock(t)
+      setHead(t)
+      recRafRef.current = requestAnimationFrame(tick)
+    }
+    recRafRef.current = requestAnimationFrame(tick)
+    return () => {
+      if (recRafRef.current) cancelAnimationFrame(recRafRef.current)
+    }
+  }, [recording, setHead])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const tag = (event.target as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (event.code === 'Space') {
+        event.preventDefault()
+        if (!recording) void togglePlay()
+      }
+      if (event.key === 'r' || event.key === 'R') {
+        event.preventDefault()
+        void toggleRecord()
+      }
+      if (event.key >= '1' && event.key <= '9') {
+        const sfx = SFX_META[Number(event.key) - 1]
+        if (sfx && !recording) {
+          event.preventDefault()
+          void dropSfx(sfx.id)
+        }
+      }
+      if (event.key === '0' && !recording) {
+        const sfx = SFX_META[9]
+        if (sfx) {
+          event.preventDefault()
+          void dropSfx(sfx.id)
+        }
+      }
+      if ((event.key === 'c' || event.key === 'C') && onMarkChapter) {
+        event.preventDefault()
+        onMarkChapter(playheadRef.current)
+      }
+      if ((event.key === 's' || event.key === 'S') && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault()
+        splitSelectedAtPlayhead()
+      }
+      if ((event.key === 'Backspace' || event.key === 'Delete') && !recording) {
+        event.preventDefault()
+        editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, event.shiftKey), event.shiftKey ? 'Ripple-deleted range' : 'Cut hole in lane')
+      }
+      if ((event.key === 'm' || event.key === 'M') && !recording && event.shiftKey) {
+        event.preventDefault()
+        editRange((t) => muteRange(t, rangeRef.current.start, rangeRef.current.end, true), 'Muted range on this lane')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording, tracks, recMode, preroll, cueEnabled, selectedId, playing])
+
   function setBound(which: 'start' | 'end') {
-    const ws = waveRef.current
-    const region = regionRef.current
-    if (!ws || !region) return
-    const t = ws.getCurrentTime()
-    if (which === 'start') region.setOptions({ start: Math.min(t, region.end - 0.05) })
-    else region.setOptions({ end: Math.max(t, region.start + 0.05) })
+    const t = playheadRef.current
+    setRange((prev) => {
+      if (which === 'start') return { ...prev, start: Math.min(t, Math.max(0, prev.end - 0.05)) }
+      return { ...prev, end: Math.max(t, prev.start + 0.05) }
+    })
   }
 
   function nudge(seconds: number) {
-    const ws = waveRef.current
-    if (!ws) return
-    ws.setTime(Math.max(0, Math.min(ws.getDuration(), ws.getCurrentTime() + seconds)))
+    const total = Math.max(sessionLen, playheadRef.current)
+    setHead(Math.max(0, Math.min(total, playheadRef.current + seconds)))
+  }
+
+  async function togglePlay() {
+    if (recordingRef.current) return
+    if (playing || mixRef.current) {
+      const t = mixRef.current?.sessionTime() ?? playheadRef.current
+      stopMix()
+      setHead(t)
+      return
+    }
+    if (!hasAudio) return
+    const from = loop ? range.start : playheadRef.current
+    const prepared = await tracksWithInserts(tracks)
+    const handle = startLiveMix(prepared, { fromSec: from, gain: masterGain * cueGain })
+    if (!handle) {
+      setError('Nothing audible to play — unmute a take')
+      return
+    }
+    mixRef.current = handle
+    setPlaying(true)
+    const tick = () => {
+      const live = mixRef.current
+      if (!live) return
+      const now = live.sessionTime()
+      setHead(now)
+      const end = loop ? range.end || sessionLen : sessionLen
+      if (now >= end - 0.02) {
+        if (loop && range.end > range.start) {
+          live.stop()
+          void tracksWithInserts(tracks).then((againTracks) => {
+            const again = startLiveMix(againTracks, { fromSec: range.start, gain: masterGain * cueGain })
+            mixRef.current = again
+            if (!again) {
+              stopMix()
+              return
+            }
+            void again.ctx.resume()
+            playRafRef.current = requestAnimationFrame(tick)
+          })
+          return
+        }
+        stopMix()
+        setHead(end)
+        return
+      }
+      playRafRef.current = requestAnimationFrame(tick)
+    }
+    playRafRef.current = requestAnimationFrame(tick)
   }
 
   async function undo() {
@@ -408,19 +737,72 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
     setOk('Undid last change')
   }
 
-  async function runEffect(id: EffectId) {
+  async function restoreSavedSession() {
+    if (!episodeId || !recover) return
+    setBusy('Restoring takes from this computer…')
+    setError(null)
+    try {
+      const saved = await loadSession(episodeId)
+      if (!saved) {
+        setError('No saved takes found')
+        setRecover(null)
+        setSessionStatus('open')
+        return
+      }
+      tracks.forEach((t) => revokeUrl(t.url))
+      cameraClips.forEach((clip) => revokeUrl(clip.url))
+      setPeople(saved.people)
+      setTracks(ensurePersonLanes(saved.tracks, saved.people))
+      setCameraClips(saved.cameras)
+      setSelectedCamClipId(saved.cameras[0]?.id || null)
+      setSelectedId(saved.tracks.find((t) => t.armed)?.id || saved.tracks.find((t) => t.buffer)?.id || null)
+      seededRef.current = true
+      setRecover(null)
+      setSessionStatus('open')
+      const camNote = saved.cameras.length
+        ? ` + ${saved.cameras.length} camera file${saved.cameras.length === 1 ? '' : 's'}`
+        : ''
+      setOk(
+        `Restored ${saved.tracks.filter((t) => t.buffer).length} takes${camNote} from ${new Date(recover.savedAt).toLocaleTimeString()}`,
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not restore session')
+      setSessionStatus('open')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  function dismissRecover(discard = false) {
+    if (discard && episodeId) void clearSession(episodeId)
+    setRecover(null)
+    setSessionStatus('open')
+  }
+
+  async function runEffect(id: EffectId, mode: 'insert' | 'render' = isInsertFx(id) ? 'insert' : 'render') {
     if (!selected?.buffer) {
       setError('Select a track with audio first')
       return
     }
+    if (mode === 'insert') {
+      pushHistory()
+      const slot = { id, bypass: false, wet: 1 }
+      setTracks((prev) =>
+        prev.map((t) => (t.id === selected.id ? { ...t, inserts: [...(t.inserts || []), slot] } : t)),
+      )
+      invalidateInsertCache(selected.id)
+      setApplied((prev) => [...prev, id])
+      setOk(`${EFFECT_META.find((e) => e.id === id)?.label || id} on insert rack · ${selected.name}`)
+      return
+    }
     pushHistory()
-    setBusy(`Applying ${id.replace('_', ' ')} on ${selected.name}…`)
+    setBusy(`Rendering ${id.replace('_', ' ')} on ${selected.name}…`)
     setError(null)
     try {
       const next = await applyEffect(cloneBuffer(selected.buffer), id)
       assignBufferToTrack(selected.id, next)
       setApplied((prev) => [...prev, id])
-      setOk(`${EFFECT_META.find((e) => e.id === id)?.label || id} → ${selected.name}`)
+      setOk(`${EFFECT_META.find((e) => e.id === id)?.label || id} baked into ${selected.name}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Effect failed')
     } finally {
@@ -428,88 +810,541 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
     }
   }
 
+  function deviceKey(personId: string) {
+    if (personId === 'guest' && remoteGuestRef.current) return REMOTE_GUEST_KEY
+    return people.find((p) => p.id === personId)?.inputDeviceId || micId || ''
+  }
+
+  function stopLocalRecordStreams() {
+    stopStreams(streamRef.current.filter((stream) => stream !== remoteGuestRef.current))
+    streamRef.current = []
+  }
+
+  function stopCameraRecorders() {
+    cameraCapturesRef.current.forEach((c) => {
+      if (c.recorder.state !== 'inactive') c.recorder.stop()
+    })
+  }
+
+  function liveCameraJobs() {
+    const jobs = people
+      .filter((p) => p.kind === 'voice' && cameraStreamsRef.current[p.id])
+      .map((p) => ({ person: p, stream: cameraStreamsRef.current[p.id]! }))
+    const remote = remoteGuestRef.current
+    const guestPerson = people.find((p) => p.id === 'guest')
+    if (guestPerson && remote && streamHasLiveVideo(remote)) {
+      const job = { person: guestPerson, stream: remote }
+      const idx = jobs.findIndex((j) => j.person.id === 'guest')
+      if (idx >= 0) jobs[idx] = job
+      else jobs.push(job)
+    }
+    return jobs
+  }
+
+  async function refreshMediaDevices() {
+    if (!navigator.mediaDevices?.enumerateDevices) return
+    try {
+      const list = await navigator.mediaDevices.enumerateDevices()
+      setMics(list.filter((d) => d.kind === 'audioinput'))
+      setCams(list.filter((d) => d.kind === 'videoinput'))
+    } catch {
+      /* labels appear after permission */
+    }
+  }
+
+  function closeCamera(personId: string) {
+    const stream = cameraStreamsRef.current[personId]
+    if (stream) stopStreams([stream])
+    setCameraStreams((prev) => {
+      const next = { ...prev }
+      delete next[personId]
+      return next
+    })
+  }
+
+  async function openPersonCamera(personId: string) {
+    const person = people.find((p) => p.id === personId)
+    setError(null)
+    try {
+      const stream = await openCameraStream(person?.videoDeviceId)
+      setCameraStreams((prev) => {
+        const old = prev[personId]
+        if (old && old !== stream) stopStreams([old])
+        return { ...prev, [personId]: stream }
+      })
+      await refreshMediaDevices()
+      setOk(
+        `${person?.name || 'Camera'} preview is live · 720p cap · ~${CAMERA_MB_PER_MIN} MB/min · Record writes a separate camera file`,
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Camera access was blocked')
+    }
+  }
+
+  async function toggleCamera(personId: string) {
+    if (cameraStreams[personId]) {
+      closeCamera(personId)
+      setCamWarnFor((id) => (id === personId ? null : id))
+      return
+    }
+    if (!camWarnedRef.current) {
+      setCamWarnFor(personId)
+      return
+    }
+    await openPersonCamera(personId)
+  }
+
+  function confirmArmCamera() {
+    const personId = camWarnFor
+    camWarnedRef.current = true
+    setCamWarnFor(null)
+    if (personId) void openPersonCamera(personId)
+  }
+
+  async function changeCameraDevice(personId: string, deviceId: string) {
+    setPeople((prev) => prev.map((p) => (p.id === personId ? { ...p, videoDeviceId: deviceId } : p)))
+    if (!cameraStreams[personId]) return
+    setError(null)
+    try {
+      const stream = await openCameraStream(deviceId || undefined)
+      setCameraStreams((prev) => {
+        const old = prev[personId]
+        if (old && old !== stream) stopStreams([old])
+        return { ...prev, [personId]: stream }
+      })
+      await refreshMediaDevices()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not switch camera')
+    }
+  }
+
+  function discardCameraClip(id: string) {
+    setCameraClips((prev) => {
+      const clip = prev.find((c) => c.id === id)
+      if (clip) revokeUrl(clip.url)
+      return prev.filter((c) => c.id !== id)
+    })
+    if (selectedCamClipId === id) setSelectedCamClipId(null)
+  }
+
+  async function applyGuestCamera(url: string) {
+    setBusy('Loading guest camera backup…')
+    try {
+      const sourceUrl = `/api/admin/media/file?url=${encodeURIComponent(url)}`
+      const res = await fetch(sourceUrl)
+      if (!res.ok) throw new Error('Could not load guest camera backup')
+      const blob = await res.blob()
+      if (blob.size < 64) throw new Error('Guest camera backup was empty')
+      const objectUrl = URL.createObjectURL(blob)
+      const fullDur = await measureVideoDuration(objectUrl)
+      const clip: CameraClip = {
+        id: newCameraClipId(),
+        personId: 'guest',
+        url: objectUrl,
+        mime: blob.type || 'video/webm',
+        offset: playheadRef.current,
+        duration: Math.max(0.1, Number.isFinite(fullDur) && fullDur > 0 ? fullDur : 0.1),
+        trimStart: 0,
+        bytes: blob.size,
+      }
+      setCameraClips((prev) => [...prev, clip])
+      setSelectedCamClipId(clip.id)
+      setOk('Guest camera backup laid on the Guest camera lane — not in the RSS mix')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load guest camera')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function applyGuestTake(url: string) {
+    const guest = emptyTakeForPerson(tracks, 'guest') || tracks.find((t) => t.personId === 'guest')
+    if (!guest) return
+    setBusy('Loading guest take…')
+    try {
+      pushHistory()
+      const sourceUrl = `/api/admin/media/file?url=${encodeURIComponent(url)}`
+      const buffer = await decodeUrl(sourceUrl)
+      assignBufferToTrack(guest.id, buffer, `Remote guest take laid on ${guest.name}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load guest take')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  function personName(personId: string) {
+    return people.find((p) => p.id === personId)?.name || personId
+  }
+
+  /** One capture per unique input. Voices on the same mic share that take. */
+  function captureJobs(lanes: StudioTrack[]) {
+    const groups = new Map<string, StudioTrack[]>()
+    for (const lane of lanes) {
+      const key = deviceKey(lane.personId)
+      const list = groups.get(key) || []
+      list.push(lane)
+      groups.set(key, list)
+    }
+    return [...groups.entries()].map(([key, group]) => {
+      const lane = group.find((t) => t.id === selectedId) || group[0]
+      const sharedNames = [...new Set(group.map((t) => personName(t.personId)))]
+      return { key, lane, group, sharedNames }
+    })
+  }
+
   async function toggleRecord() {
-    if (recording) {
-      recorderRef.current?.stop()
+    if (recordingRef.current) {
+      if (!recLiveRef.current) {
+        abortRef.current?.abort()
+        capturesRef.current.forEach((c) => {
+          if (c.recorder.state !== 'inactive') c.recorder.stop()
+        })
+        stopCameraRecorders()
+        cameraCapturesRef.current = []
+        finishRecCleanup()
+        stopLocalRecordStreams()
+        recordingRef.current = false
+        setRecording(false)
+        setOk('Record cancelled')
+        return
+      }
+      capturesRef.current.forEach((c) => {
+        if (c.recorder.state !== 'inactive') c.recorder.stop()
+      })
+      stopCameraRecorders()
       return
     }
-    const target =
-      tracks.find((t) => t.armed) || selected || tracks.find((t) => t.role === 'vocal') || tracks[0]
-    if (!target) {
-      setError('Add a track before recording')
+
+    const lanes = (() => {
+      const armed = tracks.filter((t) => t.armed)
+      if (armed.length) return armed
+      const fallback = selected || tracks.find((t) => t.role === 'vocal') || tracks[0]
+      return fallback ? [fallback] : []
+    })()
+    if (lanes.length === 0) {
+      setError('Add a person and arm a take before recording')
       return
     }
-    setSelectedId(target.id)
+
+    const jobs = captureJobs(lanes)
+    if (jobs.length === 0) {
+      setError('Add a person and arm a take before recording')
+      return
+    }
+
+    const playheadNow = playheadRef.current
+    const punch =
+      jobs.length === 1
+        ? punchInTime(recMode, playheadNow, tracks, jobs[0].lane.personId)
+        : sharedPunchInTime(
+            recMode,
+            playheadNow,
+            tracks,
+            jobs.map((j) => j.lane.personId),
+          )
+    const cueStart = Math.max(0, punch - preroll)
+    const excludeIds = jobs.map((j) => j.lane.id)
+    const recLabel = jobs
+      .map((j) =>
+        j.sharedNames.length > 1 ? `${j.sharedNames.join(' + ')} (shared mic)` : j.sharedNames[0],
+      )
+      .join(' · ')
+
+    const ac = new AbortController()
+    abortRef.current = ac
+    punchRef.current = punch
+    recLiveRef.current = false
+    recStartedAtRef.current = performance.now()
+    recordingRef.current = true
+    setSelectedId(jobs[0].lane.id)
+    setRecording(true)
     setError(null)
     setOk(null)
+    setInputPeaks({})
+    stopMix()
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      })
-      streamRef.current = stream
-      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/mp4')
-          ? 'audio/mp4'
-          : ''
-      const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
-      chunksRef.current = []
-      recorder.ondataavailable = (event) => {
-        if (event.data.size) chunksRef.current.push(event.data)
+      idleStopRef.current.forEach((fn) => fn())
+      idleStopRef.current = []
+      stopStreams(idleStreamRef.current)
+      idleStreamRef.current = []
+      await sleep(40, ac.signal)
+      if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
+      const uniqueDevices = jobs.map((j) => j.key)
+      const localKeys = uniqueDevices.filter((key) => key !== REMOTE_GUEST_KEY)
+      const streams = localKeys.length
+        ? await openInputStreams(localKeys, rawInput)
+        : new Map<string, MediaStream>()
+      if (uniqueDevices.includes(REMOTE_GUEST_KEY)) {
+        const remote = remoteGuestRef.current
+        if (!remote) throw new Error('Guest is not connected. Wait for them to join, or un-arm Guest.')
+        streams.set(REMOTE_GUEST_KEY, remote)
       }
-      recorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop())
-        streamRef.current = null
-        recorderRef.current = null
+      if (ac.signal.aborted) {
+        stopStreams([...streams.values()].filter((stream) => stream !== remoteGuestRef.current))
+        finishRecCleanup()
+        recordingRef.current = false
         setRecording(false)
-        const type = recorder.mimeType || 'audio/webm'
-        const blob = new Blob(chunksRef.current, { type })
-        if (blob.size < 64) {
-          setError('Recording was empty')
-          return
+        return
+      }
+      streamRef.current = [...streams.values()].filter((stream) => stream !== remoteGuestRef.current)
+      const hostKey = people.find((p) => p.id === 'host')?.inputDeviceId || micId || ''
+      setHostTalkStream(streams.get(hostKey) || [...streams.values()].find((s) => s !== remoteGuestRef.current) || null)
+      stopMeterRef.current = jobs.map((job) => {
+        const stream = streams.get(job.key)
+        if (!stream) return () => {}
+        const meterKey = job.sharedNames.join(' + ') || 'mic'
+        return attachInputMeter(stream, (peak) => {
+          setInputPeaks((prev) => ({ ...prev, [meterKey]: peak }))
+          if (peak >= 0.98) {
+            setClipHolds((prev) => ({ ...prev, [meterKey]: true }))
+            const timers = clipTimerRef.current
+            if (timers[meterKey]) window.clearTimeout(timers[meterKey])
+            timers[meterKey] = window.setTimeout(() => {
+              setClipHolds((prev) => ({ ...prev, [meterKey]: false }))
+            }, 1600)
+          }
+        })
+      })
+
+      try {
+        const list = await navigator.mediaDevices.enumerateDevices()
+        setMics(list.filter((d) => d.kind === 'audioinput'))
+        setCams(list.filter((d) => d.kind === 'videoinput'))
+      } catch {
+        /* ignore */
+      }
+
+      if (countInBeats > 0) {
+        setOk('Count-in…')
+        await playCountIn(countInBeats, bpm, ac.signal)
+      }
+
+      if (cueEnabled) {
+        const prepared = await tracksWithInserts(tracks)
+        const cue = startLiveMix(prepared, { fromSec: cueStart, excludeIds, gain: cueGain })
+        cueRef.current = cue
+        if (cue) await cue.ctx.resume()
+      }
+
+      const prerollSec = punch - cueStart
+      if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
+
+      const recTrim = Math.max(0, prerollSec)
+      const captures = jobs.map((job) => {
+        const stream = streams.get(job.key)
+        if (!stream) {
+          throw new Error(`No microphone stream for ${job.sharedNames.join(' + ') || 'this voice'}`)
         }
-        setBusy('Decoding recording…')
+        return { job, capture: startLaneCapture(job.lane.id, stream) }
+      })
+      capturesRef.current = captures.map((c) => c.capture)
+      recorderRef.current = captures.map((c) => c.capture.recorder)
+      const camJobs = liveCameraJobs()
+      const camCaptures = camJobs.map((job) => startCameraCapture(job.person.id, job.stream))
+      cameraCapturesRef.current = camCaptures
+
+      void Promise.all([
+        Promise.all(captures.map((c) => c.capture.done)),
+        Promise.all(camCaptures.map((c) => c.done.catch(() => new Blob()))),
+      ]).then(async ([blobs, camBlobs]) => {
+        finishRecCleanup()
+        stopLocalRecordStreams()
+        recorderRef.current = []
+        capturesRef.current = []
+        cameraCapturesRef.current = []
+        recordingRef.current = false
+        recLiveRef.current = false
+        setRecording(false)
+        if (ac.signal.aborted) return
+        const shared = jobs.some((j) => j.sharedNames.length > 1)
+        setBusy(
+          jobs.length > 1
+            ? 'Laying Host + Guest onto the timeline…'
+            : shared
+              ? 'Laying shared-mic take onto the timeline…'
+              : 'Laying take onto the timeline…',
+        )
         try {
           pushHistory()
-          const buffer = await bufferFromBlob(blob)
-          const mode = (document.getElementById('rec-mode') as HTMLSelectElement | null)?.value || 'replace'
-          if (mode === 'append' && target.buffer) {
-            assignBufferToTrack(target.id, appendBuffers(target.buffer, buffer), `Appended to ${target.name}`)
-          } else if (mode === 'overdub' && target.buffer) {
-            // Mix new take onto existing clip at offset 0 as a layered buffer via temporary mix
-            const layered = mixdownTracks([
-              { ...target, offset: 0, muted: false, solo: false },
-              {
-                ...createEmptyTrack({ name: 'take', role: 'vocal' }),
-                buffer,
-                offset: target.offset,
-                volume: 1,
-                muted: false,
-                solo: false,
-              },
-            ])
-            assignBufferToTrack(target.id, layered, `Overdubbed ${target.name}`)
-          } else {
-            assignBufferToTrack(target.id, buffer, `Recorded onto ${target.name}`)
+          const decoded: { lane: StudioTrack; buffer: AudioBuffer; sharedNames: string[] }[] = []
+          for (let i = 0; i < captures.length; i++) {
+            const blob = blobs[i]
+            if (!blob || blob.size < 64) continue
+            let buffer = await bufferFromBlob(blob)
+            if (recTrim > 0.04) {
+              if (buffer.duration <= recTrim + 0.08) continue
+              buffer = sliceBuffer(buffer, recTrim, buffer.duration)
+            }
+            decoded.push({
+              lane: captures[i].job.lane,
+              buffer,
+              sharedNames: captures[i].job.sharedNames,
+            })
           }
+          if (decoded.length === 0 && camCaptures.length === 0) {
+            setError('Recording was empty — keep rolling through the preroll')
+            return
+          }
+          if (decoded.length === 0) {
+            setError('Audio take was empty — keep rolling through the preroll. Camera file may still land.')
+          }
+          if (decoded.length > 0) setTracks((prev) => {
+            let next = prev
+            const laidIds: string[] = []
+            const cleanup = voiceIsolate ? VOICE_CLEANUP_INSERTS.map((s) => ({ ...s })) : null
+            for (const { lane, buffer, sharedNames } of decoded) {
+              const person = people.find((p) => p.id === lane.personId)
+              const reuse =
+                replaceArmed && lane.buffer
+                  ? next.find((t) => t.id === lane.id)
+                  : emptyTakeForPerson(next, lane.personId) || (lane.buffer ? null : next.find((t) => t.id === lane.id))
+              const offset = replaceArmed && reuse?.buffer ? reuse.offset : punch
+              const takeLabel =
+                sharedNames.length > 1
+                  ? `${sharedNames.join(' + ')} · take`
+                  : `${person?.name || 'Voice'} · take`
+              if (reuse) {
+                revokeUrl(reuse.url)
+                const url = bufferToUrl(buffer)
+                laidIds.push(reuse.id)
+                next = withListenTake(
+                  next.map((t) =>
+                    t.id === reuse.id
+                      ? {
+                          ...t,
+                          name:
+                            sharedNames.length > 1
+                              ? `${sharedNames.join(' + ')} · take ${t.take}`
+                              : t.name,
+                          buffer: cloneAudioBuffer(buffer),
+                          url,
+                          offset,
+                          clips: [fullClipForBuffer(buffer, offset, t.fadeIn, t.fadeOut)],
+                          inserts: cleanup || t.inserts,
+                          armed: true,
+                          listen: true,
+                        }
+                      : t,
+                  ),
+                  reuse.id,
+                )
+              } else {
+                const take = nextTakeNumber(next, lane.personId)
+                const made = createEmptyTrack({
+                  name: `${takeLabel} ${take}`,
+                  role: person ? roleForPerson(person) : lane.role,
+                  personId: lane.personId,
+                  take,
+                  color: person?.color || lane.color,
+                  offset: punch,
+                  armed: true,
+                  volume: 1,
+                  listen: true,
+                  inserts: cleanup || [],
+                  clips: [fullClipForBuffer(buffer, punch, 0.05, 0.15)],
+                })
+                made.buffer = cloneAudioBuffer(buffer)
+                made.url = bufferToUrl(buffer)
+                laidIds.push(made.id)
+                next = next
+                  .map((t) => ({
+                    ...t,
+                    listen: t.personId === lane.personId && !t.layered ? false : t.listen,
+                  }))
+                  .concat(made)
+              }
+            }
+            if (autoMuteQuiet && laidIds.length >= 2) {
+              next = applyFollowTalker(next, laidIds[0], laidIds[1]).tracks
+            }
+            return next
+          })
+          setSelectedId(decoded[0]?.lane.id || jobs[0].lane.id)
           setApplied([])
+          const laidCams: CameraClip[] = []
+          for (let i = 0; i < camCaptures.length; i++) {
+            const blob = camBlobs[i]
+            if (!blob || blob.size < 64) continue
+            const url = URL.createObjectURL(blob)
+            const fullDur = await measureVideoDuration(url)
+            const fallback = Math.max(0.1, (performance.now() - recStartedAtRef.current) / 1000)
+            const rawDur = Number.isFinite(fullDur) && fullDur > 0 ? fullDur : fallback + recTrim
+            laidCams.push({
+              id: newCameraClipId(),
+              personId: camCaptures[i].key,
+              url,
+              mime: blob.type || 'video/webm',
+              offset: punch,
+              duration: Math.max(0.1, rawDur - recTrim),
+              trimStart: recTrim,
+              bytes: blob.size,
+            })
+          }
+          if (laidCams.length) {
+            setCameraClips((prev) => [...prev, ...laidCams])
+            setSelectedCamClipId(laidCams[0].id)
+          }
+          const camNote = laidCams.length
+            ? ` · ${laidCams.length} camera file${laidCams.length === 1 ? '' : 's'} (${laidCams.map((c) => formatBytes(c.bytes)).join(', ')}, not in RSS)`
+            : ''
+          if (decoded.length > 0) {
+            setOk(
+              decoded.length > 1
+                ? `Host + Guest takes at ${formatClock(punch)} — two mics, one punch${autoMuteQuiet ? ' · quieter mic muted on the timeline' : ''}${voiceIsolate ? ' · isolate on the insert rack' : ''}${camNote}`
+                : decoded[0]?.sharedNames.length > 1
+                  ? `Shared mic — ${decoded[0].sharedNames.join(' + ')} on one take at ${formatClock(punch)}${camNote}`
+                  : `Take at ${formatClock(punch)}${camNote}`,
+            )
+          } else if (laidCams.length) {
+            setOk(`Camera file at ${formatClock(punch)}${camNote}`)
+          }
         } catch (err) {
           setError(err instanceof Error ? err.message : 'Could not decode recording')
         } finally {
           setBusy(null)
         }
+      })
+
+      if (prerollSec > 0.04) {
+        setOk(`Preroll ${preroll.toFixed(0)}s — keep rolling; come in at ${formatClock(punch)}`)
+        const cueCtx = cueRef.current?.ctx
+        if (cueCtx) {
+          await waitUntilContextTime(cueCtx, cueCtx.currentTime + prerollSec, ac.signal)
+        } else {
+          await sleep(prerollSec * 1000, ac.signal)
+        }
       }
-      recorderRef.current = recorder
-      recorder.start(250)
-      setRecording(true)
-      setOk(`Recording into “${target.name}”…`)
+      recLiveRef.current = true
+      recStartedAtRef.current = performance.now()
+      const camCount = cameraCapturesRef.current.length
+      setOk(
+        `● REC ${recLabel} at ${formatClock(punch)}${cueEnabled ? ' · mix in headphones' : ''}${
+          camCount ? ` · ${camCount} camera${camCount === 1 ? '' : 's'}` : ''
+        }`,
+      )
     } catch (err) {
+      finishRecCleanup()
+      stopCameraRecorders()
+      cameraCapturesRef.current = []
+      stopLocalRecordStreams()
+      recordingRef.current = false
+      recLiveRef.current = false
+      setRecording(false)
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setOk('Record cancelled')
+        return
+      }
       setError(err instanceof Error ? err.message : 'Microphone access was blocked')
     }
+  }
+
+  function finishRecCleanup() {
+    cueRef.current?.stop()
+    cueRef.current = null
+    stopMeterRef.current.forEach((fn) => fn())
+    stopMeterRef.current = []
   }
 
   async function onUploadPick(file: File | null) {
@@ -530,25 +1365,151 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
     }
   }
 
-  function addTrack(role: StudioTrack['role'] = 'custom') {
-    pushHistory()
-    const names: Record<string, string> = {
-      vocal: 'Vocal',
-      guest: 'Guest',
-      music: 'Music',
-      bed: 'Bed',
-      sfx: 'SFX',
-      custom: `Track ${tracks.length + 1}`,
-      master: 'Master',
+  async function onImportBed(file: File | null) {
+    if (!file) return
+    setBusy('Loading music bed…')
+    setError(null)
+    try {
+      pushHistory()
+      const buffer = await bufferFromBlob(file)
+      const url = bufferToUrl(buffer)
+      setTracks((prev) => {
+        const empty = prev.find((t) => (t.role === 'bed' || t.role === 'music') && !t.buffer)
+        if (empty) {
+          revokeUrl(empty.url)
+          return prev.map((t) =>
+            t.id === empty.id
+              ? {
+                  ...t,
+                  buffer: cloneAudioBuffer(buffer),
+                  url,
+                  offset: 0,
+                  clips: [fullClipForBuffer(buffer, 0, t.fadeIn, t.fadeOut)],
+                }
+              : t,
+          )
+        }
+        const next = createEmptyTrack({
+          name: file.name.replace(/\.[^.]+$/, '') || 'Music bed',
+          role: 'bed',
+          personId: 'beds',
+          take: nextTakeNumber(prev, 'beds'),
+          color: '#FFB86B',
+          volume: 0.35,
+          offset: 0,
+          clips: [fullClipForBuffer(buffer, 0, 0.05, 0.2)],
+        })
+        next.buffer = cloneAudioBuffer(buffer)
+        next.url = url
+        return [...prev, next]
+      })
+      setOk(`Music bed from ${file.name} — select a range and duck under speech`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load music')
+    } finally {
+      setBusy(null)
     }
+  }
+
+  function addTrack(role: StudioTrack['role'] = 'custom') {
+    const person =
+      people.find((p) =>
+        role === 'guest'
+          ? p.id === 'guest'
+          : role === 'sfx'
+            ? p.kind === 'sfx'
+            : role === 'bed' || role === 'music'
+              ? p.kind === 'bed'
+              : p.kind === 'voice' && p.id === 'host',
+      ) || people[0]
+    if (!person) return
+    addTake(person.id, role)
+  }
+
+  function addTake(personId: string, roleOverride?: StudioTrack['role']) {
+    const person = people.find((p) => p.id === personId)
+    if (!person) return
+    pushHistory()
+    const take = nextTakeNumber(tracks, personId)
+    const role = roleOverride || roleForPerson(person)
     const track = createEmptyTrack({
-      name: names[role] || `Track ${tracks.length + 1}`,
+      name: person.kind === 'voice' ? `${person.name} · take ${take}` : `${person.name} ${take}`,
       role,
-      color: TRACK_COLORS[tracks.length % TRACK_COLORS.length],
+      personId,
+      take,
+      color: person.color,
+      armed: person.kind === 'voice',
+      volume: person.kind === 'bed' ? 0.35 : 1,
+      listen: true,
     })
-    setTracks((prev) => [...prev, track])
+    setTracks((prev) => {
+      const rest =
+        person.kind === 'voice'
+          ? prev.map((t) => ({
+              ...t,
+              armed: false,
+              listen: t.personId === personId && !t.layered ? false : t.listen,
+            }))
+          : prev
+      return [...rest, track]
+    })
     setSelectedId(track.id)
     setOk(`Added ${track.name}`)
+  }
+
+  function addPerson() {
+    const name = personDraft.trim() || `Voice ${people.filter((p) => p.kind === 'voice').length + 1}`
+    pushHistory()
+    const person: SessionPerson = {
+      id: newPersonId(),
+      name,
+      color: TRACK_COLORS[people.length % TRACK_COLORS.length],
+      kind: 'voice',
+    }
+    setPeople((prev) => {
+      const beds = prev.filter((p) => p.kind !== 'voice')
+      const voices = prev.filter((p) => p.kind === 'voice')
+      return [...voices, person, ...beds]
+    })
+    const lanes = emptyTakesForPerson(person).map((t, i) => ({ ...t, armed: i === 0 }))
+    setTracks((prev) => prev.map((t) => ({ ...t, armed: false })).concat(lanes))
+    setSelectedId(lanes[0]?.id || null)
+    setPersonDraft('')
+    setOk(`${name} is in the session — three tracks ready, arm and record`)
+  }
+
+  async function dropSfx(id: SfxId) {
+    const playheadNow = playheadRef.current
+    const sfxPerson = people.find((p) => p.kind === 'sfx') || people[people.length - 1]
+    if (!sfxPerson) return
+    setBusy('Rendering SFX…')
+    try {
+      pushHistory()
+      const buffer = await renderSfx(id)
+      const take = nextTakeNumber(tracks, sfxPerson.id)
+      const metaLabel = SFX_META.find((s) => s.id === id)?.label || id
+      const track = createEmptyTrack({
+        name: metaLabel,
+        role: 'sfx',
+        personId: sfxPerson.id,
+        take,
+        color: sfxPerson.color,
+        offset: playheadNow,
+        volume: 0.9,
+        fadeIn: 0.01,
+        fadeOut: 0.05,
+      })
+      track.buffer = cloneAudioBuffer(buffer)
+      track.url = bufferToUrl(buffer)
+      track.clips = [fullClipForBuffer(buffer, playheadNow, 0.01, 0.05)]
+      setTracks((prev) => [...prev, track])
+      setSelectedId(track.id)
+      setOk(`Dropped ${id} at ${formatClock(playheadNow)}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'SFX failed')
+    } finally {
+      setBusy(null)
+    }
   }
 
   function removeTrack(id: string) {
@@ -560,8 +1521,7 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
     setTracks((prev) => {
       const doomed = prev.find((t) => t.id === id)
       revokeUrl(doomed?.url || null)
-      trackWaveRefs.current[id]?.destroy()
-      delete trackWaveRefs.current[id]
+      invalidateInsertCache(id)
       const next = prev.filter((t) => t.id !== id)
       if (selectedId === id) setSelectedId(next[0]?.id || null)
       return next
@@ -575,16 +1535,24 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
     const copy = createEmptyTrack({
       name: `${src.name} copy`,
       role: src.role,
+      personId: src.personId,
+      take: nextTakeNumber(tracks, src.personId),
       color: src.color,
       volume: src.volume,
       pan: src.pan,
       offset: src.offset,
       fadeIn: src.fadeIn,
       fadeOut: src.fadeOut,
+      inserts: src.inserts,
+      listen: isVoiceRole(src.role) ? false : src.listen,
+      layered: false,
     })
     if (src.buffer) {
       copy.buffer = cloneAudioBuffer(src.buffer)
       copy.url = bufferToUrl(src.buffer)
+      copy.clips = clipsOf(src).map((c) => ({ ...c, id: newClipId() }))
+      copy.automation = (src.automation || []).map((p) => ({ ...p }))
+      copy.compRanges = (src.compRanges || []).map((r) => ({ ...r }))
     }
     setTracks((prev) => {
       const idx = prev.findIndex((t) => t.id === id)
@@ -601,60 +1569,78 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
       prev.map((t) => {
         if (t.id !== id) return t
         revokeUrl(t.url)
-        return { ...t, buffer: null, url: null }
+        return { ...t, buffer: null, url: null, clips: [], automation: [] }
       }),
     )
   }
 
-  function armOnly(id: string) {
-    setTracks((prev) => prev.map((t) => ({ ...t, armed: t.id === id })))
+  function armTrack(id: string) {
+    const track = tracks.find((t) => t.id === id)
+    if (!track) return
+    setTracks((prev) =>
+      prev.map((t) => {
+        if (t.id === id) return { ...t, armed: !t.armed }
+        if (t.personId === track.personId) return { ...t, armed: false }
+        return t
+      }),
+    )
     setSelectedId(id)
   }
 
-  function splitSelectedAtPlayhead() {
-    if (!selected?.buffer) return
-    const ws = trackWaveRefs.current[selected.id]
-    const at = ws?.getCurrentTime() ?? 0
-    if (at <= 0.05 || at >= selected.buffer.duration - 0.05) {
-      setError('Move the playhead inside the clip to split')
+  function armHostAndGuest() {
+    const host = emptyTakeForPerson(tracks, 'host') || tracks.find((t) => t.personId === 'host')
+    const guest = emptyTakeForPerson(tracks, 'guest') || tracks.find((t) => t.personId === 'guest')
+    if (!host || !guest) {
+      setError('Need Host and Guest lanes')
+      return
+    }
+    setTracks((prev) => prev.map((t) => ({ ...t, armed: t.id === host.id || t.id === guest.id })))
+    setSelectedId(host.id)
+    setOk('Host + Guest armed. Same mic = one take. Two mics = two takes, one punch.')
+  }
+
+  function followTalkerNow() {
+    const armed = tracks.filter((t) => t.armed && t.buffer)
+    if (armed.length < 2) {
+      setError('Arm two recorded takes, then Follow talker. Recordings stay; only clips mute.')
       return
     }
     pushHistory()
-    const [a, b] = splitBuffer(selected.buffer, at)
-    const left = createEmptyTrack({
-      name: `${selected.name} A`,
-      role: selected.role,
-      color: selected.color,
-      volume: selected.volume,
-      pan: selected.pan,
-      offset: selected.offset,
-      fadeIn: selected.fadeIn,
-      fadeOut: 0.05,
-    })
-    left.buffer = a
-    left.url = bufferToUrl(a)
-    const right = createEmptyTrack({
-      name: `${selected.name} B`,
-      role: selected.role,
-      color: selected.color,
-      volume: selected.volume,
-      pan: selected.pan,
-      offset: selected.offset + a.duration,
-      fadeIn: 0.05,
-      fadeOut: selected.fadeOut,
-    })
-    right.buffer = b
-    right.url = bufferToUrl(b)
-    setTracks((prev) => {
-      const idx = prev.findIndex((t) => t.id === selected.id)
-      const doomed = prev[idx]
-      revokeUrl(doomed?.url || null)
-      const next = [...prev]
-      next.splice(idx, 1, left, right)
-      return next
-    })
-    setSelectedId(left.id)
-    setOk('Split into two tracks')
+    const result = applyFollowTalker(tracks, armed[0].id, armed[1].id)
+    setTracks(result.tracks)
+    setOk(
+      `Quieter mic muted on the timeline (${formatClock(result.mutedA)} / ${formatClock(result.mutedB)}). Both recordings kept.`,
+    )
+  }
+
+  function editRange(fn: (track: StudioTrack) => StudioTrack, label: string) {
+    const cur = rangeRef.current
+    const a = Math.min(cur.start, cur.end)
+    const b = Math.max(cur.start, cur.end)
+    if (b - a < 0.05) {
+      setError('Drag a range on the timeline (empty lane or ruler), then use the lane tools')
+      return
+    }
+    const ids = applyRangeAll
+      ? tracks.filter((t) => t.buffer).map((t) => t.id)
+      : selected
+        ? [selected.id]
+        : []
+    if (ids.length === 0) {
+      setError('Select a lane first')
+      return
+    }
+    pushHistory()
+    setTracks((prev) => prev.map((t) => (ids.includes(t.id) ? fn(t) : t)))
+    setOk(label)
+  }
+
+  function splitSelectedAtPlayhead() {
+    const target = selected
+    if (!target?.buffer) return
+    pushHistory()
+    setTracks((prev) => mapTrack(prev, target.id, (t) => splitTrackAt(t, playheadRef.current)))
+    setOk('Split on this lane — both pieces stay on the same track')
   }
 
   function bounceSelectedToStem() {
@@ -669,43 +1655,90 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
     const stem = createEmptyTrack({
       name: `${selected.name} bounce`,
       role: 'custom',
+      personId: selected.personId,
+      take: nextTakeNumber(tracks, selected.personId),
       color: TRACK_COLORS[(tracks.length + 1) % TRACK_COLORS.length],
       offset: selected.offset,
     })
     stem.buffer = bounced
     stem.url = bufferToUrl(bounced)
+    stem.clips = [fullClipForBuffer(bounced, selected.offset, 0.05, 0.15)]
     setTracks((prev) => [...prev, stem])
     setSelectedId(stem.id)
     setOk('Bounced track to new stem')
   }
 
-  async function applyMasterBus(ids: EffectId[]) {
+  async function applyMasterBus(ids: EffectId[], mode: 'keep' | 'replace' = 'keep') {
     if (!hasAudio) return
+    if (mode === 'replace') {
+      const confirmed = window.confirm(
+        'Replace this session with a single Master mix? All takes will be removed. Undo can bring them back until you leave the page.',
+      )
+      if (!confirmed) return
+    }
     pushHistory()
-    setBusy('Processing master bus…')
+    setBusy(mode === 'keep' ? 'Bouncing mix (keeping takes)…' : 'Replacing session with master…')
     try {
-      let mixed = mixdownTracks(tracks)
+      let mixed = mixdownTracks(await tracksWithInserts(tracks))
       mixed = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
       for (const id of ids) mixed = await applyEffect(mixed, id)
-      // Replace session with a single master stem (keeps empty scaffolding tracks)
       const master = createEmptyTrack({
         name: 'Master mix',
         role: 'master',
+        personId: 'beds',
+        take: nextTakeNumber(tracks, 'beds'),
         color: '#53D6FF',
-        armed: true,
+        armed: false,
+        muted: mode === 'keep',
       })
       master.buffer = mixed
       master.url = bufferToUrl(mixed)
-      tracks.forEach((t) => revokeUrl(t.url))
-      setTracks([
-        master,
-        createEmptyTrack({ name: 'Vocal (new take)', role: 'vocal', color: '#7CFFB2' }),
-        createEmptyTrack({ name: 'Music bed', role: 'bed', color: '#FFB86B', volume: 0.35 }),
-      ])
+      if (mode === 'replace') {
+        tracks.forEach((t) => revokeUrl(t.url))
+        setTracks([master, ...ensurePersonLanes(defaultSessionTracks(), DEFAULT_PEOPLE)])
+        setOk('Session replaced with Master mix')
+      } else {
+        setTracks((prev) => [...prev, master])
+        setOk('Bounced mix to a Master lane — source takes are still here')
+      }
       setSelectedId(master.id)
-      setOk('Master bus bounced — ready to export')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Master bus failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function downloadStems() {
+    if (!hasAudio) return
+    setBusy('Packing stems zip…')
+    setError(null)
+    try {
+      const prepared = await tracksWithInserts(tracks)
+      const files: { name: string; data: Uint8Array }[] = []
+      let mixed = mixdownTracks(prepared)
+      mixed = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
+      if (matchLufs) mixed = applyGainAndFades(mixed, gainForTargetLufs(measureLoudness(mixed).lufs, PODCAST_LUFS), 0, 0)
+      const mixBytes = new Uint8Array(await (await encodeMp3(mixed)).arrayBuffer())
+      files.push({ name: `${slugFile(title)}-mix.mp3`, data: mixBytes })
+      for (const track of prepared) {
+        if (!track.buffer) continue
+        const wav = encodeWav(track.buffer)
+        files.push({
+          name: `stems/${slugFile(track.name)}.wav`,
+          data: new Uint8Array(await wav.arrayBuffer()),
+        })
+      }
+      const zip = zipStore(files)
+      const url = URL.createObjectURL(zip)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${slugFile(title)}-stems.zip`
+      a.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 4000)
+      setOk(`Downloaded ${files.length - 1} stems + mix`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Stems zip failed')
     } finally {
       setBusy(null)
     }
@@ -720,16 +1753,22 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
     setError(null)
     setOk(null)
     try {
+      const prepared = await tracksWithInserts(tracks)
       const mixedRaw =
-        regionRef.current != null
-          ? mixdownTracks(tracks, {
-              startSec: regionRef.current.start,
-              endSec: regionRef.current.end,
+        range.end > range.start + 0.05 && range.end < sessionLen - 0.05
+          ? mixdownTracks(prepared, {
+              startSec: range.start,
+              endSec: range.end,
             })
-          : mixdownTracks(tracks)
+          : mixdownTracks(prepared)
       let mixed = applyGainAndFades(mixedRaw, masterGain, masterFadeIn, masterFadeOut)
-      // Final polish: gentle limit on master
+      if (matchLufs) {
+        const loud = measureLoudness(mixed)
+        mixed = applyGainAndFades(mixed, gainForTargetLufs(loud.lufs, PODCAST_LUFS), 0, 0)
+      }
       mixed = await applyEffect(mixed, 'limit')
+      const after = measureLoudness(mixed)
+      if (Number.isFinite(after.lufs)) setLoudness({ lufs: after.lufs, peakDb: after.peakDb })
       const blob = kind === 'wav' ? encodeWav(mixed) : await encodeMp3(mixed)
       const ext = kind === 'wav' ? 'wav' : 'mp3'
       const file = new File(
@@ -750,31 +1789,100 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
   const durationLabel = formatClock(sessionDuration(tracks))
   const peakDb = meter ? dbFromLinear(meter.peak) : null
   const rmsDb = meter ? dbFromLinear(meter.rms) : null
+  const recHint = REC_MODE_META.find((m) => m.id === recMode)?.hint
+  const boardDuration = Math.max(30, playhead + 8, sessionLen) + 4
+  const timelineBoard = {
+    people,
+    tracks,
+    playhead,
+    pxPerSec: zoom,
+    selectedId: selected?.id || null,
+    selectedClipId,
+    range,
+    durationSec: boardDuration,
+    scrollLeft: timelineScroll,
+    onScrollLeft: setTimelineScroll,
+    onSelect: (id: string, clipId: string | null) => {
+      setSelectedId(id)
+      setSelectedClipId(clipId)
+    },
+    onPlayhead: setHead,
+    onMoveClip: (id: string, clipId: string, offset: number) => {
+      setTracks((prev) => mapTrack(prev, id, (t) => moveClip(t, clipId, offset)))
+    },
+    onTrimClip: (id: string, clipId: string, edge: 'in' | 'out', time: number) => {
+      setTracks((prev) => mapTrack(prev, id, (t) => trimClip(t, clipId, edge, time)))
+    },
+    onRange: (start: number, end: number, trackId: string) => {
+      setSelectedId(trackId)
+      setRange((prev) => ({ ...prev, start, end }))
+    },
+  }
 
   return (
     <div className="rounded-2xl border border-[#27313B] bg-[#0C141C] overflow-hidden">
       <div className="px-4 py-3 border-b border-[#27313B] flex flex-wrap items-center justify-between gap-3 bg-[#11161C]">
         <div>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Multi-track vocal studio</p>
+          <p className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Podcast production room</p>
           <p className="text-sm text-[#B8C4CF]">
-            Tracks · mute/solo/arm · pan · effects · mixdown · host & publish to Apple / Spotify / Amazon RSS
+            One lane per person. After the mix puts the guest after the host. Takes autosave on this computer.
           </p>
         </div>
         <div className="text-right text-xs font-mono text-[#A9B8C6] space-y-0.5">
           <p>
-            {recording ? '● REC' : busy || (ready ? `Session ${durationLabel}` : 'Idle')}
+            {recording ? `● REC ${formatClock(recClock)}` : busy || (ready ? `${formatClock(playhead)} / ${durationLabel}` : 'Idle')}
           </p>
           {peakDb != null && Number.isFinite(peakDb) && (
             <p>
               Peak {peakDb.toFixed(1)} dB · RMS {rmsDb != null && Number.isFinite(rmsDb) ? rmsDb.toFixed(1) : '—'} dB
             </p>
           )}
+          {loudness && Number.isFinite(loudness.lufs) && (
+            <p className={loudness.lufs > PODCAST_LUFS + 2 ? 'text-[#FFB86B]' : 'text-[#8DEBFF]'}>
+              LUFS {loudness.lufs.toFixed(1)} · target {PODCAST_LUFS}
+            </p>
+          )}
         </div>
       </div>
 
       <div className="p-4 space-y-4">
+        {recover && sessionStatus === 'offer' && (
+          <div className="rounded-xl border border-[#53D6FF]/40 bg-[#0A1820] px-4 py-3 flex flex-wrap items-center gap-3">
+            <p className="text-sm text-[#F6FAFC] flex-1 min-w-[12rem]">
+              Recover {recover.takeCount} take{recover.takeCount === 1 ? '' : 's'}
+              {recover.cameraCount
+                ? ` + ${recover.cameraCount} camera file${recover.cameraCount === 1 ? '' : 's'}`
+                : ''}{' '}
+              ({formatClock(recover.durationSec)}) saved {new Date(recover.savedAt).toLocaleTimeString()} on this
+              computer.
+            </p>
+            <button type="button" className={primary} onClick={() => void restoreSavedSession()}>
+              Restore
+            </button>
+            <button type="button" className={btn} onClick={() => dismissRecover(false)}>
+              Keep empty
+            </button>
+            <button type="button" className={btn} onClick={() => dismissRecover(true)}>
+              Discard saved
+            </button>
+          </div>
+        )}
+
+        {camWarnFor && (
+          <div className="rounded-xl border border-[#FFB86B]/50 bg-[#20180C] px-4 py-3 flex flex-wrap items-center gap-3">
+            <p className="text-sm text-[#F6FAFC] flex-1 min-w-[12rem]">{CAMERA_ARM_WARNING}</p>
+            <button type="button" className={primary} onClick={confirmArmCamera}>
+              Arm camera
+            </button>
+            <button type="button" className={btn} onClick={() => setCamWarnFor(null)}>
+              Cancel
+            </button>
+          </div>
+        )}
+
         {/* Transport */}
-        <div className="flex flex-wrap gap-2 items-center">
+        <div className="sticky top-0 z-20 -mx-4 px-4 py-3 bg-[#0C141C]/95 border-b border-[#1A232C] flex flex-wrap gap-3 items-start">
+          <div className="flex flex-wrap gap-2 items-center flex-1 min-w-[12rem]">
           <button type="button" className={recording ? danger : primary} onClick={() => void toggleRecord()}>
             {recording ? (
               <>
@@ -782,23 +1890,67 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
               </>
             ) : (
               <>
-                <Mic2 size={14} /> Record armed
+                <Mic2 size={14} /> Record new take
               </>
             )}
           </button>
-          <select id="rec-mode" className={select} defaultValue="replace" title="How new takes land on the armed track">
-            <option value="replace">Replace clip</option>
-            <option value="append">Append</option>
-            <option value="overdub">Overdub mix</option>
+          <select
+            className={select}
+            value={recMode}
+            disabled={recording}
+            title={recHint}
+            onChange={(e) => setRecMode(e.target.value as RecMode)}
+          >
+            {REC_MODE_META.map((mode) => (
+              <option key={mode.id} value={mode.id}>{mode.label}</option>
+            ))}
           </select>
-          <button type="button" className={btn} disabled={!ready} onClick={() => waveRef.current?.playPause()}>
+          <label className="text-xs text-[#A9B8C6] flex items-center gap-2">
+            Preroll
+            <select
+              className={select}
+              value={preroll}
+              disabled={recording}
+              onChange={(e) => setPreroll(Number(e.target.value))}
+            >
+              <option value={0}>0s</option>
+              <option value={1}>1s</option>
+              <option value={3}>3s</option>
+              <option value={5}>5s</option>
+            </select>
+          </label>
+          <label className="text-xs text-[#A9B8C6] flex items-center gap-2">
+            Count-in
+            <select
+              className={select}
+              value={countInBeats}
+              disabled={recording}
+              onChange={(e) => setCountInBeats(Number(e.target.value))}
+            >
+              <option value={0}>Off</option>
+              <option value={2}>2</option>
+              <option value={4}>4</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            className={btn}
+            disabled={!onMarkChapter}
+            onClick={() => {
+              if (onMarkChapter) onMarkChapter(playheadRef.current)
+            }}
+            title="Mark a chapter at the playhead (C)"
+          >
+            <BookmarkPlus size={14} /> Chapter here
+          </button>
+          <button type="button" className={btn} disabled={!ready || recording} onClick={() => togglePlay()}>
             {playing ? <Pause size={14} /> : <Play size={14} />}
             {playing ? 'Pause' : 'Play mix'}
           </button>
-          <button type="button" className={btn} disabled={!ready} onClick={() => nudge(-5)}>
+          <button type="button" className={btn} disabled={!ready || recording} onClick={() => nudge(-5)}>
             <SkipBack size={14} /> 5s
           </button>
-          <button type="button" className={btn} disabled={!ready} onClick={() => nudge(5)}>
+          <button type="button" className={btn} disabled={!ready || recording} onClick={() => nudge(5)}>
             5s <SkipForward size={14} />
           </button>
           <button type="button" className={btn} disabled={!ready} onClick={() => setBound('start')}>
@@ -817,6 +1969,15 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
               accept="audio/*,.mp3,.wav,.m4a,.webm"
               className="hidden"
               onChange={(e) => void onUploadPick(e.target.files?.[0] || null)}
+            />
+          </label>
+          <label className={btn + ' cursor-pointer'}>
+            Add music bed
+            <input
+              type="file"
+              accept="audio/*,.mp3,.wav,.m4a,.webm"
+              className="hidden"
+              onChange={(e) => void onImportBed(e.target.files?.[0] || null)}
             />
           </label>
           <button
@@ -846,214 +2007,866 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
               />
             </label>
           )}
+          </div>
+          {(Object.keys(cameraStreams).length > 0 || (remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest)))) && (
+            <div className="flex items-start gap-2 shrink-0">
+              <div className="space-y-1">
+                <p className="text-[10px] uppercase tracking-wider text-[#7C8B97]">Program</p>
+                {cameraStreams.host ? (
+                  <CameraPreview
+                    stream={cameraStreams.host}
+                    label={people.find((p) => p.id === 'host')?.name || 'Host'}
+                    live={recording}
+                    compact
+                  />
+                ) : remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest)) ? (
+                  <CameraPreview
+                    stream={remoteGuest}
+                    label={people.find((p) => p.id === 'guest')?.name || 'Guest'}
+                    live={recording}
+                    compact
+                  />
+                ) : (
+                  Object.entries(cameraStreams)
+                    .slice(0, 1)
+                    .map(([id, stream]) => (
+                      <CameraPreview
+                        key={id}
+                        stream={stream}
+                        label={people.find((p) => p.id === id)?.name || 'Camera'}
+                        live={recording}
+                        compact
+                      />
+                    ))
+                )}
+              </div>
+              {cameraStreams.host && remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest)) ? (
+                <div className="space-y-1 pt-4">
+                  <CameraPreview
+                    stream={remoteGuest}
+                    label={people.find((p) => p.id === 'guest')?.name || 'Guest'}
+                    live={recording}
+                    compact
+                  />
+                </div>
+              ) : (
+                Object.entries(cameraStreams)
+                  .filter(([id]) => {
+                    if (remoteGuest && id === 'guest') return false
+                    return cameraStreams.host ? id !== 'host' : id !== Object.keys(cameraStreams)[0]
+                  })
+                  .map(([id, stream]) => (
+                    <div key={id} className="space-y-1 pt-4">
+                      <CameraPreview
+                        stream={stream}
+                        label={people.find((p) => p.id === id)?.name || 'Camera'}
+                        live={recording}
+                        compact
+                      />
+                    </div>
+                  ))
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Track list */}
-        <div className="space-y-2">
+        <GuestInvitePanel
+          episodeId={episodeId}
+          recording={recording}
+          hostStream={hostTalkStream}
+          onRemoteStream={onRemoteGuestStream}
+          onRemoteVideo={setRemoteGuestVideo}
+          onGuestName={onRemoteGuestName}
+          onTakeUrl={setGuestTakeUrl}
+          onCameraUrl={setGuestCameraUrl}
+        />
+        <div className="flex flex-wrap gap-2">
+          {guestTakeUrl && (
+            <button
+              type="button"
+              className={btn}
+              onClick={() => void applyGuestTake(guestTakeUrl)}
+            >
+              Lay uploaded guest take
+            </button>
+          )}
+          {guestCameraUrl && (
+            <button
+              type="button"
+              className={btn}
+              onClick={() => void applyGuestCamera(guestCameraUrl)}
+            >
+              Lay uploaded guest camera
+            </button>
+          )}
+        </div>
+        {remoteGuest && (
+          <p className="text-[11px] text-[#7CFFB2]">
+            Remote guest mic is the Guest lane input.
+            {remoteGuestVideo || streamHasLiveVideo(remoteGuest)
+              ? ' Their camera is live on the Guest card — Record writes a parallel camera file.'
+              : ' Waiting for their camera. Local Guest Cam stays hidden while they are connected.'}
+          </p>
+        )}
+
+        <div className="rounded-xl border border-[#1A232C] bg-[#0A1016] p-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-[#A9B8C6]">
+            <Headphones size={14} className="text-[#8DEBFF]" />
+            <span>
+              Use headphones so the cue mix does not leak into either mic.
+              {Object.keys(cameraStreams).length > 0 || remoteGuestVideo
+                ? ' Camera is preview (720p). Record still leaks if speakers are on.'
+                : ''}
+            </span>
+            <label className="inline-flex items-center gap-1.5">
+              <input type="checkbox" checked={cueEnabled} onChange={(e) => setCueEnabled(e.target.checked)} />
+              Play mix while recording
+            </label>
+            {cueEnabled && (
+              <label className="inline-flex items-center gap-2">
+                Cue {cueGain.toFixed(2)}
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={cueGain}
+                  onChange={(e) => setCueGain(Number(e.target.value))}
+                  className="w-24 accent-[#53D6FF]"
+                />
+              </label>
+            )}
+            <label className="inline-flex items-center gap-1.5">
+              <input type="checkbox" checked={replaceArmed} onChange={(e) => setReplaceArmed(e.target.checked)} />
+              Replace armed clip
+            </label>
+            <label className="inline-flex items-center gap-1.5">
+              <input type="checkbox" checked={rawInput} onChange={(e) => setRawInput(e.target.checked)} />
+              Raw input (no Chrome AGC)
+            </label>
+            <label className="inline-flex items-center gap-1.5">
+              <input type="checkbox" checked={autoMuteQuiet} onChange={(e) => setAutoMuteQuiet(e.target.checked)} />
+              Auto-mute quieter mic
+            </label>
+            <label className="inline-flex items-center gap-1.5">
+              <input type="checkbox" checked={voiceIsolate} onChange={(e) => setVoiceIsolate(e.target.checked)} />
+              Isolate (RNNoise)
+            </label>
+            {mics.length > 0 && (
+              <label className="inline-flex items-center gap-2">
+                Fallback mic
+                <select className={select} value={micId} onChange={(e) => setMicId(e.target.value)}>
+                  <option value="">Default</option>
+                  {mics.map((mic) => (
+                    <option key={mic.deviceId} value={mic.deviceId}>
+                      {mic.label || 'Microphone'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <button type="button" className={btn} onClick={armHostAndGuest}>
+              Arm Host + Guest
+            </button>
+            <button type="button" className={btn} onClick={followTalkerNow}>
+              Follow talker
+            </button>
+          </div>
+          {(recording || anyArmed) && (
+            <div className="space-y-1.5">
+              {Object.keys(inputPeaks).length === 0 && (
+                <div className="flex items-center gap-3">
+                  <div className="h-2 flex-1 rounded-full bg-[#151B22] overflow-hidden">
+                    <div className="h-full bg-[#53D6FF] transition-[width] duration-75" style={{ width: '0%' }} />
+                  </div>
+                  <span className="text-xs font-mono text-[#A9B8C6]">{recording ? `in ${formatClock(recClock)}` : 'idle'}</span>
+                </div>
+              )}
+              {Object.entries(inputPeaks).map(([key, peak]) => (
+                <div key={key} className="flex items-center gap-3">
+                  <span className="w-16 truncate text-[10px] uppercase tracking-wider text-[#7C8B97]">{key}</span>
+                  <div className="h-2 flex-1 rounded-full bg-[#151B22] overflow-hidden">
+                    <div
+                      className={`h-full transition-[width] duration-75 ${clipHolds[key] ? 'bg-[#FF5B73]' : 'bg-[#53D6FF]'}`}
+                      style={{ width: `${Math.min(100, peak * 140)}%` }}
+                    />
+                  </div>
+                  <span className={`text-xs font-mono ${clipHolds[key] ? 'text-[#FF7A9A]' : 'text-[#A9B8C6]'}`}>
+                    {clipHolds[key] ? 'CLIP' : recording ? `in ${formatClock(recClock)}` : 'idle'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {recHint && (
+            <p className="text-[11px] text-[#7C8B97]">
+              {recHint}
+              {personIdsArmed > 1
+                ? remoteGuest
+                  ? ' Remote guest is a second input — Host local, Guest booth, one punch.'
+                  : armedDeviceCount > 1
+                    ? ' Two mics, one punch — quieter lane mutes while the other person talks. Both recordings keep rolling.'
+                    : ' Shared mic — Host and Guest record onto one take.'
+                : ''}{' '}
+              Space plays. R records. S splits. Delete cuts a hole. 1–0 drops SFX. C marks a chapter.
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-[#1A232C] bg-[#080C10] px-3 py-2 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Tracks</p>
-            <div className="flex flex-wrap gap-1.5">
-              <button type="button" className={btn} onClick={() => addTrack('vocal')}>
-                <Plus size={14} /> Vocal
-              </button>
-              <button type="button" className={btn} onClick={() => addTrack('guest')}>
-                <Plus size={14} /> Guest
+            <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Lane tools — same track</p>
+            <label className="inline-flex items-center gap-1.5 text-[11px] text-[#A9B8C6]">
+              <input type="checkbox" checked={applyRangeAll} onChange={(e) => setApplyRangeAll(e.target.checked)} />
+              Apply range to every track
+            </label>
+          </div>
+          <p className="text-[11px] text-[#7C8B97]">
+            Drag on that person's tracks (under their mixer) to select a section. Duck a bed, or Comp a voice take for that range (take 2 for the flub, take 1 for the rest). S splits. Delete cuts a hole.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-2 text-xs text-[#B8C4CF]">
+              Section {Math.round(sectionLevel * 100)}%
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={sectionLevel}
+                onChange={(e) => setSectionLevel(Number(e.target.value))}
+                className="w-28"
+              />
+            </label>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer}
+              onClick={() =>
+                editRange((t) => setVolumeInRange(t, rangeRef.current.start, rangeRef.current.end, sectionLevel), `Section volume ${Math.round(sectionLevel * 100)}% on this lane`)
+              }
+            >
+              Set section volume
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer || !isVoiceRole(selected.role)}
+              onClick={() => {
+                if (!selected) return
+                const cur = rangeRef.current
+                if (cur.end - cur.start < 0.05) {
+                  setError('Drag a range, then Comp this take')
+                  return
+                }
+                pushHistory()
+                setTracks((prev) => assignCompRange(prev, selected.id, cur.start, cur.end))
+                setOk(`${selected.name} covers ${formatClock(cur.start)}–${formatClock(cur.end)}`)
+              }}
+            >
+              Comp this take
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer}
+              onClick={() => editRange((t) => setVolumeInRange(t, rangeRef.current.start, rangeRef.current.end, 0), 'Ducked section to silence (automation)')}
+            >
+              <VolumeX size={12} /> Mute section
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer}
+              onClick={() => {
+                if (!selected) return
+                pushHistory()
+                setTracks((prev) => mapTrack(prev, selected.id, (t) => splitTrackAt(t, playheadRef.current)))
+                setOk('Split at playhead')
+              }}
+            >
+              <Scissors size={12} /> Split
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer}
+              onClick={() => editRange((t) => splitRange(t, rangeRef.current.start, rangeRef.current.end), 'Split at selection edges')}
+            >
+              Split selection
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer}
+              onClick={() => editRange((t) => cropToRange(t, rangeRef.current.start, rangeRef.current.end), 'Cropped to selection')}
+            >
+              Crop to selection
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer}
+              onClick={() => editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, false), 'Cut hole (gap stays)')}
+            >
+              Cut hole
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer}
+              onClick={() => editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, true), 'Ripple delete')}
+            >
+              Ripple delete
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer}
+              onClick={() => {
+                if (!selected) return
+                pushHistory()
+                setTracks((prev) => mapTrack(prev, selected.id, (t) => joinAdjacentClips(t, playheadRef.current)))
+                setOk('Joined adjacent clips')
+              }}
+            >
+              Join
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer || !selectedClipId}
+              onClick={() => {
+                if (!selected || !selectedClipId) return
+                const clip = clipsOf(selected).find((c) => c.id === selectedClipId) || clipsOf(selected)[0]
+                if (clip) clipClipboardRef.current = { ...clip }
+                setOk('Copied clip')
+              }}
+            >
+              Copy clip
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer || !clipClipboardRef.current}
+              onClick={() => {
+                const clip = clipClipboardRef.current
+                if (!selected || !clip) return
+                pushHistory()
+                setTracks((prev) => mapTrack(prev, selected.id, (t) => pasteClip(t, clip, playheadRef.current)))
+                setOk('Pasted clip at playhead')
+              }}
+            >
+              Paste at playhead
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer || !selectedClipId}
+              onClick={() => {
+                if (!selected || !selectedClipId) return
+                pushHistory()
+                setTracks((prev) => mapTrack(prev, selected.id, (t) => duplicateClipAt(t, selectedClipId)))
+                setOk('Repeated clip after itself')
+              }}
+            >
+              Repeat clip
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer || !selectedClipId}
+              onClick={() => {
+                if (!selected || !selectedClipId) return
+                pushHistory()
+                setTracks((prev) =>
+                  mapTrack(prev, selected.id, (t) => setClipFades(t, selectedClipId, 0.15, 0.25)),
+                )
+                setOk('Fades on selected clip')
+              }}
+            >
+              Fade clip
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer || !(selected.automation || []).length}
+              onClick={() => {
+                if (!selected) return
+                pushHistory()
+                setTracks((prev) => mapTrack(prev, selected.id, clearAutomation))
+                setOk('Cleared volume automation')
+              }}
+            >
+              Clear automation
+            </button>
+          </div>
+        </div>
+
+        <SfxPad compact disabled={Boolean(busy) || recording} onDrop={(id) => void dropSfx(id)} />
+
+        {/* People / takes */}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">People & takes</p>
+              <p className="text-[11px] font-mono text-[#A9B8C6]">
+                {formatClock(playhead)}
+                {range.end - range.start > 0.05
+                  ? ` · sel ${formatClock(Math.min(range.start, range.end))}–${formatClock(Math.max(range.start, range.end))}`
+                  : ''}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1.5 items-center">
+              <input
+                value={personDraft}
+                onChange={(e) => setPersonDraft(e.target.value)}
+                placeholder="Add a person"
+                className="w-36 rounded-lg border border-[#27313B] bg-[#151B22] px-2 py-1.5 text-sm text-[#F6FAFC]"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') addPerson()
+                }}
+              />
+              <button type="button" className={btn} onClick={addPerson}>
+                <Plus size={14} /> Person
               </button>
               <button type="button" className={btn} onClick={() => addTrack('bed')}>
                 <Plus size={14} /> Bed
               </button>
               <button type="button" className={btn} onClick={() => addTrack('sfx')}>
-                <Plus size={14} /> SFX
-              </button>
-              <button type="button" className={btn} onClick={() => addTrack('custom')}>
-                <Plus size={14} /> Track
+                <Plus size={14} /> SFX lane
               </button>
             </div>
           </div>
+          <SessionTimeline {...timelineBoard} rulerOnly showRuler />
 
-          {tracks.map((track) => {
-            const active = selected?.id === track.id
+          {people.map((person) => {
+            const lane = tracks.filter((t) => t.personId === person.id).sort((a, b) => a.take - b.take)
+            const mixerTrack = lane.find((t) => t.id === selected?.id) || lane.find((t) => t.armed) || lane[0] || null
             return (
-              <div
-                key={track.id}
-                className={`rounded-xl border p-2.5 space-y-2 ${
-                  active ? 'border-[#53D6FF]/60 bg-[#121A22]' : 'border-[#1A232C] bg-[#0A1016]'
-                }`}
-                onClick={() => setSelectedId(track.id)}
-              >
+              <div key={person.id} className="rounded-2xl border border-[#1A232C] bg-[#080C10] p-2.5 space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span
-                    className="h-3 w-3 rounded-full shrink-0"
-                    style={{ background: track.color }}
-                    title={track.role}
-                  />
+                  <span className="h-3 w-3 rounded-full shrink-0" style={{ background: person.color }} />
                   <input
-                    value={track.name}
-                    onChange={(e) => updateTrack(track.id, { name: e.target.value })}
-                    className="min-w-[7rem] flex-1 rounded border border-[#27313B] bg-[#151B22] px-2 py-1 text-sm text-[#F6FAFC]"
-                    onClick={(e) => e.stopPropagation()}
+                    value={person.name}
+                    onChange={(e) =>
+                      setPeople((prev) => prev.map((p) => (p.id === person.id ? { ...p, name: e.target.value } : p)))
+                    }
+                    className="min-w-[7rem] rounded border border-[#27313B] bg-[#151B22] px-2 py-1 text-sm font-medium text-[#F6FAFC]"
                   />
-                  <button
-                    type="button"
-                    className={track.muted ? danger : chip}
-                    title="Mute"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      updateTrack(track.id, { muted: !track.muted })
-                    }}
-                  >
-                    M
+                  <span className="text-[11px] text-[#A9B8C6]">
+                    {lane.filter((t) => t.buffer).length} take{lane.filter((t) => t.buffer).length === 1 ? '' : 's'}
+                    {` · ${lane.length} track${lane.length === 1 ? '' : 's'}`}
+                  </span>
+                  <button type="button" className={btn} onClick={() => addTake(person.id)}>
+                    <Plus size={14} /> Take
                   </button>
-                  <button
-                    type="button"
-                    className={track.solo ? primary : chip}
-                    title="Solo"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      updateTrack(track.id, { solo: !track.solo })
-                    }}
-                  >
-                    S
-                  </button>
-                  <button
-                    type="button"
-                    className={track.armed ? danger : chip}
-                    title="Arm for record"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      armOnly(track.id)
-                    }}
-                  >
-                    R
-                  </button>
-                  <button
-                    type="button"
-                    className={chip}
-                    title="Duplicate"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      duplicateTrack(track.id)
-                    }}
-                  >
-                    <CopyPlus size={12} />
-                  </button>
-                  <button
-                    type="button"
-                    className={chip}
-                    title="Clear audio"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      clearTrack(track.id)
-                    }}
-                  >
-                    <Minus size={12} />
-                  </button>
-                  <button
-                    type="button"
-                    className={chip}
-                    title="Remove track"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      removeTrack(track.id)
-                    }}
-                  >
-                    <Trash2 size={12} />
-                  </button>
+                  {person.kind === 'voice' && person.id === 'guest' && remoteGuest ? (
+                    <span className="text-[11px] text-[#7CFFB2]">
+                      {remoteGuestVideo || streamHasLiveVideo(remoteGuest)
+                        ? 'Remote booth · live camera'
+                        : 'Remote booth · waiting for camera'}
+                    </span>
+                  ) : person.kind === 'voice' ? (
+                    <>
+                    <select
+                      className={select}
+                      value={person.inputDeviceId || ''}
+                      onChange={(e) =>
+                        setPeople((prev) =>
+                          prev.map((p) => (p.id === person.id ? { ...p, inputDeviceId: e.target.value } : p)),
+                        )
+                      }
+                      title="Microphone for this person"
+                    >
+                      <option value="">Fallback mic</option>
+                      {mics.map((mic, idx) => (
+                        <option key={mic.deviceId} value={mic.deviceId}>
+                          {idx === 0 ? 'Mic 1 · ' : idx === 1 ? 'Mic 2 · ' : ''}
+                          {mic.label || `Input ${idx + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className={select}
+                      value={person.videoDeviceId || ''}
+                      disabled={recording}
+                      onChange={(e) => void changeCameraDevice(person.id, e.target.value)}
+                      title="Camera for this person"
+                    >
+                      <option value="">Default camera</option>
+                      {cams.map((cam, idx) => (
+                        <option key={cam.deviceId} value={cam.deviceId}>
+                          {cam.label || `Camera ${idx + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className={cameraStreams[person.id] ? primary : camWarnFor === person.id ? danger : chip}
+                      disabled={recording}
+                      title={
+                        cameraStreams[person.id]
+                          ? 'Turn camera off'
+                          : camWarnFor === person.id
+                            ? `Confirm camera — ~${CAMERA_MB_PER_MIN} MB/min at 720p`
+                            : 'Open a real local camera preview (warns once about file size)'
+                      }
+                      onClick={() => void toggleCamera(person.id)}
+                    >
+                      {cameraStreams[person.id] ? <Video size={12} /> : <VideoOff size={12} />}
+                      {cameraStreams[person.id] ? 'Cam on' : camWarnFor === person.id ? 'Confirm' : 'Cam'}
+                    </button>
+                    </>
+                  ) : null}
+                  {person.kind === 'voice' && (
+                    <button
+                      type="button"
+                      className={lane.some((t) => t.armed) ? danger : chip}
+                      onClick={() => {
+                        const empty = emptyTakeForPerson(tracks, person.id)
+                        const last = lane[lane.length - 1]
+                        if (empty) armTrack(empty.id)
+                        else if (last) armTrack(last.id)
+                      }}
+                    >
+                      Arm
+                    </button>
+                  )}
+                  {person.kind === 'voice' && lane.some((t) => (t.compRanges || []).length > 0) && (
+                    <button
+                      type="button"
+                      className={chip}
+                      onClick={() => {
+                        pushHistory()
+                        setTracks((prev) => clearCompRanges(prev, person.id))
+                        setOk(`Cleared comps for ${person.name} — A take is the default again`)
+                      }}
+                    >
+                      Clear comps
+                    </button>
+                  )}
                 </div>
-
-                <div
-                  ref={(el) => {
-                    trackHostRefs.current[track.id] = el
-                  }}
-                  className="rounded-lg bg-[#05070A] min-h-[56px] border border-[#1A232C]"
-                />
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-[#A9B8C6]">
-                  <label>
-                    Vol {track.volume.toFixed(2)}
-                    <input
-                      type="range"
-                      min={0}
-                      max={2}
-                      step={0.02}
-                      value={track.volume}
-                      onChange={(e) => updateTrack(track.id, { volume: Number(e.target.value) })}
-                      className="w-full accent-[#53D6FF]"
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </label>
-                  <label>
-                    Pan {track.pan.toFixed(2)}
-                    <input
-                      type="range"
-                      min={-1}
-                      max={1}
-                      step={0.05}
-                      value={track.pan}
-                      onChange={(e) => updateTrack(track.id, { pan: Number(e.target.value) })}
-                      className="w-full accent-[#53D6FF]"
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </label>
-                  <label>
-                    Offset {track.offset.toFixed(2)}s
-                    <input
-                      type="range"
-                      min={0}
-                      max={30}
-                      step={0.05}
-                      value={track.offset}
-                      onChange={(e) => updateTrack(track.id, { offset: Number(e.target.value) })}
-                      className="w-full accent-[#53D6FF]"
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </label>
-                  <label>
-                    Fade {track.fadeIn.toFixed(1)}/{track.fadeOut.toFixed(1)}s
-                    <div className="flex gap-1">
-                      <input
-                        type="range"
-                        min={0}
-                        max={4}
-                        step={0.05}
-                        value={track.fadeIn}
-                        onChange={(e) => updateTrack(track.id, { fadeIn: Number(e.target.value) })}
-                        className="w-1/2 accent-[#53D6FF]"
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      <input
-                        type="range"
-                        min={0}
-                        max={4}
-                        step={0.05}
-                        value={track.fadeOut}
-                        onChange={(e) => updateTrack(track.id, { fadeOut: Number(e.target.value) })}
-                        className="w-1/2 accent-[#53D6FF]"
-                        onClick={(e) => e.stopPropagation()}
-                      />
+                {mixerTrack && (
+                  <div
+                    className={`rounded-xl border p-2.5 space-y-2 ${
+                      selected?.id === mixerTrack.id ? 'border-[#53D6FF]/60 bg-[#121A22]' : 'border-[#1A232C] bg-[#0A1016]'
+                    }`}
+                    onClick={() => setSelectedId(mixerTrack.id)}
+                  >
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {lane.map((track) => {
+                        const active = mixerTrack.id === track.id
+                        return (
+                          <button
+                            key={track.id}
+                            type="button"
+                            className={active ? primary : chip}
+                            title={track.buffer ? track.name : `${track.name} · empty — arm to record`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setSelectedId(track.id)
+                            }}
+                          >
+                            take {track.take}
+                            {track.armed ? ' · R' : ''}
+                            {!track.buffer ? ' · empty' : ''}
+                          </button>
+                        )
+                      })}
                     </div>
-                  </label>
-                </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        value={mixerTrack.name}
+                        onChange={(e) => updateTrack(mixerTrack.id, { name: e.target.value })}
+                        className="min-w-[7rem] flex-1 rounded border border-[#27313B] bg-[#151B22] px-2 py-1 text-sm text-[#F6FAFC]"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <button
+                        type="button"
+                        className={mixerTrack.muted ? danger : chip}
+                        title="Mute"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          updateTrack(mixerTrack.id, { muted: !mixerTrack.muted })
+                        }}
+                      >
+                        M
+                      </button>
+                      <button
+                        type="button"
+                        className={mixerTrack.solo ? primary : chip}
+                        title="Solo"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          updateTrack(mixerTrack.id, { solo: !mixerTrack.solo })
+                        }}
+                      >
+                        S
+                      </button>
+                      <button
+                        type="button"
+                        className={mixerTrack.armed ? danger : chip}
+                        title="Arm for record"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          armTrack(mixerTrack.id)
+                        }}
+                      >
+                        R
+                      </button>
+                      {isVoiceRole(mixerTrack.role) && (
+                        <>
+                          <button
+                            type="button"
+                            className={mixerTrack.listen ? primary : chip}
+                            title="Audible take — other takes for this person stay out of the mix"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              pushHistory()
+                              setTracks((prev) => withListenTake(prev, mixerTrack.id))
+                            }}
+                          >
+                            A
+                          </button>
+                          <button
+                            type="button"
+                            className={mixerTrack.layered ? primary : chip}
+                            title="Layer this take with the audible take"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              updateTrack(mixerTrack.id, { layered: !mixerTrack.layered })
+                            }}
+                          >
+                            L
+                          </button>
+                          <button
+                            type="button"
+                            className={(mixerTrack.compRanges || []).length ? primary : chip}
+                            title="Use this take for the selected range (other takes yield)"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              const cur = rangeRef.current
+                              if (cur.end - cur.start < 0.05) {
+                                setError('Drag a range on the timeline, then Comp')
+                                return
+                              }
+                              pushHistory()
+                              setTracks((prev) => assignCompRange(prev, mixerTrack.id, cur.start, cur.end))
+                              setOk(`${mixerTrack.name} is the audible take ${formatClock(cur.start)}–${formatClock(cur.end)}`)
+                            }}
+                          >
+                            Comp
+                          </button>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        className={chip}
+                        title="Duplicate"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          duplicateTrack(mixerTrack.id)
+                        }}
+                      >
+                        <CopyPlus size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className={chip}
+                        title="Clear audio"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          clearTrack(mixerTrack.id)
+                        }}
+                      >
+                        <Minus size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className={chip}
+                        title="Remove track"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          removeTrack(mixerTrack.id)
+                        }}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] text-[#A9B8C6]">
+                      <label>
+                        Vol {mixerTrack.volume.toFixed(2)}
+                        <input
+                          type="range"
+                          min={0}
+                          max={2}
+                          step={0.02}
+                          value={mixerTrack.volume}
+                          onChange={(e) => updateTrack(mixerTrack.id, { volume: Number(e.target.value) })}
+                          className="w-full accent-[#53D6FF]"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </label>
+                      <label>
+                        Pan {mixerTrack.pan.toFixed(2)}
+                        <input
+                          type="range"
+                          min={-1}
+                          max={1}
+                          step={0.05}
+                          value={mixerTrack.pan}
+                          onChange={(e) => updateTrack(mixerTrack.id, { pan: Number(e.target.value) })}
+                          className="w-full accent-[#53D6FF]"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </label>
+                      <label>
+                        Start
+                        <input
+                          defaultValue={formatClock(mixerTrack.offset)}
+                          key={`${mixerTrack.id}-${mixerTrack.offset.toFixed(2)}`}
+                          placeholder="1:30"
+                          className="mt-1 w-full rounded border border-[#27313B] bg-[#151B22] px-2 py-0.5 text-[11px] text-[#F6FAFC]"
+                          onBlur={(e) => {
+                            const parsed = parseClock(e.target.value)
+                            if (parsed != null) updateTrack(mixerTrack.id, { offset: parsed })
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </label>
+                      <label>
+                        Fade {mixerTrack.fadeIn.toFixed(1)}/{mixerTrack.fadeOut.toFixed(1)}s
+                        <div className="flex gap-1">
+                          <input
+                            type="range"
+                            min={0}
+                            max={4}
+                            step={0.05}
+                            value={mixerTrack.fadeIn}
+                            onChange={(e) => updateTrack(mixerTrack.id, { fadeIn: Number(e.target.value) })}
+                            className="w-1/2 accent-[#53D6FF]"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <input
+                            type="range"
+                            min={0}
+                            max={4}
+                            step={0.05}
+                            value={mixerTrack.fadeOut}
+                            onChange={(e) => updateTrack(mixerTrack.id, { fadeOut: Number(e.target.value) })}
+                            className="w-1/2 accent-[#53D6FF]"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                )}
+                <SessionTimeline {...timelineBoard} personId={person.id} embedded showRuler={false} />
+                {person.kind === 'voice' && person.id === 'guest' && remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest)) ? (
+                  <div className="flex flex-wrap items-start gap-3 pt-1">
+                    <CameraPreview
+                      stream={remoteGuest}
+                      label={`${person.name} camera (live)`}
+                      live={recording}
+                    />
+                    <p className="max-w-xs text-[11px] text-[#7C8B97]">
+                      Inbound guest camera on the same WebRTC peer. Record writes a separate camera file
+                      on the same punch — not muxed into the take, not written to the RSS mix.
+                    </p>
+                  </div>
+                ) : person.kind === 'voice' && cameraStreams[person.id] ? (
+                  <div className="flex flex-wrap items-start gap-3 pt-1">
+                    <CameraPreview
+                      stream={cameraStreams[person.id]}
+                      label={`${person.name} camera`}
+                      live={recording}
+                    />
+                    <p className="max-w-xs text-[11px] text-[#7C8B97]">
+                      Local preview, capped ~720p. Admin on/off and device pick. Record writes a separate
+                      camera file on the same punch — not muxed into the take, not written to the RSS mix.
+                    </p>
+                  </div>
+                ) : null}
+                {person.kind === 'voice' && (
+                  <CameraLane
+                    clips={cameraClips.filter((c) => c.personId === person.id)}
+                    playhead={playhead}
+                    pxPerSec={zoom}
+                    durationSec={boardDuration}
+                    scrollLeft={timelineScroll}
+                    onScrollLeft={setTimelineScroll}
+                    color={person.color}
+                    selectedId={selectedCamClipId}
+                    onSelect={setSelectedCamClipId}
+                  />
+                )}
+                {person.kind === 'voice' &&
+                  cameraClips
+                    .filter((c) => c.personId === person.id && c.id === selectedCamClipId)
+                    .map((clip) => (
+                      <CameraClipReview
+                        key={clip.id}
+                        clip={clip}
+                        label={person.name}
+                        onDiscard={() => discardCameraClip(clip.id)}
+                      />
+                    ))}
               </div>
             )
           })}
         </div>
 
-        {/* Master bus waveform */}
+        {tracks.some((t) => !people.some((p) => p.id === t.personId)) && (
+            <div className="rounded-2xl border border-[#1A232C] bg-[#080C10] p-2.5 space-y-2">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Other clips</p>
+              {tracks.filter((t) => !people.some((p) => p.id === t.personId)).map((track) => (
+                <p key={track.id} className="text-sm text-[#B8C4CF]">{track.name}</p>
+              ))}
+              <SessionTimeline
+                {...timelineBoard}
+                people={[]}
+                tracks={tracks.filter((t) => !people.some((p) => p.id === t.personId))}
+                embedded
+                showRuler
+              />
+            </div>
+          )}
+
+        {/* Master bus / playhead */}
         <div>
           <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF] mb-2">
-            Master mix · export region {ready ? `${formatClock(range.start)} – ${formatClock(range.end)}` : ''}
+            Playhead {formatClock(playhead)} · export {formatClock(range.start)} – {formatClock(range.end)}
           </p>
-          <div
-            ref={masterHostRef}
-            className="rounded-xl bg-[#05070A] px-2 py-3 min-h-[128px] border border-[#1A232C] relative"
+          <button
+            type="button"
+            className="relative w-full h-16 rounded-xl bg-[#05070A] border border-[#1A232C] overflow-hidden"
+            onClick={(e) => {
+              if (sessionLen <= 0) return
+              const rect = e.currentTarget.getBoundingClientRect()
+              const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+              setHead(x * sessionLen)
+            }}
           >
-            {!masterUrl && (
-              <p className="absolute inset-0 flex items-center justify-center text-sm text-[#A9B8C6] pointer-events-none">
-                Record or import onto tracks — the master mix appears here
+            <div
+              className="absolute inset-y-0 bg-[#53D6FF]/15"
+              style={{
+                left: sessionLen > 0 ? `${(range.start / sessionLen) * 100}%` : 0,
+                width: sessionLen > 0 ? `${((range.end - range.start) / sessionLen) * 100}%` : 0,
+              }}
+            />
+            {hasAudio && (
+              <div
+                className="absolute top-0 bottom-0 w-0.5 bg-[#8DEBFF]"
+                style={{ left: sessionLen > 0 ? `${(playhead / sessionLen) * 100}%` : 0 }}
+              />
+            )}
+            {!hasAudio && (
+              <p className="absolute inset-0 flex items-center justify-center text-sm text-[#A9B8C6]">
+                Record a take — playhead and cue mix run live, without bouncing a WAV first
               </p>
             )}
-          </div>
+          </button>
           <div className="mt-3 grid sm:grid-cols-4 gap-3 text-xs text-[#A9B8C6]">
             <label>
               Zoom {zoom}px/s
@@ -1109,25 +2922,115 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
         {/* Effects + clip tools */}
         <div>
           <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF] mb-2">
-            Effects rack {selected ? `· ${selected.name}` : ''}
+            Insert rack {selected ? `· ${selected.name}` : ''} · bypass / wet-dry · not baked in
           </p>
           <div className="flex flex-wrap gap-2">
-            {EFFECT_META.map((fx) => (
-              <button
-                key={fx.id}
-                type="button"
-                title={fx.hint}
-                disabled={!selected?.buffer || Boolean(busy)}
-                onClick={() => void runEffect(fx.id)}
-                className="px-3 py-2 rounded-lg border border-[#27313B] bg-[#151B22] text-sm text-[#F6FAFC] hover:border-[#53D6FF]/50 disabled:opacity-40"
-              >
-                {fx.label}
-              </button>
-            ))}
+            {INSERT_FX.map((id) => {
+              const fx = EFFECT_META.find((e) => e.id === id)!
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  title={fx.hint}
+                  disabled={!selected?.buffer || Boolean(busy)}
+                  onClick={() => void runEffect(id, 'insert')}
+                  className="px-3 py-2 rounded-lg border border-[#27313B] bg-[#151B22] text-sm text-[#F6FAFC] hover:border-[#53D6FF]/50 disabled:opacity-40"
+                >
+                  {fx.label}
+                </button>
+              )
+            })}
+          </div>
+          {(selected?.inserts || []).length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {(selected.inserts || []).map((slot, idx) => (
+                <li key={`${slot.id}-${idx}`} className="flex flex-wrap items-center gap-2 text-xs text-[#B8C4CF]">
+                  <span className="min-w-[5.5rem]">{EFFECT_META.find((e) => e.id === slot.id)?.label || slot.id}</span>
+                  <label className="inline-flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      checked={!slot.bypass}
+                      onChange={(e) => {
+                        const inserts = (selected.inserts || []).map((s, i) =>
+                          i === idx ? { ...s, bypass: !e.target.checked } : s,
+                        )
+                        invalidateInsertCache(selected.id)
+                        updateTrack(selected.id, { inserts })
+                      }}
+                    />
+                    on
+                  </label>
+                  <label className="inline-flex items-center gap-1">
+                    wet {slot.wet.toFixed(2)}
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={slot.wet}
+                      onChange={(e) => {
+                        const inserts = (selected.inserts || []).map((s, i) =>
+                          i === idx ? { ...s, wet: Number(e.target.value) } : s,
+                        )
+                        invalidateInsertCache(selected.id)
+                        updateTrack(selected.id, { inserts })
+                      }}
+                      className="w-20 accent-[#53D6FF]"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className={chip}
+                    onClick={() => {
+                      const inserts = (selected.inserts || []).filter((_, i) => i !== idx)
+                      invalidateInsertCache(selected.id)
+                      updateTrack(selected.id, { inserts })
+                    }}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-3 text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Render to take (destructive)</p>
+          <div className="flex flex-wrap gap-2 mt-2">
+            {RENDER_ONLY_FX.map((id) => {
+              const fx = EFFECT_META.find((e) => e.id === id)!
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  title={fx.hint}
+                  disabled={!selected?.buffer || Boolean(busy)}
+                  onClick={() => void runEffect(id, 'render')}
+                  className="px-3 py-2 rounded-lg border border-[#27313B] bg-[#151B22] text-sm text-[#F6FAFC] hover:border-[#53D6FF]/50 disabled:opacity-40"
+                >
+                  {fx.label}
+                </button>
+              )
+            })}
+            <button
+              type="button"
+              className={btn}
+              disabled={!selected?.buffer || !(selected.inserts || []).length || Boolean(busy)}
+              onClick={async () => {
+                if (!selected?.buffer) return
+                const baked = await tracksWithInserts([selected])
+                const next = baked[0]?.buffer
+                if (!next) return
+                pushHistory()
+                assignBufferToTrack(selected.id, next, `Rendered inserts into ${selected.name}`)
+                updateTrack(selected.id, { inserts: [] })
+                invalidateInsertCache(selected.id)
+              }}
+            >
+              Render inserts to take
+            </button>
           </div>
           <div className="flex flex-wrap gap-2 mt-2">
             <button type="button" className={btn} disabled={!selected?.buffer} onClick={splitSelectedAtPlayhead}>
-              Split at playhead
+              Split at playhead (same lane)
             </button>
             <button type="button" className={btn} disabled={!selected?.buffer} onClick={bounceSelectedToStem}>
               Bounce track → stem
@@ -1136,24 +3039,27 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
               type="button"
               className={btn}
               disabled={!hasAudio || Boolean(busy)}
-              onClick={() => void applyMasterBus(['normalize', 'compress', 'limit'])}
+              onClick={() => void applyMasterBus(['normalize', 'compress', 'limit'], 'keep')}
             >
-              Vocal polish → bounce master
+              Bounce mix (keeps takes)
             </button>
             <button
               type="button"
               className={btn}
               disabled={!hasAudio || Boolean(busy)}
-              onClick={() => void applyMasterBus(['normalize', 'limit'])}
+              onClick={() => void applyMasterBus(['normalize', 'limit'], 'keep')}
             >
-              Normalize + limit master
+              Normalize + limit (keeps takes)
+            </button>
+            <button
+              type="button"
+              className={btn}
+              disabled={!hasAudio || Boolean(busy)}
+              onClick={() => void applyMasterBus(['normalize', 'compress', 'limit'], 'replace')}
+            >
+              Replace session
             </button>
           </div>
-          {applied.length > 0 && (
-            <p className="mt-2 text-xs text-[#A9B8C6]">
-              Chain: {applied.map((id) => EFFECT_META.find((e) => e.id === id)?.label || id).join(' → ')}
-            </p>
-          )}
         </div>
 
         <div className="flex flex-wrap gap-2 pt-1 border-t border-[#27313B]">
@@ -1183,12 +3089,24 @@ export function PodcastAudioEditor({ audioUrl, title, onExported, onPublished }:
               Save mix + publish to site / RSS
             </button>
           )}
+          <label className="inline-flex items-center gap-1.5 text-xs text-[#A9B8C6]">
+            <input type="checkbox" checked={matchLufs} onChange={(e) => setMatchLufs(e.target.checked)} />
+            Match {PODCAST_LUFS} LUFS
+          </label>
+          <button
+            type="button"
+            className={btn}
+            disabled={!hasAudio || Boolean(busy)}
+            onClick={() => void downloadStems()}
+          >
+            {busy?.includes('stems') ? busy : 'Download stems zip'}
+          </button>
         </div>
 
         {error && <p className="text-sm text-red-300">{error}</p>}
         {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
         <p className="text-[11px] text-[#A9B8C6]">
-          Multi-track mix is hosted on your site (Supabase media). Public feed{' '}
+          After the mix lays the next person at the end of the session. After my last take is a pickup. Cue mix plays live from the other lanes — no bounce before Record. Record capture starts with preroll and trims to punch. Two mics auto-mute the quieter lane (recordings keep rolling). Isolate uses RNNoise on the insert rack. Cam on a voice card is a real local preview; Record also writes a parallel camera file (autosaved in this browser, not episode audio_url). Remote guest can send live camera on the same WebRTC peer, plus a local camera backup if the peer is thin. Public feed stays audio. A picks the default audible take; Comp assigns a range to another take; L layers. Drag a range on the music lane to duck without a second track. Export can match −16 LUFS; stems zip is a local download. Mix is hosted on your site (Supabase media). Public feed{' '}
           <code className="text-[#8DEBFF]">/podcast/rss.xml</code> powers Apple Podcasts, Spotify for
           Podcasters, and Amazon Music — submit that URL once; new published mixes appear automatically.
         </p>

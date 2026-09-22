@@ -92,5 +92,10 @@ export async function GET(
     country,
   })
 
-  return NextResponse.redirect(episode.audio_url, 302)
+  const audioUrl = episode.audio_url
+  if (!audioUrl) {
+    return new NextResponse('Not found', { status: 404 })
+  }
+
+  return NextResponse.redirect(audioUrl, 302)
 }

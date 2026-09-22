@@ -2,9 +2,21 @@
 
 export function formatClock(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
-  const m = Math.floor(seconds / 60)
-  const s = Math.floor(seconds % 60)
+  const total = Math.floor(seconds)
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
   return `${m}:${String(s).padStart(2, '0')}`
+}
+
+export function parseClock(value: string): number | null {
+  const parts = value.trim().split(':').map(Number)
+  if (parts.length === 0 || parts.some((n) => Number.isNaN(n))) return null
+  if (parts.length === 1) return Math.max(0, parts[0])
+  if (parts.length === 2) return Math.max(0, parts[0] * 60 + parts[1])
+  if (parts.length === 3) return Math.max(0, parts[0] * 3600 + parts[1] * 60 + parts[2])
+  return null
 }
 
 export function sliceBuffer(

@@ -97,6 +97,12 @@ export async function PATCH(request: Request) {
     if (patch.episode_number != null) patch.episode_number = Number(patch.episode_number)
     if (patch.duration_seconds != null) patch.duration_seconds = Number(patch.duration_seconds)
     if (patch.file_size != null) patch.file_size = Number(patch.file_size)
+    if (typeof patch.explicit === 'string') patch.explicit = patch.explicit === 'true'
+    if (!Array.isArray(patch.chapters) && patch.chapters != null) delete patch.chapters
+    if (!Array.isArray(patch.keywords) && patch.keywords != null) {
+      patch.keywords = String(patch.keywords).split(',').map((k) => k.trim()).filter(Boolean)
+    }
+    if (!Array.isArray(patch.ad_markers) && patch.ad_markers != null) delete patch.ad_markers
     const { data: current, error: currentError } = await supabase
       .from('podcast_episodes')
       .select('audio_url, published_at, status, scheduled_for')

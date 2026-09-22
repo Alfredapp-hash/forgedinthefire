@@ -14,6 +14,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
+import { measureAudioDuration, uploadPodcastMedia } from '@/lib/podcast/media-upload'
 import type {
   ContentTopic,
   PodcastAdMarker,
@@ -91,55 +92,11 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
     setUploading(true)
     setError(null)
     try {
-      // Large audio bypasses the ~6MB Netlify function body via signed direct upload
-      const useSigned = kind === 'audio' && file.size > 4.5 * 1024 * 1024
-      let asset: { url: string; mime_type?: string; size_bytes?: number }
-
-      if (useSigned) {
-        const signRes = await fetch('/api/admin/media/sign', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            filename: file.name,
-            mime_type: file.type || 'audio/mpeg',
-            size_bytes: file.size,
-          }),
-        })
-        const signed = await signRes.json()
-        if (!signRes.ok) throw new Error(signed.error || 'Could not start upload')
-        const put = await fetch(signed.signedUrl, {
-          method: 'PUT',
-          headers: { 'Content-Type': file.type || 'audio/mpeg' },
-          body: file,
-        })
-        if (!put.ok) throw new Error('Direct storage upload failed')
-        const completeRes = await fetch('/api/admin/media/complete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            path: signed.path,
-            filename: file.name,
-            mime_type: file.type || 'audio/mpeg',
-            size_bytes: file.size,
-            alt: episode?.title || file.name,
-            publicUrl: signed.publicUrl,
-          }),
-        })
-        asset = await completeRes.json()
-        if (!completeRes.ok) throw new Error((asset as { error?: string }).error || 'Upload finalize failed')
-      } else {
-        const fd = new FormData()
-        fd.append('file', file)
-        fd.append('alt', episode?.title || file.name)
-        const res = await fetch('/api/admin/media', { method: 'POST', body: fd })
-        asset = await res.json()
-        if (!res.ok) throw new Error((asset as { error?: string }).error || 'Upload failed')
-      }
-
+      const asset = await uploadPodcastMedia(file, episode?.title || file.name)
       if (kind === 'cover') {
         await save({ cover_url: asset.url }, 'Cover saved')
       } else {
-        const seconds = duration ?? await measureDuration(asset.url)
+        const seconds = duration ?? await measureAudioDuration(asset.url)
         await save({
           audio_url: asset.url,
           audio_mime: asset.mime_type || file.type,
@@ -288,6 +245,12 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
+          <Link
+            href={`/admin/podcast?tab=studio&episode=${episode.id}`}
+            className="px-3 py-2 rounded-lg border border-[#53D6FF] text-sm text-[#53D6FF]"
+          >
+            Production room
+          </Link>
           <button
             type="button"
             onClick={() => void publish()}
@@ -496,8 +459,16 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         </div>
 
         <PodcastAudioEditor
+          episodeId={episode.id}
           audioUrl={episode.audio_url}
           title={episode.title}
+          onMarkChapter={(seconds) => {
+            const title = chapterTitle.trim() || `Chapter ${(episode.chapters?.length || 0) + 1}`
+            const start_ms = Math.round(Math.max(0, seconds) * 1000)
+            const next = [...(episode.chapters || []), { start_ms, title }].sort((a, b) => a.start_ms - b.start_ms)
+            void save({ chapters: next }, 'Chapter marked')
+            setChapterTitle('')
+          }}
           onExported={async (file, duration) => {
             await uploadFile(file, 'audio', duration)
             await save({ status: episode.status === 'draft' ? 'editing' : episode.status }, 'Edited audio hosted')
@@ -571,16 +542,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const input = 'w-full rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]'
-
-function measureDuration(url: string) {
-  return new Promise<number | null>((resolve) => {
-    const audio = document.createElement('audio')
-    audio.preload = 'metadata'
-    audio.onloadedmetadata = () => resolve(Math.round(audio.duration) || null)
-    audio.onerror = () => resolve(null)
-    audio.src = url
-  })
-}
 
 function parseTimestamp(value: string): number | null {
   const parts = value.trim().split(':').map(Number)

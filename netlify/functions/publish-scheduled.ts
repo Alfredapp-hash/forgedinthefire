@@ -1,4 +1,12 @@
-import type { Config } from '@netlify/functions'
+function env(name: string) {
+  try {
+    const fromNetlify = (globalThis as { Netlify?: { env?: { get?: (key: string) => string | undefined } } }).Netlify?.env?.get?.(name)
+    if (fromNetlify) return fromNetlify
+  } catch {
+    // Netlify.env is only present in the Functions runtime
+  }
+  return process.env[name]
+}
 
 /**
  * Hourly scheduler that hits the Next.js cron route to publish due blog posts
@@ -6,8 +14,8 @@ import type { Config } from '@netlify/functions'
  * App Router route expects as Bearer token).
  */
 export default async () => {
-  const site = Netlify.env.get('URL') || Netlify.env.get('DEPLOY_PRIME_URL') || 'https://forgedinthefireohio.org'
-  const secret = Netlify.env.get('CRON_SECRET')
+  const site = env('URL') || env('DEPLOY_PRIME_URL') || 'https://forgedinthefireohio.org'
+  const secret = env('CRON_SECRET')
   if (!secret) {
     console.error('CRON_SECRET is not set — refusing to call publish-scheduled')
     return new Response(JSON.stringify({ error: 'CRON_SECRET missing' }), { status: 500 })
@@ -29,6 +37,6 @@ export default async () => {
   })
 }
 
-export const config: Config = {
+export const config = {
   schedule: '@hourly',
 }

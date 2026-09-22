@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
+  AudioLines,
   BarChart3,
   Code2,
   Copy,
@@ -24,8 +25,10 @@ import type {
 } from '@/lib/studio/types'
 import { DISTRIBUTION_LABELS, EPISODE_PIPELINE } from '@/lib/studio/types'
 import { PODCAST } from '@/lib/podcast-meta'
+import { RecordingStudio } from './RecordingStudio'
+import { setAdminPath } from '@/lib/fbot/path-signal'
 
-type DeskTab = 'episodes' | 'show' | 'distribution' | 'analytics' | 'private' | 'embeds'
+type DeskTab = 'studio' | 'episodes' | 'show' | 'distribution' | 'analytics' | 'private' | 'embeds'
 
 type AnalyticsPayload = {
   days: number
@@ -52,8 +55,11 @@ const PIPELINE_COLS: EpisodeStatus[] = [
   'published',
 ]
 
+const DESK_TABS: DeskTab[] = ['studio', 'episodes', 'show', 'distribution', 'analytics', 'private', 'embeds']
+
 export function PodcastDesk() {
-  const [tab, setTab] = useState<DeskTab>('episodes')
+  const [tab, setTab] = useState<DeskTab>('studio')
+  const [studioEpisodeId, setStudioEpisodeId] = useState('')
   const [episodes, setEpisodes] = useState<PodcastEpisode[]>([])
   const [topics, setTopics] = useState<ContentTopic[]>([])
   const [show, setShow] = useState<PodcastShow | null>(null)
@@ -112,6 +118,53 @@ export function PodcastDesk() {
     })()
   }, [])
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const nextTab = params.get('tab')
+    const episode = params.get('episode')
+    if (episode) {
+      setStudioEpisodeId(episode)
+      setTab('studio')
+      if (!nextTab) {
+        params.set('tab', 'studio')
+        setAdminPath(`/admin/podcast?${params.toString()}`)
+      }
+      return
+    }
+    if (nextTab && DESK_TABS.includes(nextTab as DeskTab)) {
+      setTab(nextTab as DeskTab)
+      return
+    }
+    setAdminPath('/admin/podcast?tab=studio')
+  }, [])
+
+  function openStudio(episodeId?: string) {
+    const id = episodeId || studioEpisodeId
+    if (episodeId) setStudioEpisodeId(episodeId)
+    setTab('studio')
+    const params = new URLSearchParams()
+    params.set('tab', 'studio')
+    if (id) params.set('episode', id)
+    setAdminPath(`/admin/podcast?${params.toString()}`)
+  }
+
+  function setDeskTab(id: DeskTab) {
+    if (id === 'studio') {
+      openStudio()
+      return
+    }
+    setTab(id)
+    setAdminPath(`/admin/podcast?tab=${id}`)
+  }
+
+  function selectStudioEpisode(id: string) {
+    setStudioEpisodeId(id)
+    const params = new URLSearchParams()
+    params.set('tab', 'studio')
+    if (id) params.set('episode', id)
+    setAdminPath(`/admin/podcast?${params.toString()}`)
+  }
+
   async function createEpisode() {
     setCreating(true)
     setError(null)
@@ -129,9 +182,14 @@ export function PodcastDesk() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not create episode')
-      window.location.href = `/admin/podcast/${data.id}`
+      setEpisodes((prev) => [data, ...prev])
+      setTitle('')
+      setSummary('')
+      setTopicId('')
+      openStudio(data.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Create failed')
+    } finally {
       setCreating(false)
     }
   }
@@ -228,6 +286,7 @@ export function PodcastDesk() {
   const embedSnippet = `<iframe src="${site.replace(/\/$/, '')}/podcast/embed" width="100%" height="180" frameborder="0" allow="autoplay" title="${show?.title || PODCAST.title}"></iframe>`
 
   const tabs: { id: DeskTab; label: string; icon: typeof Mic2 }[] = [
+    { id: 'studio', label: 'Production room', icon: AudioLines },
     { id: 'episodes', label: 'Episodes', icon: Mic2 },
     { id: 'show', label: 'Show', icon: Settings2 },
     { id: 'distribution', label: 'Distribution', icon: Globe2 },
@@ -251,6 +310,13 @@ export function PodcastDesk() {
           <Link href="/admin/studio" className="px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]">
             Studio topics
           </Link>
+          <button
+            type="button"
+            onClick={() => openStudio()}
+            className="px-3 py-2 rounded-lg border border-[#53D6FF] text-sm text-[#53D6FF]"
+          >
+            Production room
+          </button>
           <Link href="/podcast" target="_blank" className="px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]">
             Public show
           </Link>
@@ -262,7 +328,7 @@ export function PodcastDesk() {
           <button
             key={id}
             type="button"
-            onClick={() => setTab(id)}
+            onClick={() => setDeskTab(id)}
             className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${
               tab === id ? 'bg-[#1A232C] text-[#8DEBFF]' : 'text-[#B8C4CF] hover:bg-[#1A232C]'
             }`}
@@ -275,6 +341,16 @@ export function PodcastDesk() {
 
       {error && <p className="text-sm text-red-300">{error}</p>}
       {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
+
+      {tab === 'studio' && (
+        <RecordingStudio
+          episodes={episodes}
+          topics={topics}
+          selectedId={studioEpisodeId}
+          onSelect={selectStudioEpisode}
+          onEpisodesChange={setEpisodes}
+        />
+      )}
 
       {tab === 'episodes' && (
         <>
@@ -331,19 +407,27 @@ export function PodcastDesk() {
                 </p>
                 <div className="space-y-2">
                   {columns[status].map((ep) => (
-                    <Link
+                    <div
                       key={ep.id}
-                      href={`/admin/podcast/${ep.id}`}
-                      className="block rounded-lg border border-[#27313B] bg-[#05070A] p-3 hover:border-[#53D6FF]"
+                      className="rounded-lg border border-[#27313B] bg-[#05070A] p-3 space-y-2"
                     >
-                      <p className="text-sm text-[#F6FAFC] line-clamp-2">{ep.title}</p>
-                      <p className="text-[11px] text-[#A9B8C6] mt-1">
-                        S{ep.season}{ep.episode_number != null ? `E${ep.episode_number}` : ''}
-                        {ep.visibility !== 'public' ? ` · ${ep.visibility}` : ''}
-                        {ep.scheduled_for ? ` · ${new Date(ep.scheduled_for).toLocaleString()}` : ''}
-                        {' · '}{ep.audio_url ? 'audio ready' : 'needs audio'}
-                      </p>
-                    </Link>
+                      <Link href={`/admin/podcast/${ep.id}`} className="block hover:text-[#8DEBFF]">
+                        <p className="text-sm text-[#F6FAFC] line-clamp-2">{ep.title}</p>
+                        <p className="text-[11px] text-[#A9B8C6] mt-1">
+                          S{ep.season}{ep.episode_number != null ? `E${ep.episode_number}` : ''}
+                          {ep.visibility !== 'public' ? ` · ${ep.visibility}` : ''}
+                          {ep.scheduled_for ? ` · ${new Date(ep.scheduled_for).toLocaleString()}` : ''}
+                          {' · '}{ep.audio_url ? 'audio ready' : 'needs audio'}
+                        </p>
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => openStudio(ep.id)}
+                        className="text-[11px] text-[#53D6FF]"
+                      >
+                        Open in production room
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>

@@ -77,7 +77,7 @@ export function TopicWorkspace({ topicId }: { topicId: string }) {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Could not create episode')
-      window.location.href = `/admin/podcast/${data.id}`
+      window.location.href = `/admin/podcast?tab=studio&episode=${data.id}`
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Episode create failed')
       setSaving(false)

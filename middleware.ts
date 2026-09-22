@@ -9,6 +9,12 @@ export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
   
   const { pathname } = request.nextUrl
+  // Guest booth is public. Matcher includes /studio so the root layout can hide marketing chrome.
+  if (pathname.startsWith('/studio/')) {
+    const requestHeaders = new Headers(request.headers)
+    requestHeaders.set('x-fitf-pathname', pathname)
+    return NextResponse.next({ request: { headers: requestHeaders } })
+  }
   
   // Check if Supabase env vars are available
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -50,13 +56,15 @@ export async function middleware(request: NextRequest) {
   // Refresh session — MUST call getUser() per Supabase SSR docs
   const { data: { user } } = await supabase.auth.getUser()
 
-  // Protect all /admin/* routes - requires both authentication AND admin role
-  if (pathname.startsWith('/admin')) {
+  // Protect admin and internal research previews
+  if (pathname.startsWith('/admin') || pathname.startsWith('/preview/ad-research')) {
     // First check if user is authenticated
     if (!user) {
+      const next = `${pathname}${request.nextUrl.search || ''}`
       const url = request.nextUrl.clone()
       url.pathname = '/login'
-      url.searchParams.set('redirect', pathname)
+      url.search = ''
+      url.searchParams.set('redirect', next)
       return NextResponse.redirect(url)
     }
     
@@ -102,7 +110,9 @@ export const config = {
   matcher: [
     '/admin',
     '/admin/:path*',
+    '/preview/ad-research',
     '/login',
     '/unauthorized',
+    '/studio/:path*',
   ],
 }

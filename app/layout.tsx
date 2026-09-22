@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
 import { Inter, Playfair_Display } from 'next/font/google';
 import './globals.css';
 import { Navbar } from '@/components/navbar';
@@ -73,6 +74,8 @@ export default async function RootLayout({
 }) {
   const settings = await getSiteSettings()
   const gaId = settings.google_analytics_id || process.env.NEXT_PUBLIC_GA_ID || ''
+  const pathname = (await headers()).get('x-fitf-pathname') || ''
+  const guestBooth = pathname.startsWith('/studio/')
 
   return (
     <html
@@ -87,13 +90,13 @@ export default async function RootLayout({
       {/* Background is owned by globals.css so the page radial gradient shows. */}
       <body className="min-h-screen text-cream-100 antialiased" suppressHydrationWarning>
         <div className="relative flex min-h-screen flex-col">
-          <Navbar />
+          {!guestBooth && <Navbar />}
           <main className="flex-1" id="main-content">
             {children}
           </main>
-          <Footer />
+          {!guestBooth && <Footer />}
           <QuickExit />
-          <AnalyticsGate measurementId={gaId || undefined} />
+          {!guestBooth && <AnalyticsGate measurementId={gaId || undefined} />}
         </div>
       </body>
     </html>
