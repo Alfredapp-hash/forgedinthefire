@@ -154,13 +154,17 @@ export function claimGuestSession(row: GuestInviteRow, request: Request) {
   return { ok: true as const, raw: minted.raw, hash: minted.hash }
 }
 
-export type GuestLimit = 'request' | 'signal' | 'join' | 'take'
+export type GuestLimit = 'request' | 'signal' | 'join' | 'take' | 'chunk' | 'withdraw'
 
 const LIMITS: Record<GuestLimit, { window: number; max: number }> = {
   request: { window: 60, max: 300 },
   signal: { window: 60, max: 240 },
   join: { window: 600, max: 20 },
-  take: { window: 3600, max: 12 },
+  /** Take starts (audio + camera per record-on; punch-ins add more). */
+  take: { window: 3600, max: 60 },
+  /** Chunk URL batches (up to 12 URLs each; one batch ~ every 2 min per take). */
+  chunk: { window: 3600, max: 1500 },
+  withdraw: { window: 3600, max: 6 },
 }
 
 /**

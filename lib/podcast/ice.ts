@@ -6,6 +6,10 @@ import { STUN_SERVERS } from '@/lib/podcast/webrtc'
 export type StudioIceConfig = {
   iceServers: RTCIceServer[]
   turnConfigured: boolean
+  /** Unix seconds when short-lived TURN credentials expire (absent for STUN/static creds). */
+  expiresAt?: number
+  /** Credential lifetime in seconds (clients refresh well before expiresAt). */
+  ttlSeconds?: number
 }
 
 function readEnv(name: string) {
@@ -59,9 +63,10 @@ export function studioIceFromEnv(label = 'studio'): StudioIceConfig {
 
   const secret = readEnv('TURN_SECRET') || readEnv('TURN_STATIC_AUTH_SECRET')
   if (secret) {
-    const { username, credential } = turnRestCredential(secret, label)
+    const ttlSeconds = turnTtl()
+    const { username, credential, expiresAt } = turnRestCredential(secret, label, ttlSeconds)
     iceServers.push({ urls: turnUrls(url), username, credential })
-    return { iceServers, turnConfigured: true }
+    return { iceServers, turnConfigured: true, expiresAt, ttlSeconds }
   }
 
   const username =

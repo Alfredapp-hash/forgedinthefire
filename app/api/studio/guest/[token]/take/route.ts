@@ -10,49 +10,32 @@ import {
   touchInvite,
 } from '@/lib/podcast/guest-access'
 import { GUEST_TAKE_BUCKET, guestTakeRef, parseGuestTakeRef } from '@/lib/podcast/guest-invite'
+import {
+  CHUNK_MAX_BYTES,
+  TAKE_AUDIO_TYPES,
+  TAKE_VIDEO_TYPES,
+  baseMime,
+} from '@/lib/podcast/upload/guest-take-manifest'
+import { containerForExt, sniffContainer } from '@/lib/podcast/upload/guest-take-server'
 
 export const dynamic = 'force-dynamic'
 
-const AUDIO_MAX = 80 * 1024 * 1024
-const CAMERA_MAX = 400 * 1024 * 1024
+/**
+ * Single-object uploads (older booths). New booths upload progressively in
+ * chunks via ./chunks (up to 2 GB per take). One object is capped by the
+ * bucket's per-object limit (50 MB, 20260924000001_podcast_guest_v2.sql).
+ */
+const AUDIO_MAX = CHUNK_MAX_BYTES
+const CAMERA_MAX = CHUNK_MAX_BYTES
 
 /** Base MIME (no codecs) -> file extension. Anything else is refused. */
-const AUDIO_TYPES: Record<string, string> = {
-  'audio/webm': 'webm',
-  'audio/ogg': 'ogg',
-  'audio/mp4': 'm4a',
-  'audio/x-m4a': 'm4a',
-}
-const VIDEO_TYPES: Record<string, string> = {
-  'video/webm': 'webm',
-  'video/mp4': 'mp4',
-}
+const AUDIO_TYPES = TAKE_AUDIO_TYPES
+const VIDEO_TYPES = TAKE_VIDEO_TYPES
 
 type TakeKind = 'audio' | 'camera'
 
 function takeKind(value: unknown): TakeKind {
   return value === 'camera' ? 'camera' : 'audio'
-}
-
-function baseMime(value: unknown) {
-  return String(value || '')
-    .split(';')[0]
-    .trim()
-    .toLowerCase()
-}
-
-/** Check the container's magic bytes so a renamed HTML/SVG/script cannot pose as a take. */
-function sniffContainer(bytes: Uint8Array) {
-  if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
-    return 'webm'
-  }
-  if (bytes.length >= 8 && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) {
-    return 'mp4'
-  }
-  if (bytes.length >= 4 && bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
-    return 'ogg'
-  }
-  return null
 }
 
 async function inspectUpload(supabase: SupabaseClient, path: string) {
@@ -117,13 +100,13 @@ export async function POST(request: Request, context: { params: Promise<{ token:
     const table = kind === 'camera' ? VIDEO_TYPES : AUDIO_TYPES
     const ext = table[mime]
     if (!ext) {
-      return guestJson({ error: kind === 'camera' ? 'Camera backup must be WebM or MP4 video' : 'Take must be WebM, Ogg, or MP4 audio' }, { status: 400 })
+      return guestJson({ error: kind === 'camera' ? 'Camera backup must be WebM or MP4 video' : 'Take must be WebM, Ogg, MP4 or WAV audio' }, { status: 400 })
     }
     const size = Number(body.size)
     const max = kind === 'camera' ? CAMERA_MAX : AUDIO_MAX
     if (!Number.isFinite(size) || size <= 0) return guestJson({ error: 'File size required' }, { status: 400 })
     if (size > max) {
-      return guestJson({ error: kind === 'camera' ? 'Camera take is too large (400MB max)' : 'Take is too large (80MB max)' }, { status: 413 })
+      return guestJson({ error: 'This file is too large for a single upload (50 MB). Please reload the booth and try again.' }, { status: 413 })
     }
 
     const path = `guest-takes/${row.id}/${kind === 'camera' ? 'camera-' : ''}${Date.now()}.${ext}`
@@ -169,7 +152,7 @@ export async function PUT(request: Request, context: { params: Promise<{ token: 
     const table = kind === 'camera' ? VIDEO_TYPES : AUDIO_TYPES
     const max = kind === 'camera' ? CAMERA_MAX : AUDIO_MAX
     const ext = path.slice(path.lastIndexOf('.') + 1)
-    const expected = ext === 'webm' ? 'webm' : ext === 'ogg' ? 'ogg' : 'mp4'
+    const expected = containerForExt(ext)
     const ok =
       info.size > 0 &&
       info.size <= max &&

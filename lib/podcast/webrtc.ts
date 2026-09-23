@@ -36,6 +36,12 @@ export function iceFailedHint(turnConfigured: boolean) {
 export type StudioIceConfig = {
   iceServers: RTCIceServer[]
   turnConfigured: boolean
+  /** Unix seconds when short-lived TURN credentials expire (absent for STUN/static creds). */
+  expiresAt?: number
+  /** Credential lifetime in seconds. */
+  ttlSeconds?: number
+  /** Client-side: when this config was fetched (ms). */
+  fetchedAt?: number
 }
 
 /**
@@ -51,11 +57,42 @@ export async function loadStudioIceServers(guestToken?: string): Promise<StudioI
     })
     if (!res.ok) throw new Error('ice')
     const data = (await res.json()) as StudioIceConfig
-    if (Array.isArray(data.iceServers) && data.iceServers.length) return data
+    if (Array.isArray(data.iceServers) && data.iceServers.length) return { ...data, fetchedAt: Date.now() }
   } catch {
     /* STUN-only until the route is up */
   }
-  return { iceServers: STUN_SERVERS, turnConfigured: false }
+  return { iceServers: STUN_SERVERS, turnConfigured: false, fetchedAt: Date.now() }
+}
+
+/** Refresh TURN credentials this long before they expire. */
+const ICE_REFRESH_MARGIN_MS = 15 * 60 * 1000
+
+/** True when short-lived TURN credentials are expired or close to it (refresh before an ICE restart). */
+export function iceConfigStale(cfg: StudioIceConfig | null | undefined, now = Date.now()) {
+  if (!cfg) return true
+  if (cfg.expiresAt) return cfg.expiresAt * 1000 - now < ICE_REFRESH_MARGIN_MS
+  // Static creds / STUN: re-check hourly in case TURN was configured meanwhile.
+  return !cfg.fetchedAt || now - cfg.fetchedAt > 60 * 60 * 1000
+}
+
+/** ms until the config should be refreshed (for a timer). */
+export function iceRefreshDelay(cfg: StudioIceConfig, now = Date.now()) {
+  if (cfg.expiresAt) return Math.max(30_000, cfg.expiresAt * 1000 - now - ICE_REFRESH_MARGIN_MS)
+  return 60 * 60 * 1000
+}
+
+/**
+ * Put fresh ICE servers on a live peer (no renegotiation). New TURN credentials
+ * apply to the next gathering — i.e. the next ICE restart — so call this first.
+ */
+export function applyIceServers(peer: RTCPeerConnection | null, cfg: StudioIceConfig) {
+  if (!peer || peer.signalingState === 'closed') return false
+  try {
+    peer.setConfiguration({ ...peer.getConfiguration(), iceServers: cfg.iceServers.length ? cfg.iceServers : STUN_SERVERS })
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** Random id for one RTCPeerConnection lifetime; tags offers/answers/candidates. */

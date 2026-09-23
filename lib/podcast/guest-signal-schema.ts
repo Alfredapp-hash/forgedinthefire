@@ -7,6 +7,16 @@ export const SIGNAL_BODY_MAX = 64 * 1024
 /** Peer generation id: lets each side drop answers/candidates from an older peer. */
 const gen = z.string().regex(/^[A-Za-z0-9_-]{4,40}$/).optional()
 
+/**
+ * De-dupe metadata. A control signal can arrive twice (data channel + signal
+ * table): `cid` identifies it, `seq` (monotonic per sender, ms-based) lets the
+ * receiver drop an older state that lands after a newer one.
+ */
+const meta = {
+  cid: z.string().regex(/^[A-Za-z0-9_-]{6,40}$/).optional(),
+  seq: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+}
+
 const sdp = z.object({
   type: z.enum(['offer', 'answer']),
   sdp: z.string().min(10).max(48 * 1024),
@@ -24,20 +34,35 @@ const candidate = z
   .strip()
 
 const ice = z.object({ candidate: candidate.nullable().optional(), gen }).strip()
-const flag = z.object({ on: z.boolean().optional() }).strip()
+const flag = z.object({ on: z.boolean().optional(), ...meta }).strip()
 
 const PAYLOADS = {
   offer: sdp.refine((v) => v.type === 'offer', 'offer expected'),
   answer: sdp.refine((v) => v.type === 'answer', 'answer expected'),
   ice,
-  hangup: z.object({}).strip(),
-  reconnect: z.object({}).strip(),
+  hangup: z.object({ ...meta }).strip(),
+  reconnect: z.object({ ...meta }).strip(),
   camera: flag,
   mute: flag,
   talkback: flag,
-  record: z.object({ on: z.boolean().optional(), phase: z.enum(GUEST_TALLY_PHASES).optional() }).strip(),
-  tally: z.object({ phase: z.enum(GUEST_TALLY_PHASES) }).strip(),
-  cue: z.object({ on: z.boolean().optional(), live: z.boolean().optional() }).strip(),
+  record: z
+    .object({
+      on: z.boolean().optional(),
+      phase: z.enum(GUEST_TALLY_PHASES).optional(),
+      /** Host session clock (seconds) at record start: the guest backup is placed from here. */
+      sessionSec: z.number().min(0).max(172_800).nullable().optional(),
+      /** Host wall clock (epoch ms) at sessionSec. */
+      hostAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+      ...meta,
+    })
+    .strip(),
+  tally: z.object({ phase: z.enum(GUEST_TALLY_PHASES), ...meta }).strip(),
+  cue: z.object({ on: z.boolean().optional(), live: z.boolean().optional(), ...meta }).strip(),
+  /**
+   * Guest -> host: "I need a pause" (on) / "I'm ready" (off).
+   * Host -> guest: safe pause on/off; `slate` when it came from the live room's Safe slate.
+   */
+  pause: z.object({ on: z.boolean(), slate: z.boolean().optional(), ...meta }).strip(),
 } as const
 
 export type ParsedSignal = { kind: string; payload: Record<string, unknown> }

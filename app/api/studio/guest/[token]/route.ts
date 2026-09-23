@@ -11,6 +11,8 @@ import {
   touchInvite,
 } from '@/lib/podcast/guest-access'
 import type { GuestInviteRow } from '@/lib/podcast/guest-types'
+import { ConsentVersionError, recordGuestConsent } from '@/lib/podcast/guest-consent'
+import { clientIp } from '@/lib/security/rate-limit'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,7 +27,15 @@ export async function GET(request: Request, context: { params: Promise<{ token: 
   }
 }
 
-type SessionBody = { action?: string; name?: string; audioOnly?: boolean; consent?: boolean }
+type SessionBody = {
+  action?: string
+  name?: string
+  audioOnly?: boolean
+  consent?: boolean
+  /** v2 consent: version of the text the guest read, and their choices. */
+  consentVersion?: string
+  choices?: Record<string, unknown>
+}
 
 export async function POST(request: Request, context: { params: Promise<{ token: string }> }) {
   try {
@@ -36,7 +46,7 @@ export async function POST(request: Request, context: { params: Promise<{ token:
 
     let body: SessionBody
     try {
-      body = (await readJsonBody(request, 2048)) as SessionBody
+      body = (await readJsonBody(request, 4096)) as SessionBody
     } catch (err) {
       return bodyErrorResponse(err) || guestFail('session', err)
     }
@@ -65,6 +75,20 @@ export async function POST(request: Request, context: { params: Promise<{ token:
         patch.guest_session_hash = claim.hash
         patch.consent_at = now
         patch.audio_only = Boolean(body.audioOnly)
+      }
+      if (body.consentVersion) {
+        try {
+          await recordGuestConsent(supabase, {
+            inviteId: row.id,
+            episodeId: row.episode_id,
+            version: String(body.consentVersion).slice(0, 40),
+            choices: { ...(body.choices || {}), audio_only: Boolean(body.audioOnly) },
+            ip: clientIp(request),
+          })
+        } catch (err) {
+          if (err instanceof ConsentVersionError) return guestJson({ error: err.message }, { status: 409 })
+          throw err
+        }
       }
       const next = await touchInvite(supabase, row.id, patch)
       // Host signals already queued before this join (old answers/candidates) are history.
