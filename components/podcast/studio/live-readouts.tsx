@@ -110,6 +110,7 @@ export const LiveProgram = memo(function LiveProgram({
   liveStreams,
   pvwScene,
   fadeNext,
+  showSwitcher = true,
   onPvw,
   onCut,
   onFade,
@@ -123,6 +124,8 @@ export const LiveProgram = memo(function LiveProgram({
   liveStreams: { host: MediaStream | null; guest: MediaStream | null }
   pvwScene: PictureScene
   fadeNext: boolean
+  /** Scene switching is an Advanced tool. */
+  showSwitcher?: boolean
   onPvw: (scene: PictureScene) => void
   onCut: () => void
   onFade: (currentPgm: PictureScene) => void
@@ -155,6 +158,7 @@ export const LiveProgram = memo(function LiveProgram({
         recording={recording}
         liveStreams={liveStreams}
       />
+      {showSwitcher && (
       <div className="space-y-1 pt-4">
         <ProgramSwitcher
           pvw={pvwScene}
@@ -168,6 +172,7 @@ export const LiveProgram = memo(function LiveProgram({
           onFade={() => onFade(view.scene)}
         />
       </div>
+      )}
     </>
   )
 })
