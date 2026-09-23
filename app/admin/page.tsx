@@ -14,6 +14,7 @@ import {
   Megaphone,
   Users,
   Mail,
+  Mic2,
 } from 'lucide-react'
 import { loadSEOAuditReport, getSEOSummaryFromAuditReport, getMockSEOSummary } from '@/src/lib/seo/audit-report-server'
 
@@ -142,7 +143,9 @@ export default async function AdminPage() {
       <div>
         <h2 className="text-lg font-bold text-[#F6FAFC] mb-4">Quick Actions</h2>
         <div className="flex flex-wrap gap-3">
+          <Link href="/admin/studio" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Studio</Link>
           <Link href="/admin/blog/new" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">New Blog Post</Link>
+          <Link href="/admin/podcast" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Podcast</Link>
           <Link href="/admin/seo" className="px-4 py-2 rounded-xl border-2 border-[#8DEBFF] text-[#8DEBFF] text-sm font-bold hover:bg-[#53D6FF]/5">SEO Center</Link>
           <Link href="/admin/social" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Social Publisher</Link>
           <Link href="/admin/newsletters" className="px-4 py-2 rounded-xl border-2 border-[#27313B] text-[#A9B8C6] text-sm font-bold hover:bg-[#1A232C]/5">Newsletters</Link>
@@ -153,9 +156,11 @@ export default async function AdminPage() {
         <h2 className="text-lg font-bold text-[#F6FAFC] mb-4">Management Tools</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {[
-            { label: 'Blog Studio', description: 'Block editor, media library, autosave, and publishing checklist.', href: '/admin/blog', icon: PenSquare, accent: TEAL },
+            { label: 'Content Studio', description: 'Biweekly topic calendar that drives Blog, Podcast, and Social.', href: '/admin/studio', icon: PenSquare, accent: TEAL },
+            { label: 'Blog', description: 'Block editor, media library, autosave, and publishing checklist.', href: '/admin/blog', icon: FileText, accent: TEAL },
+            { label: 'Podcast Console', description: 'Enterprise episode pipeline, RSS, private feeds, and analytics.', href: '/admin/podcast', icon: Mic2, accent: '#53D6FF' },
+            { label: 'Social Publisher', description: 'Promote posts to Facebook, Instagram, TikTok, and LinkedIn.', href: '/admin/social', icon: Megaphone, accent: '#53D6FF' },
             { label: 'Analytics', description: 'Subscriber growth and GA4 traffic summary.', href: '/admin/analytics', icon: BarChart3, accent: GOLD },
-            { label: 'Social Publisher', description: 'Promote posts to Facebook, Instagram, and LinkedIn.', href: '/admin/social', icon: Megaphone, accent: '#53D6FF' },
             { label: 'Admin Users', description: 'Invite team members to the admin portal.', href: '/admin/users', icon: Users, accent: '#A9B8C6' },
           ].map((t) => (
             <Link key={t.href} href={t.href} className="bg-[#151B22] rounded-2xl border p-5 hover:shadow-forge-sm flex items-start gap-4 group">
