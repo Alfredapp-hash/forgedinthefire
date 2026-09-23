@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   applyGainAndFades,
   decodeUrl,
@@ -36,7 +36,6 @@ import {
   emptyTakeForPerson,
   emptyTakesForPerson,
   ensurePersonLanes,
-  mixdownTracks,
   newClipId,
   newPersonId,
   nextTakeNumber,
@@ -105,7 +104,7 @@ import {
 } from '@/lib/podcast/picture'
 import type { PodcastChapter } from '@/lib/studio/types'
 import { applyFollowTalker } from '@/lib/podcast/auto-mix'
-import { gainForTargetLufs, measureLoudness, PODCAST_LUFS } from '@/lib/podcast/lufs'
+import { measureLoudness, PODCAST_LUFS } from '@/lib/podcast/lufs'
 import { slugFile, zipStore } from '@/lib/podcast/zip'
 import { renderMaster } from '@/lib/podcast/master'
 import { renderSfx, SFX_META, type SfxId } from '@/lib/podcast/sfx'
@@ -137,7 +136,6 @@ import { GuestInvitePanel } from '@/components/podcast/guest-invite-panel'
 import type { GuestTallyPhase } from '@/lib/podcast/guest-types'
 import { CameraClipReview, CameraLane, ProgramCutLane } from '@/components/podcast/camera-lane'
 import { CameraPreview } from '@/components/podcast/camera-preview'
-import { ProgramMonitor, ProgramSwitcher } from '@/components/podcast/program-monitor'
 import {
   CAMERA_ARM_WARNING,
   CAMERA_MB_PER_MIN,
@@ -269,7 +267,6 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [recording, setRecording] = useState(false)
   const [range, setRange] = useState({ start: 0, end: 0, total: 0 })
   const rangeRef = useRef({ start: 0, end: 0, total: 0 })
-  rangeRef.current = range
   const [masterGain, setMasterGain] = useState(1)
   const [masterFadeIn, setMasterFadeIn] = useState(0.15)
   const [masterFadeOut, setMasterFadeOut] = useState(0.4)
@@ -318,8 +315,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [camWarnFor, setCamWarnFor] = useState<string | null>(null)
   const [camStorageHint, setCamStorageHint] = useState<string | null>(null)
   const camWarnedRef = useRef(false)
-  const [inputPeaks, setInputPeaks] = useState<Record<string, number>>({})
-  const [clipHolds, setClipHolds] = useState<Record<string, boolean>>({})
+  const [liveStore] = useState(createLiveStore)
   const [matchLufs, setMatchLufs] = useState(true)
   const [loudness, setLoudness] = useState<{ lufs: number; peakDb: number } | null>(null)
   /** Tracks the loudness readout was measured on — any edit makes it stale. */
@@ -342,9 +338,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [rearmTick, setRearmTick] = useState(0)
   /** Polite screen-reader announcement for record start / stop. */
   const [recAnnounce, setRecAnnounce] = useState('')
-  const [recClock, setRecClock] = useState(0)
   const [personDraft, setPersonDraft] = useState('')
-  const [playhead, setPlayhead] = useState(0)
+  /** Timeline width grows in 30 s steps as the playhead runs past it (not every frame). */
+  const [boardExtent, setBoardExtent] = useState(30)
+  const boardExtentRef = useRef(30)
   const [recover, setRecover] = useState<SessionPeek | null>(null)
   const [sessionStatus, setSessionStatus] = useState<'checking' | 'offer' | 'open'>(
     episodeId ? 'checking' : 'open',
@@ -372,6 +369,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const recStartedAtRef = useRef(0)
   const stopMeterRef = useRef<Array<() => void>>([])
   const recRafRef = useRef<number | null>(null)
+  const recUnwatchRef = useRef<() => void>(() => {})
+  /** Take journals whose audio is laid on the timeline, finished once the session autosave lands. */
+  const pendingJournalsRef = useRef<TakeJournal[]>([])
+  /** Recovered journal takes to delete once the session autosave holds them. */
+  const restoredJournalIdsRef = useRef<string[]>([])
+  /** Last opened input stream per device key (idle + record) — Safe pause targets the guest's. */
+  const inputByKeyRef = useRef(new Map<string, MediaStream>())
   const playheadRef = useRef(0)
   const playRafRef = useRef<number | null>(null)
   const recLiveRef = useRef(false)
@@ -399,6 +403,15 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     [chapters],
   )
 
+  /** Latest committed values for stable callbacks, unmount cleanup and async work. */
+  const latestRef = useRef({ tracks, people, cameraClips, programCuts, sessionOpen: sessionStatus === 'open' })
+  useLayoutEffect(() => {
+    latestRef.current = { tracks, people, cameraClips, programCuts, sessionOpen: sessionStatus === 'open' }
+    rangeRef.current = range
+    cueToGuestRef.current = cueToGuest
+    cameraStreamsRef.current = cameraStreams
+  })
+
   const hasAudio = tracks.some((t) => Boolean(t.buffer))
   const sessionLen = Math.max(sessionDuration(tracks), pictureEnd(cameraClips))
   const ready = hasAudio
@@ -410,12 +423,35 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const unsaved = hasAudio && savedTracks !== null && tracks !== savedTracks
   const loudnessStale = Boolean(loudness) && loudnessFor !== tracks
   const anyArmed = tracks.some((t) => t.armed)
+  /** Unique capture devices for armed lanes — the idle meter effect keys on this, not on people. */
+  const armedDeviceSig = JSON.stringify(
+    [...new Set(tracks.filter((t) => t.armed).map((t) => deviceKey(t.personId)))].sort(),
+  )
+  const meterLabels: Record<string, string> = {}
+  for (const t of tracks) {
+    if (!t.armed) continue
+    const key = deviceKey(t.personId)
+    const name = people.find((p) => p.id === t.personId)?.name
+    if (!name) continue
+    meterLabels[key] = meterLabels[key] && !meterLabels[key].split(' + ').includes(name) ? `${meterLabels[key]} + ${name}` : name
+  }
   const personIdsArmed = new Set(tracks.filter((t) => t.armed).map((t) => t.personId)).size
   const armedDeviceCount = new Set(
     tracks
       .filter((t) => t.armed)
       .map((t) => people.find((p) => p.id === t.personId)?.inputDeviceId || micId || ''),
   ).size
+
+  useWakeLock(recording)
+  useLeaveGuard({ recording, unsaved })
+
+  const persistAskedRef = useRef(false)
+  /** Ask once per visit, when the person arms or records, so takes are not evicted under pressure. */
+  function ensurePersistentStorage() {
+    if (persistAskedRef.current) return
+    persistAskedRef.current = true
+    void requestPersistentStorage().catch(() => false)
+  }
 
   useEffect(() => {
     if (!baselinePendingRef.current) return
@@ -429,13 +465,33 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setStudioGuard({ recording: recordingRef.current, unsaved: false })
   }
 
-  const setHead = useCallback((sec: number) => {
-    const next = Math.max(0, sec)
-    playheadRef.current = next
-    setPlayhead(next)
-  }, [])
+  /** Move the playhead. `immediate` for user seeks; animation ticks pass false (throttled ≤15 Hz). */
+  const setHead = useCallback(
+    (sec: number, immediate = true) => {
+      const next = Math.max(0, sec)
+      playheadRef.current = next
+      liveStore.set({ playhead: next }, immediate)
+      if (next + 8 > boardExtentRef.current) {
+        boardExtentRef.current = Math.ceil((next + 8) / 30) * 30
+        setBoardExtent(boardExtentRef.current)
+      }
+    },
+    [liveStore],
+  )
 
-  cueToGuestRef.current = cueToGuest
+  const attachMeter = useCallback(
+    (key: string, stream: MediaStream) =>
+      attachInputMeter(stream, (peak) => {
+        liveStore.setPeak(key, peak)
+        if (peak >= 0.98) {
+          liveStore.setClip(key, true)
+          const timers = clipTimerRef.current
+          if (timers[key]) window.clearTimeout(timers[key])
+          timers[key] = window.setTimeout(() => liveStore.setClip(key, false), 1600)
+        }
+      }),
+    [liveStore],
+  )
 
   const publishGuestCue = useCallback((handle: CueHandle | null) => {
     setGuestCueStream(handle?.stream ?? null)
@@ -475,6 +531,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     remoteGuestRef.current = stream
     setRemoteGuest(stream)
     if (!stream) return
+    if (safePausedRef.current) stream.getAudioTracks().forEach((t) => (t.enabled = false))
     const guestCam = cameraStreamsRef.current.guest
     if (guestCam) {
       stopStreams([guestCam])
@@ -501,8 +558,6 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setPeople((prev) => prev.map((p) => (p.id === 'guest' ? { ...p, name } : p)))
   }, [])
 
-  cameraStreamsRef.current = cameraStreams
-
   useEffect(() => {
     if (!camWarnFor) {
       setCamStorageHint(null)
@@ -514,6 +569,20 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const revokeUrl = (url: string | null) => {
     if (url?.startsWith('blob:')) URL.revokeObjectURL(url)
   }
+  /**
+   * Blob URLs replaced inside setState updaters are revoked after commit, never inside the
+   * updater (updaters must be pure — StrictMode / concurrent renders can run them twice).
+   */
+  const pendingRevokeRef = useRef<string[]>([])
+  const revokeLater = (url: string | null | undefined) => {
+    if (url?.startsWith('blob:')) pendingRevokeRef.current.push(url)
+  }
+  useEffect(() => {
+    if (!pendingRevokeRef.current.length) return
+    const doomed = pendingRevokeRef.current
+    pendingRevokeRef.current = []
+    doomed.forEach(revokeUrl)
+  })
 
   const bufferToUrl = (buffer: AudioBuffer) => URL.createObjectURL(encodeWav(buffer))
 
@@ -528,7 +597,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       setTracks((prev) =>
         prev.map((t) => {
           if (t.id !== id) return t
-          revokeUrl(t.url)
+          revokeLater(t.url)
           return {
             ...t,
             buffer: cloneAudioBuffer(buffer),
@@ -607,7 +676,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           const vocal = prev.find((t) => t.role === 'vocal') || prev[0]
           if (!vocal) return prev
           vocalId = vocal.id
-          revokeUrl(vocal.url)
+          revokeLater(vocal.url)
           return prev.map((t) =>
             t.id === vocal.id
               ? {
@@ -633,9 +702,19 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     if (!episodeId || recording || sessionStatus !== 'open') return
     if (!tracks.some((t) => t.buffer) && cameraClips.length === 0) return
     const t = window.setTimeout(() => {
-      void saveSession(episodeId, people, tracks, cameraClips, { programCuts, startScene }).catch((err) => {
-        setError(err instanceof Error ? err.message : 'Could not autosave takes on this computer')
-      })
+      const journals = pendingJournalsRef.current.splice(0)
+      const restored = restoredJournalIdsRef.current.splice(0)
+      void saveSession(episodeId, people, tracks, cameraClips, { programCuts, startScene })
+        .then(() => {
+          journals.forEach((j) => void j.finish().catch(() => {}))
+          restored.forEach((id) => void deleteTake(id).catch(() => {}))
+        })
+        .catch((err) => {
+          // Keep the crash journal until a save succeeds.
+          pendingJournalsRef.current.push(...journals)
+          restoredJournalIdsRef.current.push(...restored)
+          setError(err instanceof Error ? err.message : 'Could not autosave takes on this computer')
+        })
     }, 1600)
     return () => window.clearTimeout(t)
   }, [episodeId, people, tracks, cameraClips, programCuts, startScene, recording, sessionStatus])
@@ -686,8 +765,26 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
   useEffect(() => {
     return () => {
-      tracks.forEach((t) => revokeUrl(t.url))
-      cameraClips.forEach((clip) => revokeUrl(clip.url))
+      // Read the latest committed session — the closure's first-render values are stale.
+      const last = latestRef.current
+      const urls = [
+        ...last.tracks.map((t) => t.url),
+        ...last.cameraClips.map((clip) => clip.url),
+        ...pendingRevokeRef.current,
+      ]
+      pendingRevokeRef.current = []
+      // Flush the debounced autosave so an edit made just before leaving is not lost; revoke the
+      // blob URLs only after the save has read them.
+      const hasContent = last.tracks.some((t) => t.buffer) || last.cameraClips.length > 0
+      const flush =
+        episodeId && last.sessionOpen && !recordingRef.current && hasContent
+          ? saveSession(episodeId, last.people, last.tracks, last.cameraClips, {
+              programCuts: last.programCuts,
+              startScene: 'host',
+            }).catch(() => {})
+          : Promise.resolve()
+      void flush.finally(() => urls.forEach((url) => revokeUrl(url ?? null)))
+      recUnwatchRef.current()
       stopMetronome()
       stopMix()
       stopStreams(streamRef.current)
@@ -755,15 +852,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     return () => navigator.mediaDevices.removeEventListener?.('devicechange', load)
   }, [])
 
+  // Idle input meters: reopen getUserMedia only when the set of armed DEVICES changes (or the
+  // person re-arms after a disconnect) — not on every rename / take / people edit.
   useEffect(() => {
     if (recording || !anyArmed || !navigator.mediaDevices?.getUserMedia) return
     let cancelled = false
-    const armed = tracks.filter((t) => t.armed)
-    const keys = [
-      ...new Set(
-        (armed.length ? armed : []).map((t) => deviceKey(t.personId)).filter((key) => key !== REMOTE_GUEST_KEY),
-      ),
-    ]
+    let unwatch: () => void = () => {}
+    const keys = (JSON.parse(armedDeviceSig) as string[]).filter((key) => key !== REMOTE_GUEST_KEY)
     if (keys.length === 0 && !remoteGuest) keys.push(micId || '')
     void (async () => {
       try {
@@ -774,7 +869,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         }
         if (remoteGuest) streams.set(REMOTE_GUEST_KEY, remoteGuest)
         idleStreamRef.current = [...streams.values()].filter((stream) => stream !== remoteGuest)
-        const hostKey = people.find((p) => p.id === 'host')?.inputDeviceId || micId || ''
+        streams.forEach((stream, key) => inputByKeyRef.current.set(key, stream))
+        applySafePause(safePausedRef.current)
+        const hostKey = latestRef.current.people.find((p) => p.id === 'host')?.inputDeviceId || micId || ''
         setHostTalkStream(streams.get(hostKey) || [...streams.values()].find((s) => s !== remoteGuest) || null)
         try {
           const list = await navigator.mediaDevices.enumerateDevices()
@@ -785,42 +882,27 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         } catch {
           /* labels appear after permission */
         }
-        idleStopRef.current = [...streams.entries()].map(([key, stream]) => {
-          if (!stream) return () => {}
-          const names = [
-            ...new Set(
-              (armed.length ? armed : []).map((lane) => {
-                const laneKey = deviceKey(lane.personId)
-                if (laneKey !== key) return null
-                return people.find((p) => p.id === lane.personId)?.name || null
-              }).filter((n): n is string => Boolean(n)),
-            ),
-          ]
-          const meterKey = names.join(' + ') || (key === REMOTE_GUEST_KEY ? 'Guest' : 'Mic')
-          return attachInputMeter(stream, (peak) => {
-            setInputPeaks((prev) => ({ ...prev, [meterKey]: peak }))
-            if (peak >= 0.98) {
-              setClipHolds((prev) => ({ ...prev, [meterKey]: true }))
-              const timers = clipTimerRef.current
-              if (timers[meterKey]) window.clearTimeout(timers[meterKey])
-              timers[meterKey] = window.setTimeout(() => {
-                setClipHolds((prev) => ({ ...prev, [meterKey]: false }))
-              }, 1600)
-            }
-          })
-        })
+        if (cancelled) return
+        idleStopRef.current = [...streams.entries()].map(([key, stream]) => attachMeter(key, stream))
+        unwatch = watchInputs(
+          [...streams.entries()].map(([key, stream]) => ({ label: meterLabelFor(key), stream })),
+          (label, reason) => setInputLost(`${label} mic ${reason}`),
+        )
       } catch {
         /* permission comes on Record */
       }
     })()
     return () => {
       cancelled = true
+      unwatch()
       idleStopRef.current.forEach((fn) => fn())
       idleStopRef.current = []
       stopStreams(idleStreamRef.current)
       idleStreamRef.current = []
+      liveStore.resetPeaks()
     }
-  }, [recording, anyArmed, rawInput, micId, remoteGuest, people, tracks.map((t) => `${t.id}:${t.armed}:${t.personId}`).join('|')])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- device signature, not people/tracks identity
+  }, [recording, anyArmed, rawInput, micId, remoteGuest, armedDeviceSig, rearmTick])
 
   useEffect(() => {
     if (!recording && (recTally === 'count-in' || recTally === 'rec')) {
@@ -830,23 +912,24 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
   useEffect(() => {
     if (!recording) {
-      setRecClock(punchRef.current)
+      liveStore.set({ recClock: punchRef.current }, true)
       if (recRafRef.current) cancelAnimationFrame(recRafRef.current)
       recRafRef.current = null
       return
     }
+    // Clock + playhead go to the live store (≤15 Hz to React), never to editor state.
     const tick = () => {
       const elapsed = (performance.now() - recStartedAtRef.current) / 1000
       const t = punchRef.current + Math.max(0, elapsed)
-      setRecClock(t)
-      setHead(t)
+      liveStore.set({ recClock: t })
+      setHead(t, false)
       recRafRef.current = requestAnimationFrame(tick)
     }
     recRafRef.current = requestAnimationFrame(tick)
     return () => {
       if (recRafRef.current) cancelAnimationFrame(recRafRef.current)
     }
-  }, [recording, setHead])
+  }, [recording, setHead, liveStore])
 
   const keyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => {})
   useEffect(() => {
@@ -982,7 +1065,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       const live = mixRef.current
       if (!live) return
       const now = live.sessionTime()
-      setHead(now)
+      setHead(now, false)
       const end = loop ? range.end || sessionLen : sessionLen
       if (now >= end - 0.02) {
         if (loop && range.end > range.start) {
@@ -1120,6 +1203,57 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     } finally {
       setBusy(null)
     }
+  }
+
+  function meterLabelFor(key: string) {
+    const { tracks: ts, people: ps } = latestRef.current
+    const names = [
+      ...new Set(
+        ts
+          .filter((t) => t.armed && deviceKey(t.personId) === key)
+          .map((t) => ps.find((p) => p.id === t.personId)?.name)
+          .filter((n): n is string => Boolean(n)),
+      ),
+    ]
+    return names.join(' + ') || (key === REMOTE_GUEST_KEY ? 'Guest' : 'Host')
+  }
+
+  /**
+   * Safe pause: silence the guest everywhere this computer hears them — the recording, the
+   * meters and the host's headphones — by disabling their audio tracks. Returns how many
+   * inputs were affected (0 = guest shares the host mic, cannot be separated).
+   */
+  function applySafePause(on: boolean) {
+    const targets: MediaStream[] = []
+    if (remoteGuestRef.current) targets.push(remoteGuestRef.current)
+    const guestKey = deviceKey('guest')
+    const hostKey = deviceKey('host')
+    if (guestKey !== REMOTE_GUEST_KEY && guestKey !== hostKey) {
+      const local = inputByKeyRef.current.get(guestKey)
+      if (local) targets.push(local)
+    }
+    for (const stream of targets) stream.getAudioTracks().forEach((t) => (t.enabled = !on))
+    return targets.length
+  }
+
+  function toggleSafePause() {
+    const next = !safePausedRef.current
+    const affected = applySafePause(next)
+    if (next && affected === 0 && !remoteGuestRef.current) {
+      const shared = deviceKey('guest') === deviceKey('host')
+      if (shared) {
+        setError('Safe pause cannot separate the guest: they share the host microphone. Stop the recording instead.')
+        return
+      }
+    }
+    safePausedRef.current = next
+    setSafePaused(next)
+    setRecAnnounce(next ? 'Safe pause on. The guest is silenced.' : 'Safe pause off. The guest can be heard again.')
+    setOk(
+      next
+        ? 'Safe pause — the guest is silenced in the recording and in headphones. Press again (Shift+Space) to resume.'
+        : 'Safe pause off — the guest is audible again',
+    )
   }
 
   function deviceKey(personId: string) {
@@ -1505,6 +1639,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       )
       .join(' · ')
 
+    ensurePersistentStorage()
+    setStep('record')
+    setInputLost(null)
     const ac = new AbortController()
     abortRef.current = ac
     punchRef.current = punch
@@ -1516,7 +1653,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setRecTally(countInBeats > 0 ? 'count-in' : 'rec')
     setError(null)
     setOk(null)
-    setInputPeaks({})
+    liveStore.resetPeaks()
     stopMix()
 
     try {
@@ -1546,22 +1683,20 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       streamRef.current = [...streams.values()].filter((stream) => stream !== remoteGuestRef.current)
       const hostKey = people.find((p) => p.id === 'host')?.inputDeviceId || micId || ''
       setHostTalkStream(streams.get(hostKey) || [...streams.values()].find((s) => s !== remoteGuestRef.current) || null)
+      streams.forEach((stream, key) => inputByKeyRef.current.set(key, stream))
+      applySafePause(safePausedRef.current)
       stopMeterRef.current = jobs.map((job) => {
         const stream = streams.get(job.key)
         if (!stream) return () => {}
-        const meterKey = job.sharedNames.join(' + ') || 'mic'
-        return attachInputMeter(stream, (peak) => {
-          setInputPeaks((prev) => ({ ...prev, [meterKey]: peak }))
-          if (peak >= 0.98) {
-            setClipHolds((prev) => ({ ...prev, [meterKey]: true }))
-            const timers = clipTimerRef.current
-            if (timers[meterKey]) window.clearTimeout(timers[meterKey])
-            timers[meterKey] = window.setTimeout(() => {
-              setClipHolds((prev) => ({ ...prev, [meterKey]: false }))
-            }, 1600)
-          }
-        })
+        return attachMeter(job.key, stream)
       })
+      recUnwatchRef.current()
+      recUnwatchRef.current = watchInputs(
+        jobs
+          .map((job) => ({ label: job.sharedNames.join(' + ') || 'Mic', stream: streams.get(job.key) }))
+          .filter((j): j is { label: string; stream: MediaStream } => Boolean(j.stream)),
+        (label, reason) => setInputLost(`${label} mic ${reason} — the recording may be silent from here`),
+      )
 
       try {
         const list = await navigator.mediaDevices.enumerateDevices()
@@ -1596,25 +1731,58 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
 
       const recTrim = Math.max(0, prerollSec)
-      const captures = await Promise.all(
-        jobs.map(async (job) => {
+      const laneName = (job: (typeof jobs)[number]) => job.sharedNames.join(' + ') || 'a voice'
+      // Crash-safe journal per lane (Stream B). Opening never blocks recording.
+      const journals = await Promise.all(
+        jobs.map((job) => {
           const stream = streams.get(job.key)
-          if (!stream) {
-            throw new Error(`No microphone stream for ${job.sharedNames.join(' + ') || 'this voice'}`)
-          }
-          return { job, capture: await startLaneCapture(job.lane.id, stream) }
+          const rate = stream?.getAudioTracks()[0]?.getSettings().sampleRate || 48000
+          return openTakeJournal({
+            episodeId: episodeId || 'scratch',
+            personId: job.lane.personId,
+            label: `${laneName(job)} · take`,
+            sampleRate: rate,
+            channels: 1,
+            startSec: punch,
+          }).catch(() => null as TakeJournal | null)
         }),
       )
+      // One lane failing to start must not sink the others: keep what started, say what failed.
+      const started = await Promise.allSettled(
+        jobs.map(async (job, i) => {
+          const stream = streams.get(job.key)
+          if (!stream) {
+            throw new Error(`No microphone stream for ${laneName(job)}`)
+          }
+          // TODO(merge: Stream B): pass `{ journal: journals[i] }` through startLaneCapture →
+          // startWorkletCapture so PCM frames are journaled while recording.
+          return { job, journal: journals[i], capture: await startLaneCapture(job.lane.id, stream) }
+        }),
+      )
+      const captures: { job: (typeof jobs)[number]; journal: TakeJournal | null; capture: LaneCapture }[] = []
+      const failedLanes: string[] = []
+      started.forEach((result, i) => {
+        if (result.status === 'fulfilled') captures.push(result.value)
+        else {
+          failedLanes.push(
+            `${laneName(jobs[i])} (${result.reason instanceof Error ? result.reason.message : 'could not start'})`,
+          )
+          void journals[i]?.abort().catch(() => {})
+        }
+      })
+      if (captures.length === 0) {
+        throw new Error(`Recording could not start — ${failedLanes.join('; ')}`)
+      }
+      if (failedLanes.length) {
+        setError(`Not recording ${failedLanes.join('; ')}. The other lane${captures.length === 1 ? ' is' : 's are'} recording.`)
+      }
       capturesRef.current = captures.map((c) => c.capture)
       recorderRef.current = captures.map((c) => c.capture)
       const camJobs = liveCameraJobs()
       const camCaptures = camJobs.map((job) => startCameraCapture(job.person.id, job.stream))
       cameraCapturesRef.current = camCaptures
 
-      void Promise.all([
-        Promise.all(captures.map((c) => c.capture.done)),
-        Promise.all(camCaptures.map((c) => c.done.catch(() => new Blob()))),
-      ]).then(async ([blobs, camBlobs]) => {
+      const resetRecState = () => {
         finishRecCleanup()
         stopLocalRecordStreams()
         recorderRef.current = []
@@ -1623,7 +1791,25 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         recordingRef.current = false
         recLiveRef.current = false
         setRecording(false)
-        if (ac.signal.aborted) return
+      }
+
+      void Promise.all([
+        Promise.allSettled(captures.map((c) => c.capture.done)),
+        Promise.allSettled(camCaptures.map((c) => c.done)),
+      ]).then(async ([audioSettled, camSettled]) => {
+        resetRecState()
+        const blobs = audioSettled.map((r) => (r.status === 'fulfilled' ? r.value : null))
+        const camBlobs = camSettled.map((r) => (r.status === 'fulfilled' ? r.value : new Blob()))
+        const lostLanes = audioSettled.flatMap((r, i) => (r.status === 'rejected' ? [laneName(captures[i].job)] : []))
+        if (ac.signal.aborted) {
+          captures.forEach((c) => void c.journal?.abort().catch(() => {}))
+          return
+        }
+        if (lostLanes.length) {
+          setError(`The ${lostLanes.join(' and ')} recording failed. Other lanes were kept.`)
+        }
+        // Journals are finished only after the session autosave has the take (see autosave effect).
+        pendingJournalsRef.current.push(...captures.map((c) => c.journal).filter((j): j is TakeJournal => Boolean(j)))
         const shared = jobs.some((j) => j.sharedNames.length > 1)
         setBusy(
           jobs.length > 1
@@ -1674,7 +1860,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   ? `${sharedNames.join(' + ')} · take`
                   : `${person?.name || 'Voice'} · take`
               if (reuse) {
-                revokeUrl(reuse.url)
+                revokeLater(reuse.url)
                 const url = bufferToUrl(buffer)
                 laidIds.push(reuse.id)
                 next = withListenTake(
@@ -1778,11 +1964,21 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           } else if (laidCams.length) {
             setOk(`Camera file at ${formatClock(punch)}${camNote}`)
           }
+          setRecAnnounce(
+            decoded.length
+              ? `Recording stopped — ${decoded.map((d) => d.sharedNames.join(' and ')).join(', ')} take saved`
+              : 'Recording stopped — no audio was captured',
+          )
         } catch (err) {
           setError(err instanceof Error ? err.message : 'Could not decode recording')
         } finally {
           setBusy(null)
         }
+      }).catch((err) => {
+        // Whatever happened, never leave the room stuck in "recording".
+        resetRecState()
+        setBusy(null)
+        setError(err instanceof Error ? err.message : 'Recording stopped unexpectedly')
       })
 
       if (prerollSec > 0.04) {
@@ -1796,6 +1992,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       }
       recLiveRef.current = true
       recStartedAtRef.current = performance.now()
+      setRecAnnounce(`Recording started${safePausedRef.current ? ' — safe pause is on, guest silenced' : ''}`)
       const camCount = cameraCapturesRef.current.length
       const punchKind = captures.some((c) => c.capture.kind === 'worklet')
         ? ' · AudioWorklet punch'
@@ -1824,6 +2021,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   }
 
   function finishRecCleanup() {
+    recUnwatchRef.current()
+    recUnwatchRef.current = () => {}
     cueRef.current?.stop()
     cueRef.current = null
     publishGuestCue(mixRef.current)
@@ -1860,7 +2059,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       setTracks((prev) => {
         const empty = prev.find((t) => (t.role === 'bed' || t.role === 'music') && !t.buffer)
         if (empty) {
-          revokeUrl(empty.url)
+          revokeLater(empty.url)
           return prev.map((t) =>
             t.id === empty.id
               ? {
@@ -2002,14 +2201,11 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       return
     }
     pushHistory()
-    setTracks((prev) => {
-      const doomed = prev.find((t) => t.id === id)
-      revokeUrl(doomed?.url || null)
-      invalidateInsertCache(id)
-      const next = prev.filter((t) => t.id !== id)
-      if (selectedId === id) setSelectedId(next[0]?.id || null)
-      return next
-    })
+    const doomed = tracks.find((t) => t.id === id)
+    revokeLater(doomed?.url || null)
+    invalidateInsertCache(id)
+    setTracks((prev) => prev.filter((t) => t.id !== id))
+    if (selectedId === id) setSelectedId(tracks.find((t) => t.id !== id)?.id || null)
   }
 
   function duplicateTrack(id: string) {
@@ -2052,7 +2248,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setTracks((prev) =>
       prev.map((t) => {
         if (t.id !== id) return t
-        revokeUrl(t.url)
+        revokeLater(t.url)
         return { ...t, buffer: null, url: null, clips: [], automation: [] }
       }),
     )
@@ -2061,6 +2257,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   function armTrack(id: string) {
     const track = tracks.find((t) => t.id === id)
     if (!track) return
+    if (!track.armed) ensurePersistentStorage()
     setTracks((prev) =>
       prev.map((t) => {
         if (t.id === id) return { ...t, armed: !t.armed }
@@ -2078,6 +2275,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       setError('Need Host and Guest lanes')
       return
     }
+    ensurePersistentStorage()
     setTracks((prev) => prev.map((t) => ({ ...t, armed: t.id === host.id || t.id === guest.id })))
     setSelectedId(host.id)
     setOk('Host + Guest armed. Same mic = one take. Two mics = two takes, one punch.')
@@ -2474,10 +2672,6 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
   }
 
-  const cutState = programStateAt(programCuts, playhead, startScene)
-  const pgmView = pgmAnim
-    ? { scene: pgmAnim.to, fromScene: pgmAnim.from, mix: pgmAnim.mix }
-    : { scene: cutState.scene, fromScene: cutState.fromScene, mix: cutState.mix }
   const guestLiveVideo = remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest)) ? remoteGuest : null
   const liveProgramStreams = {
     host: cameraStreams.host || null,
@@ -2495,11 +2689,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const peakDb = meter ? dbFromLinear(meter.peak) : null
   const rmsDb = meter ? dbFromLinear(meter.rms) : null
   const recHint = REC_MODE_META.find((m) => m.id === recMode)?.hint
-  const boardDuration = Math.max(30, playhead + 8, sessionLen) + 4
+  const boardDuration = Math.max(30, boardExtent, sessionLen) + 4
   const timelineBoard = {
     people,
     tracks,
-    playhead,
     pxPerSec: zoom,
     selectedId: selected?.id || null,
     selectedClipId,
@@ -2532,7 +2725,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   }
 
   return (
-    <div className="rounded-2xl border border-[#27313B] bg-[#0C141C] overflow-hidden">
+    <LiveStoreContext.Provider value={liveStore}>
+    <div className="rounded-2xl border border-[#4A5968] bg-[#0C141C] overflow-hidden">
       <div className="px-4 py-3 border-b border-[#27313B] flex flex-wrap items-center justify-between gap-3 bg-[#11161C]">
         <div>
           <p className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Podcast production room</p>
@@ -2542,9 +2736,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         </div>
         <div className="text-right text-xs font-mono text-[#A9B8C6] space-y-0.5">
           <p>
-            {recording
-              ? `● REC ${formatClock(recClock)}${recCamBytes ? ` · cam ${formatBytes(recCamBytes)}` : ''}`
-              : busy || (ready ? `${formatClock(playhead)} / ${durationLabel}` : 'Idle')}
+            <LiveStatusLine
+              recording={recording}
+              busy={busy}
+              ready={ready}
+              durationLabel={durationLabel}
+              camBytesLabel={recCamBytes ? formatBytes(recCamBytes) : null}
+            />
           </p>
           {peakDb != null && Number.isFinite(peakDb) && (
             <p>
@@ -2560,6 +2758,38 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       </div>
 
       <div className="p-4 space-y-4">
+        <RemoteAudioKeepAlive stream={remoteGuest} />
+        <p className="sr-only" role="status" aria-live="polite">
+          {recAnnounce}
+        </p>
+        {inputLost && (
+          <div
+            className="rounded-xl border-2 border-[#FF5B73] bg-[#2A0C12] px-4 py-3 flex flex-wrap items-center gap-3"
+            role="alert"
+          >
+            <p className="text-sm font-semibold text-[#FFE1E6] flex-1 min-w-[12rem]">
+              {inputLost}. Check the cable or headset, then re-arm.
+            </p>
+            <button
+              type="button"
+              className={danger}
+              onClick={() => {
+                if (recordingRef.current) {
+                  // Stop keeps what was captured; the person re-records once the mic is back.
+                  void toggleRecord()
+                }
+                setInputLost(null)
+                setRearmTick((n) => n + 1)
+                void refreshMediaDevices()
+              }}
+            >
+              {recording ? 'Stop & keep take, then re-arm' : 'Re-arm microphones'}
+            </button>
+            <button type="button" className={btn} onClick={() => setInputLost(null)}>
+              Dismiss
+            </button>
+          </div>
+        )}
         {recover && sessionStatus === 'offer' && (
           <div className="rounded-xl border border-[#53D6FF]/40 bg-[#0A1820] px-4 py-3 flex flex-wrap items-center gap-3">
             <p className="text-sm text-[#F6FAFC] flex-1 min-w-[12rem]">
@@ -2808,39 +3038,30 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                     </div>
                   ))
               )}
-              <ProgramMonitor
+              <LiveProgram
                 clips={cameraClips}
-                playhead={playhead}
+                cuts={programCuts}
+                startScene={startScene}
+                pgmAnim={pgmAnim}
                 playing={playing}
-                scene={pgmView.scene}
-                fromScene={pgmView.fromScene}
-                mix={pgmView.mix}
                 recording={recording}
                 liveStreams={liveProgramStreams}
-              />
-              <div className="space-y-1 pt-4">
-                <ProgramSwitcher
-                  pvw={pvwScene}
-                  pgm={pgmView.scene}
-                  fading={pgmView.mix < 0.999 && pgmView.fromScene !== pgmView.scene}
-                  fadeArmed={fadeNext}
-                  recording={recording}
-                  cutCount={programCuts.length}
-                  onPvw={switchScene}
-                  onCut={() => {
+                pvwScene={pvwScene}
+                fadeNext={fadeNext}
+                onPvw={switchScene}
+                onCut={() => {
+                  setFadeNext(false)
+                  takeProgram(pvwScene, false)
+                }}
+                onFade={(currentPgm) => {
+                  if (pvwScene !== currentPgm) {
                     setFadeNext(false)
-                    takeProgram(pvwScene, false)
-                  }}
-                  onFade={() => {
-                    if (pvwScene !== pgmView.scene) {
-                      setFadeNext(false)
-                      takeProgram(pvwScene, true)
-                    } else {
-                      setFadeNext((v) => !v)
-                    }
-                  }}
-                />
-              </div>
+                    takeProgram(pvwScene, true)
+                  } else {
+                    setFadeNext((v) => !v)
+                  }
+                }}
+              />
             </div>
           )}
         </div>
@@ -2958,28 +3179,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </div>
           {(recording || anyArmed) && (
             <div className="space-y-1.5">
-              {Object.keys(inputPeaks).length === 0 && (
-                <div className="flex items-center gap-3">
-                  <div className="h-2 flex-1 rounded-full bg-[#151B22] overflow-hidden">
-                    <div className="h-full bg-[#53D6FF] transition-[width] duration-75" style={{ width: '0%' }} />
-                  </div>
-                  <span className="text-xs font-mono text-[#A9B8C6]">{recording ? `in ${formatClock(recClock)}` : 'idle'}</span>
-                </div>
-              )}
-              {Object.entries(inputPeaks).map(([key, peak]) => (
-                <div key={key} className="flex items-center gap-3">
-                  <span className="w-16 truncate text-[10px] uppercase tracking-wider text-[#7C8B97]">{key}</span>
-                  <div className="h-2 flex-1 rounded-full bg-[#151B22] overflow-hidden">
-                    <div
-                      className={`h-full transition-[width] duration-75 ${clipHolds[key] ? 'bg-[#FF5B73]' : 'bg-[#53D6FF]'}`}
-                      style={{ width: `${Math.min(100, peak * 140)}%` }}
-                    />
-                  </div>
-                  <span className={`text-xs font-mono ${clipHolds[key] ? 'text-[#FF7A9A]' : 'text-[#A9B8C6]'}`}>
-                    {clipHolds[key] ? 'CLIP' : recording ? `in ${formatClock(recClock)}` : 'idle'}
-                  </span>
-                </div>
-              ))}
+              <LiveMeters labels={meterLabels} recording={recording} />
             </div>
           )}
           {recHint && (
@@ -3194,7 +3394,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             <div className="flex flex-wrap items-center gap-3">
               <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">People & takes</p>
               <p className="text-[11px] font-mono text-[#A9B8C6]">
-                {formatClock(playhead)}
+                <LiveClock />
                 {range.end - range.start > 0.05
                   ? ` · sel ${formatClock(Math.min(range.start, range.end))}–${formatClock(Math.max(range.start, range.end))}`
                   : ''}
@@ -3226,7 +3426,6 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             <ProgramCutLane
               cuts={programCuts}
               startScene={startScene}
-              playhead={playhead}
               pxPerSec={zoom}
               durationSec={boardDuration}
               scrollLeft={timelineScroll}
@@ -3667,7 +3866,6 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 {person.kind === 'voice' && (
                   <CameraLane
                     clips={cameraClips.filter((c) => c.personId === person.id)}
-                    playhead={playhead}
                     pxPerSec={zoom}
                     durationSec={boardDuration}
                     scrollLeft={timelineScroll}
@@ -3790,7 +3988,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         {/* Master bus / playhead */}
         <div>
           <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF] mb-2">
-            Playhead {formatClock(playhead)} · export {formatClock(range.start)} – {formatClock(range.end)}
+            Playhead <LiveClock /> ·{' '}
+            {exportSelection
+              ? `export selection ${formatClock(exportSelection.start)} – ${formatClock(exportSelection.end)}`
+              : `export full episode (${durationLabel})`}
           </p>
           <button
             type="button"
@@ -3809,12 +4010,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 width: sessionLen > 0 ? `${((range.end - range.start) / sessionLen) * 100}%` : 0,
               }}
             />
-            {hasAudio && (
-              <div
-                className="absolute top-0 bottom-0 w-0.5 bg-[#8DEBFF]"
-                style={{ left: sessionLen > 0 ? `${(playhead / sessionLen) * 100}%` : 0 }}
-              />
-            )}
+            {hasAudio && <LiveOverviewHead sessionLen={sessionLen} />}
             {!hasAudio && (
               <p className="absolute inset-0 flex items-center justify-center text-sm text-[#A9B8C6]">
                 Record a take — playhead and cue mix run live, without bouncing a WAV first
@@ -4151,6 +4347,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         </p>
       </div>
     </div>
+    </LiveStoreContext.Provider>
   )
 }
 
