@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { createServiceClient } from './service'
 
 /**
  * Create a standard server-side Supabase client
@@ -41,45 +42,13 @@ export async function createClient() {
 }
 
 /**
- * Create an admin Supabase client with elevated privileges
- * Uses SERVICE_ROLE_KEY - bypasses RLS
- * ⚠️ SECURITY: Only use in server-side code (API routes, scheduled functions)
- * Never expose this client to the frontend/browser
+ * Admin Supabase client with elevated privileges (SERVICE_ROLE_KEY, bypasses RLS).
+ *
+ * This client deliberately carries NO request cookies. When cookies were wired in,
+ * a signed-in admin's access token replaced the service key and every "admin" query
+ * silently ran as `authenticated` under RLS.
+ * ⚠️ Server-only. Gate every caller with verifyAdminAccess()/requireAdmin() first.
  */
 export async function createAdminClient() {
-  const cookieStore = await cookies()
-  
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  
-  if (!url) {
-    throw new Error(
-      'Missing NEXT_PUBLIC_SUPABASE_URL environment variable. Required for admin operations.'
-    )
-  }
-  
-  if (!serviceRoleKey) {
-    throw new Error(
-      'Missing SUPABASE_SERVICE_ROLE_KEY environment variable. Required for admin operations.'
-    )
-  }
-
-  return createServerClient(
-    url,
-    serviceRoleKey,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
-          } catch {}
-        },
-      },
-    }
-  )
+  return createServiceClient()
 }

@@ -51,7 +51,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
           .from('podcast_episodes')
           .select('slug, published_at, updated_at, visibility')
           .eq('status', 'published')
-          .neq('visibility', 'private')
+          .eq('visibility', 'public')
+          .lte('published_at', new Date().toISOString())
           .order('published_at', { ascending: false })
           .limit(200),
         supabase

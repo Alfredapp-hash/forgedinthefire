@@ -37,16 +37,19 @@ function kWeight(channel: Float32Array) {
 }
 
 function meanSquare(channels: Float32Array[], start: number, end: number) {
-  let sum = 0
-  let n = 0
+  // BS.1770: loudness sums each channel's mean square (L/R weight 1), it does not average them.
+  const len = end - start
+  if (len <= 0) return 0
+  let total = 0
   for (const ch of channels) {
+    let sum = 0
     for (let i = start; i < end; i++) {
       const s = ch[i]
       sum += s * s
-      n++
     }
+    total += sum / len
   }
-  return n ? sum / n : 0
+  return total
 }
 
 function msToLufs(ms: number) {

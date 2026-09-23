@@ -62,6 +62,8 @@ const DESK_TABS: DeskTab[] = ['studio', 'live', 'episodes', 'show', 'distributio
 
 export function PodcastDesk() {
   const [tab, setTab] = useState<DeskTab>('studio')
+  const [liveVisited, setLiveVisited] = useState(false)
+  if (tab === 'live' && !liveVisited) setLiveVisited(true)
   const [studioEpisodeId, setStudioEpisodeId] = useState('')
   const [episodes, setEpisodes] = useState<PodcastEpisode[]>([])
   const [topics, setTopics] = useState<ContentTopic[]>([])
@@ -356,7 +358,12 @@ export function PodcastDesk() {
         />
       )}
 
-      {tab === 'live' && <LiveControlRoom episodes={episodes} />}
+      {/* Stay mounted after first visit so switching tabs never drops a live stream. */}
+      {(tab === 'live' || liveVisited) && (
+        <div hidden={tab !== 'live'}>
+          <LiveControlRoom episodes={episodes} />
+        </div>
+      )}
 
       {tab === 'episodes' && (
         <>

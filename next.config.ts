@@ -30,12 +30,18 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        source: '/:path*',
+        // Everything except the public podcast embed player may not be framed.
+        source: '/((?!podcast/embed).*)',
         headers: [
           {
             key: 'X-Frame-Options',
             value: 'DENY',
           },
+        ],
+      },
+      {
+        source: '/:path*',
+        headers: [
           {
             key: 'X-Content-Type-Options',
             value: 'nosniff',
@@ -48,6 +54,15 @@ const nextConfig: NextConfig = {
             key: 'Permissions-Policy',
             value: 'camera=(self), microphone=(self), geolocation=()',
           },
+        ],
+      },
+      {
+        // Guest join links carry a secret token: never leak it via Referer.
+        source: '/studio/:path*',
+        headers: [
+          { key: 'Referrer-Policy', value: 'no-referrer' },
+          { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+          { key: 'Cache-Control', value: 'no-store' },
         ],
       },
     ];
