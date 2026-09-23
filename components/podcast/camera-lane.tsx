@@ -354,10 +354,10 @@ export const CameraLane = memo(function CameraLane({
             Trim out
           </button>
           <button type="button" className={toolBtn} disabled={disabled} onClick={() => onCutHole?.(false)}>
-            Cut hole
+            Remove, leave gap
           </button>
           <button type="button" className={toolBtn} disabled={disabled} onClick={() => onCutHole?.(true)}>
-            Ripple
+            Remove &amp; close gap
           </button>
           <button type="button" className={toolBtn} disabled={disabled || !selected} onClick={() => onSlip?.(-0.1)}>
             Slip −
@@ -432,7 +432,7 @@ export const CameraLane = memo(function CameraLane({
 })
 
 const toolBtn =
-  'inline-flex items-center px-2 py-0.5 rounded border border-[#27313B] text-[10px] uppercase tracking-wider text-[#B8C4CF] disabled:opacity-40'
+  'inline-flex min-h-[28px] items-center px-2 py-0.5 rounded border border-[#4A5968] text-[10px] uppercase tracking-wider text-[#D5DEE6] disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#8DEBFF]'
 
 function FilmSprockets({ color }: { color: string }) {
   const dpr = useTrackDpr()
@@ -566,9 +566,9 @@ export function CameraClipReview({
           {kind === 'title'
             ? 'Kdenlive-style title clip on the picture clock. Canvas text — not in the RSS mix.'
             : kind === 'broll'
-              ? 'Overlay movie on Program. Cover replaces A-roll picture; PIP keeps A-roll. Audio mix unchanged.'
+              ? 'Overlay movie on the Output. Cover replaces the full-screen picture; Picture-in-picture keeps it. Audio mix unchanged.'
               : kind === 'stinger'
-                ? 'OBS-style cut flash on Program. Black or a title card — canvas, not a plugin. Not in the RSS mix.'
+                ? 'Short flash on the Output. Black or a title card. Not in the podcast audio.'
                 : 'Separate file — not in the RSS mix. Color is a Shotcut-style insert. Edits do not rewrite PCM.'}
         </p>
         {kind === 'stinger' && onStingerStyle && (
@@ -618,7 +618,7 @@ export function CameraClipReview({
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
             onClick={() => onOverlayFit(clip.overlayFit === 'pip' ? 'cover' : 'pip')}
           >
-            {clip.overlayFit === 'pip' ? 'Keep A-roll (PIP)' : 'Cover A-roll'}
+            {clip.overlayFit === 'pip' ? 'Picture-in-picture' : 'Cover full-screen'}
           </button>
         )}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[10px] text-[#A9B8C6] max-w-lg">
@@ -698,7 +698,7 @@ export function CameraClipReview({
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
               disabled={!onSeedKeyframes}
               onClick={onSeedKeyframes}
-              title="Two linear points — opacity and position. Painted in Program / A-roll."
+              title="Two linear points — opacity and position. Painted in the Output / full-screen video."
             >
               Add in / out points
             </button>
@@ -812,7 +812,7 @@ const SCENE_COLOR: Record<ProgramScene, string> = {
 const SCENE_LABEL: Record<ProgramScene, string> = {
   host: 'Host',
   guest: 'Guest',
-  pip: 'PIP',
+  pip: 'Side by side',
 }
 
 type CutLaneProps = {
@@ -891,11 +891,11 @@ export const ProgramCutLane = memo(function ProgramCutLane({
     <div className="rounded-lg border border-[#1A232C] bg-[#05070A] overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-2 px-2 py-1">
         <p className="text-[10px] uppercase tracking-wider text-[#7C8B97]">
-          Program lane · {cuts.length ? `${cuts.length} scene cut${cuts.length === 1 ? '' : 's'}` : `all ${SCENE_LABEL[startScene]}`}
+          Output lane · {cuts.length ? `${cuts.length} scene cut${cuts.length === 1 ? '' : 's'}` : `all ${SCENE_LABEL[startScene]}`}
         </p>
         <p className="text-[10px] text-[#7C8B97]">
           {cuts.length === 0
-            ? 'Click Host / Guest / PIP (or ⌥1–3) to cut at the playhead — live while recording.'
+            ? 'Click Host / Guest / Side by side (or ⌥1–3) to switch at the playhead — live while recording.'
             : 'Drag a tick to retime. Export follows this lane.'}
         </p>
       </div>

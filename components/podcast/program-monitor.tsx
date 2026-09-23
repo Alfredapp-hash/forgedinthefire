@@ -42,7 +42,7 @@ const VIEW_H = 360
 const SCENES: { id: PictureScene; label: string; key: string }[] = [
   { id: 'host', label: 'Host', key: '⌥1' },
   { id: 'guest', label: 'Guest', key: '⌥2' },
-  { id: 'pip', label: 'PIP', key: '⌥3' },
+  { id: 'pip', label: 'Side by side', key: '⌥3' },
 ]
 
 export function ProgramSwitcher({
@@ -71,7 +71,7 @@ export function ProgramSwitcher({
   return (
     <div className="space-y-1">
       <p className="text-[10px] uppercase tracking-wider text-[#7C8B97]">Scene</p>
-      <div className="flex flex-wrap gap-1" role="group" aria-label="Program scene">
+      <div className="flex flex-wrap gap-1" role="group" aria-label="Output scene">
         {SCENES.map((s) => (
           <button
             key={s.id}
@@ -85,7 +85,7 @@ export function ProgramSwitcher({
                   : 'border-[#27313B] text-[#B8C4CF]'
             }`}
             title={`${s.label} (${s.key}) — ${
-              recording ? 'cuts Program now, on the record clock' : 'cuts Program at the playhead'
+              recording ? 'switches the Output now, on the record clock' : 'switches the Output at the playhead'
             }. Arm Fade first to dissolve.`}
             onClick={() => onPvw(s.id)}
           >
@@ -98,7 +98,7 @@ export function ProgramSwitcher({
           type="button"
           className="inline-flex items-center justify-center h-6 px-1.5 rounded border border-[#27313B] text-[10px] uppercase tracking-wider text-[#B8C4CF] disabled:opacity-40"
           disabled={pvw === pgm && !fading}
-          title="Cut Preview scene to Program"
+          title="Switch the Output to the Preview scene"
           onClick={onCut}
         >
           Cut
@@ -109,7 +109,7 @@ export function ProgramSwitcher({
             fading || fadeArmed ? 'border-[#53D6FF]/60 text-[#8DEBFF]' : 'border-[#27313B] text-[#B8C4CF]'
           }`}
           aria-pressed={Boolean(fadeArmed)}
-          title="Fade to Program (~0.45s). If Program already matches Preview, the next scene click dissolves."
+          title="Fade the Output to Preview (~0.45s). If the Output already matches Preview, the next scene click dissolves."
           onClick={onFade}
         >
           Fade
@@ -120,7 +120,7 @@ export function ProgramSwitcher({
           ? 'Switching is recorded on the take.'
           : cutCount
             ? `${cutCount} scene cut${cutCount === 1 ? '' : 's'} on the timeline`
-            : 'Cuts go on the Program lane.'}
+            : 'Switches go on the Output lane.'}
       </p>
     </div>
   )
@@ -279,12 +279,12 @@ export function ProgramMonitor(props: Props) {
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[10px] uppercase tracking-wider text-[#8DEBFF]">Program</p>
+        <p className="text-[10px] uppercase tracking-wider text-[#8DEBFF]">Output</p>
         <button
           type="button"
           className="text-[9px] uppercase tracking-wider text-[#7C8B97] hover:text-[#B8C4CF]"
           onClick={() => setLarge((v) => !v)}
-          aria-label={large ? 'Shrink Program monitor' : 'Enlarge Program monitor'}
+          aria-label={large ? 'Shrink Output monitor' : 'Enlarge Output monitor'}
         >
           {large ? 'Small' : 'Large'}
         </button>
@@ -301,7 +301,7 @@ export function ProgramMonitor(props: Props) {
           </p>
         )}
         <span className="absolute left-1 top-1 rounded bg-[#05070A]/80 px-1 text-[9px] uppercase tracking-wider text-[#8DEBFF]">
-          PGM {scene === 'guest' ? 'Guest' : scene === 'pip' ? 'PIP' : 'Host'}
+          OUT {scene === 'guest' ? 'Guest' : scene === 'pip' ? 'Side by side' : 'Host'}
           {fading ? ' · fade' : ''}
         </span>
         {showingLive && (
