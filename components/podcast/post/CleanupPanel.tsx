@@ -7,7 +7,7 @@ import { REDACTION_LABEL, redactText, redactWords } from '@/lib/podcast/safety/p
 import { remapChapters, remapWords, renderPlan, type EditPlan } from '@/lib/podcast/safety/render'
 import type { DisguisePresetId } from '@/lib/podcast/safety/voice-disguise'
 import type { DisguiseRegion } from '@/lib/podcast/safety/render'
-import type { EpisodeSafetyFields } from '@/lib/studio/release'
+import type { EpisodeSafetyFields, GuestConsentStatus } from '@/lib/studio/release'
 import { cleanWords, transcriptKind, wordsToPlainText, type TranscriptWord } from '@/lib/studio/transcript'
 import type { PodcastChapter, PodcastEpisode } from '@/lib/studio/types'
 import { ChaptersSection } from './ChaptersSection'
@@ -38,9 +38,11 @@ type Props = {
   publishAudio: (file: File, duration: number, extra: Record<string, unknown>, label: string) => Promise<boolean>
   revert: () => Promise<void>
   onError: (msg: string) => void
+  /** Consent recorded in the guest booth (GET /api/admin/studio/episodes/[id]/consent). */
+  guestConsent?: GuestConsentStatus | null
 }
 
-export function CleanupPanel({ episode, disabled, save, publishAudio, revert, onError }: Props) {
+export function CleanupPanel({ episode, disabled, save, publishAudio, revert, onError, guestConsent = null }: Props) {
   const storedWords = useMemo(() => cleanWords(episode.transcript_words), [episode.transcript_words])
   const [words, setWords] = useState<TranscriptWord[]>(storedWords)
   useEffect(() => setWords(storedWords), [storedWords])
@@ -209,7 +211,7 @@ export function CleanupPanel({ episode, disabled, save, publishAudio, revert, on
         <p className="text-sm text-[#A9B8C6]">Upload the finished episode audio first.</p>
       ) : (
         <>
-          <GuestSignoffs episode={episode} disabled={disabled} save={save} />
+          <GuestSignoffs episode={episode} disabled={disabled} save={save} consent={guestConsent} />
           {loadingSource && <Progress value={null} label="Loading episode audio into this browser…" />}
 
           <TranscribeSection

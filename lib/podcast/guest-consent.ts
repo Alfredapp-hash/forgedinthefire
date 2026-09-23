@@ -2,6 +2,7 @@ import 'server-only'
 import { createHash } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createServiceClient } from '@/lib/supabase/service'
+import type { GuestConsentStatus } from '@/lib/studio/release'
 import {
   CONSENT_VERSION,
   consentCanonicalText,
@@ -231,4 +232,29 @@ export async function withdrawGuestConsent(
     .eq('id', input.episodeId)
   if (epErr && !isMissingTable(epErr) && !/guest_review_required/.test(epErr.message || '')) throw epErr
   return { withdrawnAt: now, referenceCode: guestReferenceCode(input.inviteId) }
+}
+
+/**
+ * Release-checklist view without personal detail (no choices text, reasons or history): what the
+ * editor, the live room and the release gates need.
+ */
+export function consentStatusForRelease(summary: EpisodeConsentSummary): GuestConsentStatus {
+  return {
+    available: summary.available,
+    guestReviewRequired: summary.guestReviewRequired,
+    hasConsent: summary.hasConsent,
+    anyWithdrawn: summary.anyWithdrawn,
+    needsGuestApproval: summary.needsGuestApproval,
+    requirements: summary.requirements,
+    consents: summary.consents.map((c) => ({
+      referenceCode: c.referenceCode,
+      acceptedAt: c.acceptedAt,
+      withdrawnAt: c.withdrawnAt,
+    })),
+  }
+}
+
+/** Server release gates: consent status for an episode (throws on a database error — fail closed). */
+export async function releaseConsentStatus(episodeId: string, supabase?: SupabaseClient) {
+  return consentStatusForRelease(await getEpisodeConsents(episodeId, supabase))
 }

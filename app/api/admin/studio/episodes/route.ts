@@ -5,6 +5,7 @@ import { PODCAST, isSafeHttpUrl, probeRemoteSize } from '@/lib/podcast'
 import { normalizeAudioMime, releaseBlockers, releaseChecks } from '@/lib/studio/release'
 import type { PodcastChapter, PodcastEpisode } from '@/lib/studio/types'
 import { cleanWords } from '@/lib/studio/transcript'
+import { releaseConsentStatus } from '@/lib/podcast/guest-consent'
 
 const PRE_RELEASE = new Set(['draft', 'recording', 'editing', 'review'])
 const STATUSES = new Set(['draft', 'recording', 'editing', 'review', 'scheduled', 'published', 'archived'])
@@ -255,8 +256,23 @@ export async function PATCH(request: Request) {
       const { data: show } = merged.show_id
         ? await supabase.from('podcast_shows').select('cover_url').eq('id', merged.show_id).maybeSingle()
         : { data: null }
+      // Recorded guest consent (withdrawals, review flags, "hear it first"). Fail closed.
+      let guestConsent
+      try {
+        guestConsent = await releaseConsentStatus(id, supabase)
+      } catch (err) {
+        console.error('[studio] consent check failed', err)
+        return NextResponse.json(
+          { error: 'Could not check guest consent right now. Try again in a minute.' },
+          { status: 503 },
+        )
+      }
       const blockers = releaseBlockers(
-        releaseChecks(merged, { server: true, show: { cover_url: show?.cover_url || PODCAST.image } }),
+        releaseChecks(merged, {
+          server: true,
+          show: { cover_url: show?.cover_url || PODCAST.image },
+          guestConsent,
+        }),
       )
       if (blockers.length) {
         return NextResponse.json(

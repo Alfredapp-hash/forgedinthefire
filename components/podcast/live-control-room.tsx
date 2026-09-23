@@ -31,6 +31,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { GuestInvitePanel } from '@/components/podcast/guest-invite-panel'
+import type { GuestConsentStatus } from '@/lib/studio/release'
 import { SfxPad } from '@/components/podcast/sfx-pad'
 import { audioInputConstraints, stopStreams } from '@/lib/podcast/capture'
 import { loadStudioIceServers } from '@/lib/podcast/webrtc'
@@ -244,6 +245,36 @@ export function LiveControlRoom({ episodes = [] }: Props) {
 
   const active = sessions.find((s) => s.id === activeId) || null
   const onAir = phase === 'connecting' || phase === 'live' || phase === 'ending'
+
+  // ---------- guest consent → privacy defaults ----------
+  // What the guest chose in the booth for the linked episode. A request for blur / a disguised
+  // voice turns those protections on (staff can still see and change them).
+  const [guestConsent, setGuestConsent] = useState<GuestConsentStatus | null>(null)
+  const linkedEpisodeId = active?.episode_id || null
+  useEffect(() => {
+    setGuestConsent(null)
+    if (!linkedEpisodeId) return
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/admin/studio/episodes/${linkedEpisodeId}/consent`, { cache: 'no-store' })
+        const data = (await res.json().catch(() => null)) as GuestConsentStatus | null
+        if (cancelled || !res.ok || !data?.available) return
+        setGuestConsent(data)
+        if (data.requirements?.faceBlurred) setBlurGuest(true)
+        if (data.requirements?.voiceAltered) setDisguise((prev) => prev || VOICE_DISGUISE_PRESETS[0].id)
+      } catch {
+        /* consent lookup is advisory here; the defaults stay protective */
+      }
+    }
+    void load()
+    // A guest may join (and consent) after the room opens: re-check while the room is open.
+    const id = window.setInterval(() => void load(), 30_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [linkedEpisodeId])
 
   // ---------- engine lifecycle ----------
   useEffect(() => {
@@ -1179,6 +1210,18 @@ export function LiveControlRoom({ episodes = [] }: Props) {
           <section className={card} aria-label="Privacy">
             <p className={label}>Privacy</p>
             <div className="space-y-2 text-sm">
+              {guestConsent && (guestConsent.requirements?.faceBlurred || guestConsent.requirements?.voiceAltered || guestConsent.anyWithdrawn) && (
+                <p className="rounded-lg border border-[#FFB86B]/40 bg-[#FFB86B]/10 px-2 py-1.5 text-xs text-[#FFE0B8]" role="status">
+                  {guestConsent.anyWithdrawn
+                    ? 'A guest withdrew consent for this episode. Keep them off Program.'
+                    : `The guest asked for ${[
+                        guestConsent.requirements?.faceBlurred && 'their face blurred',
+                        guestConsent.requirements?.voiceAltered && 'their voice disguised',
+                      ]
+                        .filter(Boolean)
+                        .join(' and ')}. These are turned on for you.`}
+                </p>
+              )}
               <label className="flex min-h-[40px] items-center gap-2 text-[#F6FAFC]">
                 <input type="checkbox" checked={blurGuest} onChange={(e) => setBlurGuest(e.target.checked)} />
                 Blur guest face

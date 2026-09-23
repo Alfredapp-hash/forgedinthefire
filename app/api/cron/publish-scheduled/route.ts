@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { PODCAST, probeRemoteSize } from '@/lib/podcast'
 import { releaseBlockers, releaseChecks } from '@/lib/studio/release'
+import { releaseConsentStatus } from '@/lib/podcast/guest-consent'
 import type { PodcastEpisode } from '@/lib/studio/types'
 
 export const dynamic = 'force-dynamic'
@@ -56,7 +57,17 @@ async function publishEpisodes(admin: Admin, now: string) {
     if (ep.audio_url && !(ep.file_size && ep.file_size > 0)) {
       ep.file_size = await probeRemoteSize(ep.audio_url)
     }
-    const blockers = releaseBlockers(releaseChecks(ep, { server: true, show: { cover_url: PODCAST.image } }))
+    let guestConsent
+    try {
+      guestConsent = await releaseConsentStatus(ep.id, admin)
+    } catch (err) {
+      // Fail closed: stay scheduled and retry next run.
+      held.push({ id: ep.id, reasons: [`Guest consent check failed: ${err instanceof Error ? err.message : 'unknown error'}`] })
+      continue
+    }
+    const blockers = releaseBlockers(
+      releaseChecks(ep, { server: true, show: { cover_url: PODCAST.image }, guestConsent }),
+    )
     if (blockers.length) {
       // Stay scheduled so staff see it in the Scheduled column; retried every run.
       held.push({ id: ep.id, reasons: blockers.map((b) => b.label) })

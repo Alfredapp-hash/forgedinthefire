@@ -33,10 +33,25 @@ export type EpisodeSafetyFields = {
   guest_final_cut_approved_by?: string | null
   guest_final_cut_approved_at?: string | null
   guest_final_cut_audio_url?: string | null
+  /** 20260924000001: set when a guest withdraws (lib/podcast/guest-consent.ts withdrawGuestConsent). */
+  guest_review_required?: boolean | null
 }
 
-/** Minimal consent shape; matches what lib/podcast/guest-consent.ts is expected to return. */
-export type GuestConsentSummary = { status: string; revoked_at?: string | null }
+/**
+ * Client-safe subset of EpisodeConsentSummary (lib/podcast/guest-consent.ts getEpisodeConsents,
+ * served by GET /api/admin/studio/episodes/[id]/consent).
+ */
+export type GuestConsentStatus = {
+  /** false before the consent migration runs: fall back to the manual confirmation column. */
+  available: boolean
+  guestReviewRequired: boolean
+  hasConsent: boolean
+  anyWithdrawn: boolean
+  needsGuestApproval: boolean
+  requirements?: { voiceAltered: boolean; faceBlurred: boolean; firstNameOnly: boolean; audioOnly: boolean }
+  /** Latest record per guest (withdrawn included). */
+  consents?: { referenceCode: string | null; acceptedAt: string; withdrawnAt: string | null }[]
+}
 
 export type ReleaseContext = {
   show?: Pick<PodcastShow, 'cover_url'> | null
@@ -52,11 +67,10 @@ export type ReleaseContext = {
   /** Server mode: only checks that can be proven from the row. */
   server?: boolean
   /**
-   * Guest consent records when available (Stream C: getEpisodeConsents(episodeId)).
-   * undefined → fall back to the manual "consent on file" confirmation column.
-   * TODO(guest-consent): pass getEpisodeConsents(ep.id) from the editor and the PATCH route.
+   * Recorded guest consent (getEpisodeConsents). undefined/null or `available: false` → only the
+   * manual "consent on file" confirmation column counts.
    */
-  guestConsents?: GuestConsentSummary[] | null
+  guestConsent?: GuestConsentStatus | null
 }
 
 /** Formats Apple Podcasts, Spotify, and YouTube Music ingest reliably. */
@@ -305,9 +319,25 @@ function when(iso?: string | null) {
  * review are release blockers. Enforced on the server too once the columns exist.
  */
 export function guestSafetyChecks(ep: PodcastEpisode & EpisodeSafetyFields, ctx: ReleaseContext = {}): ReleaseCheck[] {
-  const hasGuest = Boolean((ep.guest_name || '').trim())
+  const consent = ctx.guestConsent?.available ? ctx.guestConsent : null
+  const reviewFlag = Boolean(ep.guest_review_required) || Boolean(consent?.guestReviewRequired)
+  const hasGuest =
+    Boolean((ep.guest_name || '').trim()) || reviewFlag || Boolean(consent && (consent.consents?.length || consent.anyWithdrawn))
   if (!hasGuest) return []
   const checks: ReleaseCheck[] = []
+
+  // A guest withdrawal (or a review flag) blocks release whether or not the sign-off columns exist.
+  if (consent?.anyWithdrawn || reviewFlag) {
+    checks.push({
+      id: 'guest_withdrawn',
+      label: consent?.anyWithdrawn ? 'A guest withdrew consent' : 'Guest review required',
+      level: 'block',
+      fix: consent?.anyWithdrawn
+        ? 'A guest asked to withdraw their recording. Do not release this episode — talk to the guest and your safeguarding lead first.'
+        : 'This episode was flagged for review after a guest raised a concern. Resolve it with the guest before release.',
+    })
+  }
+
   const migrated = has(ep, 'guest_final_cut_approved')
   if (!migrated) {
     // Before 20260924000002_podcast_ai_safety.sql there is nowhere to record approvals.
@@ -322,24 +352,22 @@ export function guestSafetyChecks(ep: PodcastEpisode & EpisodeSafetyFields, ctx:
     return checks
   }
 
-  let consentOk = false
-  let consentDetail: string | undefined
-  if (ctx.guestConsents) {
-    const active = ctx.guestConsents.filter((c) => !c.revoked_at && /^(signed|granted|active|approved)$/i.test(c.status))
-    consentOk = active.length > 0
-    consentDetail = consentOk ? `${active.length} signed` : ctx.guestConsents.some((c) => c.revoked_at) ? 'revoked' : 'not signed'
-  } else {
-    consentOk = Boolean(ep.guest_consent_confirmed)
-    consentDetail = consentOk ? [ep.guest_consent_confirmed_by, when(ep.guest_consent_confirmed_at)].filter(Boolean).join(' · ') : undefined
-  }
+  // Consent the guest gave in the booth counts automatically; a paper form is the manual fallback.
+  const recorded = Boolean(consent?.hasConsent)
+  const manual = Boolean(ep.guest_consent_confirmed)
+  const consentOk = recorded || manual
+  const active = (consent?.consents || []).filter((c) => !c.withdrawnAt)
+  const consentDetail = recorded
+    ? `given in the guest booth${active.length > 1 ? ` by ${active.length} guests` : ''}${active[0]?.acceptedAt ? ` · ${when(active[0].acceptedAt)}` : ''}`
+    : manual
+      ? [ep.guest_consent_confirmed_by, when(ep.guest_consent_confirmed_at)].filter(Boolean).join(' · ') || undefined
+      : undefined
   checks.push({
     id: 'guest_consent',
     label: 'Guest consent on file',
     level: consentOk ? 'ok' : 'block',
     detail: consentDetail,
-    fix: consentDetail === 'revoked'
-      ? 'The guest withdrew consent. Do not release this episode.'
-      : 'Confirm the guest’s signed release form is on file before this episode can go out.',
+    fix: 'The guest gives consent when they join from the booth link. If they signed a paper release instead, confirm it is on file.',
   })
 
   const approved = Boolean(ep.guest_final_cut_approved)
@@ -348,10 +376,16 @@ export function guestSafetyChecks(ep: PodcastEpisode & EpisodeSafetyFields, ctx:
     id: 'guest_final_cut',
     label: 'Guest approved final cut',
     level: approved && !stale ? 'ok' : 'block',
-    detail: approved ? [ep.guest_final_cut_approved_by, when(ep.guest_final_cut_approved_at)].filter(Boolean).join(' · ') || undefined : undefined,
     fix: stale
       ? 'The audio changed after the guest approved it. Share the new version and record their approval again.'
-      : 'Let the guest hear the finished episode, then record their approval.',
+      : consent?.needsGuestApproval
+        ? 'The guest asked to hear the episode before it goes out. Share the finished audio and record their approval.'
+        : 'Let the guest hear the finished episode, then record their approval.',
+    detail: approved
+      ? [ep.guest_final_cut_approved_by, when(ep.guest_final_cut_approved_at)].filter(Boolean).join(' · ') || undefined
+      : consent?.needsGuestApproval
+        ? 'guest asked to approve first'
+        : undefined,
   })
 
   const reviewed = Boolean(ep.protected_words_reviewed_at)

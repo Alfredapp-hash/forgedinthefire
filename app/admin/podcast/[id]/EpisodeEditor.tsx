@@ -28,6 +28,7 @@ import {
   releaseBlockers,
   releaseChecks,
   type EpisodeSafetyFields,
+  type GuestConsentStatus,
   type ReleaseCheck,
 } from '@/lib/studio/release'
 import { cleanWords, realignWords, transcriptKind } from '@/lib/studio/transcript'
@@ -89,6 +90,20 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
   const [releaseMode, setReleaseMode] = useState<'now' | 'schedule'>('now')
   const [scheduleAt, setScheduleAt] = useState('')
   const checklistRef = useRef<HTMLDivElement>(null)
+  /** Consent guests gave in the booth (null until loaded, or when the lookup failed). */
+  const [guestConsent, setGuestConsent] = useState<GuestConsentStatus | null>(null)
+  const guestConsentRef = useRef<GuestConsentStatus | null>(null)
+  guestConsentRef.current = guestConsent
+
+  const loadConsent = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/studio/episodes/${episodeId}/consent`, { cache: 'no-store' })
+      const data = (await res.json().catch(() => null)) as GuestConsentStatus | null
+      setGuestConsent(res.ok && data && typeof data.available === 'boolean' ? data : null)
+    } catch {
+      setGuestConsent(null)
+    }
+  }, [episodeId])
 
   const load = useCallback(async () => {
     const [epRes, tps, shows, all] = await Promise.all([
@@ -112,6 +127,13 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
   }, [episodeId])
 
   useEffect(() => { void load() }, [load])
+  // Consent can change while this page is open (a guest joins or withdraws): refresh on focus.
+  useEffect(() => {
+    void loadConsent()
+    const onFocus = () => void loadConsent()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [loadConsent])
 
   const effectiveCover = useMemo(() => {
     if (episode?.cover_url) return episode.cover_url
@@ -334,6 +356,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
       cover,
       coverUnavailable: coverFailed,
       siblings,
+      guestConsent: guestConsentRef.current,
     })
   }
 
@@ -707,6 +730,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         publishAudio={async (file, duration, extra, label) => Boolean(await uploadAudio(file, duration, label, extra, true))}
         revert={revertCleanup}
         onError={(msg) => { setOk(null); setError(msg) }}
+        guestConsent={guestConsent}
       />
 
       {/* ── Details ── */}
