@@ -106,6 +106,10 @@ function LiveStage({ session, serverNow }: { session: LiveSessionPublic; serverN
   const [state, setState] = useState<PlayState>('idle')
   const [muted, setMuted] = useState(true)
   const [message, setMessage] = useState<string | null>(null)
+  /** Playback froze (ingest dropped / host reconnecting) — show the reconnecting slate. */
+  const [frozen, setFrozen] = useState(false)
+  /** Has this stage played at least once? A later 'waiting' then means "reconnecting". */
+  const [played, setPlayed] = useState(false)
   const hls = session.playback_hls_url
   const whep = session.playback_whep_url
   const stale =
@@ -212,6 +216,33 @@ function LiveStage({ session, serverNow }: { session: LiveSessionPublic; serverN
     }
   }, [hls, whep])
 
+  // Stall watchdog: if the picture stops advancing for 4 s while "playing", the host's
+  // ingest has most likely dropped and is reconnecting. Show a calm slate over the
+  // frozen frame instead of a stuck face; it clears by itself when frames resume.
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || state !== 'playing') {
+      setFrozen(false)
+      return
+    }
+    setPlayed(true)
+    let lastTime = video.currentTime
+    let lastMove = performance.now()
+    const id = window.setInterval(() => {
+      if (video.currentTime !== lastTime) {
+        lastTime = video.currentTime
+        lastMove = performance.now()
+        setFrozen(false)
+      } else if (!video.paused && performance.now() - lastMove > 4000) {
+        setFrozen(true)
+      }
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [state])
+
+  const reconnecting =
+    (state === 'playing' && frozen) || (played && state === 'waiting') || (stale && state !== 'error')
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -231,8 +262,21 @@ function LiveStage({ session, serverNow }: { session: LiveSessionPublic; serverN
           controls={state === 'playing'}
           aria-label={`Live video: ${session.title}`}
         />
-        {state !== 'playing' && (
-          <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
+        {reconnecting && (
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-gradient-to-b from-[#05070A] to-[#0B1620] p-6 text-center"
+            role="status"
+            aria-live="polite"
+          >
+            <p className="text-xs uppercase tracking-[0.22em] text-[#8DEBFF]">Forged in the Fire · Live</p>
+            <p className="font-serif text-3xl text-[#F6FAFC]">Reconnecting…</p>
+            <p className="max-w-md text-sm text-[#B8C4CF]">
+              The broadcast hit a bump. Stay on this page — it picks back up on its own.
+            </p>
+          </div>
+        )}
+        {state !== 'playing' && !reconnecting && (
+          <div className="absolute inset-0 flex items-center justify-center p-6 text-center" role="status" aria-live="polite">
             <p className="text-sm text-[#B8C4CF]">
               {message ||
                 (state === 'waiting' || stale
@@ -241,7 +285,7 @@ function LiveStage({ session, serverNow }: { session: LiveSessionPublic; serverN
             </p>
           </div>
         )}
-        {state === 'playing' && muted && (
+        {state === 'playing' && muted && !reconnecting && (
           <button
             type="button"
             onClick={() => {
@@ -251,7 +295,7 @@ function LiveStage({ session, serverNow }: { session: LiveSessionPublic; serverN
                 void videoRef.current.play().catch(() => {})
               }
             }}
-            className="absolute left-4 top-4 inline-flex items-center gap-2 rounded-lg bg-black/70 px-3 py-2 text-sm text-white"
+            className="absolute left-4 top-4 inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-black/70 px-3 py-2 text-sm text-white focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#53D6FF]"
           >
             <Volume2 className="w-4 h-4" aria-hidden />
             Tap for sound

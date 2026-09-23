@@ -54,10 +54,37 @@ function resourceFromQuery(request: NextRequest) {
   return { resource }
 }
 
-export async function GET() {
+/**
+ * GET → provider config status (no secrets). With `?probe=1` also checks the WHIP host
+ * answers at all (OPTIONS, no credentials sent): any HTTP status counts as reachable.
+ */
+export async function GET(request: NextRequest) {
   const denied = await guard()
   if (denied) return denied
-  return NextResponse.json(liveProviderStatus(), noStore())
+  const status = liveProviderStatus()
+  if (request.nextUrl.searchParams.get('probe') !== '1') return NextResponse.json(status, noStore())
+  const endpoint = whipEndpoint()
+  if (!endpoint) {
+    return NextResponse.json({ ...status, reachable: false, probeError: 'LIVE_WHIP_URL is not set' }, noStore())
+  }
+  const started = Date.now()
+  try {
+    const res = await fetch(endpoint, {
+      method: 'OPTIONS',
+      cache: 'no-store',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(6000),
+    })
+    return NextResponse.json(
+      { ...status, reachable: true, probeStatus: res.status, probeMs: Date.now() - started },
+      noStore(),
+    )
+  } catch (err) {
+    return NextResponse.json(
+      { ...status, reachable: false, probeError: err instanceof Error ? err.message : 'network error' },
+      noStore(),
+    )
+  }
 }
 
 export async function POST(request: NextRequest) {

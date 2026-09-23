@@ -4,12 +4,13 @@ Run a live show from the browser. There is no server-side encoder (Netlify has n
 long-running process and no ffmpeg), so the host's browser does all the work:
 
 ```
-host cam ─┐                                   ┌─ WHIP (RFC 9725) ─► provider ─► HLS / WHEP ─► /podcast/live
-guest cam ┼─► canvas Program (1280×720 @30) ──┤   via /api/admin/podcast/live/whip (secret stays server-side)
-slates  ──┘            + mixed audio          └─ MediaRecorder (local) ─► "Save as episode draft"
-host mic ─┐
-guest mic ┼─► WebAudio mix → limiter → MediaStreamDestination
+host cam ─┐ [face blur]                                        ┌─ WHIP (RFC 9725) ─► provider ─► HLS / WHEP ─► /podcast/live
+guest cam ┼─► canvas Program ─► BROADCAST DELAY (7–30 s) ─► Air ┤   via /api/admin/podcast/live/whip (secret stays server-side)
+slates  ──┘  "Live (you)"       video ring buffer    "On air"   └─ MediaRecorder (local) ─► "Save as episode draft"
+host mic ─┐                     audio DelayNode
+guest mic ┼─► [voice disguise] ─► WebAudio mix → limiter ─┘
 SFX     ──┘
+               DUMP (D) = throw the buffer away + safe slate; the delay rebuilds behind it
 ```
 
 - **Admin:** Podcast Console → **Live show** tab (`components/podcast/live-control-room.tsx`).
@@ -99,27 +100,113 @@ its URL and `LIVE_WHIP_BEARER` to its stream key. Playback then needs a LiveKit 
 2. Link it to an episode (pick one, or **New draft episode**). This enables the **Guest** panel —
    create the private guest link exactly like a pre-recorded session and send it to the guest.
 3. **Open camera + mic.** Wear headphones — guest audio plays in this tab (Monitor toggle).
-4. Pick a **Countdown** (e.g. 30 s) and press **Go live**. Viewers see the "Starting soon" slate
-   with the countdown, then Program cuts to your last camera scene (PIP by default).
-5. Switch **Host / Guest / PIP** (short dissolve). **Title lower third** toggles the name strap.
-6. **SAFE SLATE** (see Safety) at any time. **Release** returns to the last camera scene.
-7. **End show** → 3 s "Thanks for watching" slate → stream stops → session marked `ended`.
-8. **Save as episode draft** uploads the Program audio (WebM/Opus) via `uploadPodcastMedia` and
+4. Choose the **Broadcast delay** (default 10 s; Off, 7, 10, 15, 20, 30 s). It is locked once on air.
+   Check **Privacy**: guest face blur (on by default), host face blur, guest voice disguise.
+5. Pick a **Countdown** (e.g. 30 s) and press **Go live…**. If the button is disabled, the reasons are
+   listed right under it (no show selected / camera + mic not opened / provider not configured).
+   "Guest not connected" is only a warning.
+6. The **pre-flight checklist** runs: provider reachable (server-side OPTIONS to the WHIP host),
+   outgoing bitrate (≈1.5 MB upload to `/api/admin/podcast/live/speedtest`), delay chosen, guest/host
+   face blur state, safe slate ready, guest connected, voice disguise. Anything **Blocked** must be
+   fixed; warnings are yours to judge. Press **Go live now**.
+7. For the first *delay* seconds viewers see "Starting soon" while the buffer fills, then the delayed
+   Program (countdown slate, then your last camera scene).
+8. Switch **Host / Guest / PIP** (short dissolve). **Title lower third** toggles the name strap.
+9. **DUMP (D)** or **SAFE SLATE (S)** at any time (see below). **Release** returns to the last camera
+   scene — with a delay, viewers see the release *delay* seconds later.
+10. **End show** → "Thanks for watching" slate → the stream keeps running for *delay* + 3 s so the
+    tail airs → stream stops → session marked `ended`.
+11. **Save as episode draft** uploads the Program audio (WebM/Opus) via `uploadPodcastMedia` and
    attaches it to the linked episode (or creates a new draft). Edit, add notes and publish through the
    normal pre-record pipeline. **Program video** is download-only — save it before closing the tab.
 
+The draft and the local video are recorded from the **air** feed (after the delay), so anything you
+dumped is not in the draft either. The page keeps warning before you close it until the recording
+has been saved as a draft.
+
 Stream health (bitrate, packet loss, RTT, fps, reconnects) updates every 2 s. If ingest drops,
-the publisher retries with backoff (1, 2, 4, 8, 15, 30 s…) until you press End.
+the publisher retries with backoff (1, 2, 4, 8, 15, 30 s…) until you press End, and a large amber
+"Stream reconnecting…" banner shows in the control room. Viewers get a "Reconnecting…" slate when
+their picture stops advancing for 4 s, the player has to reconnect, or the heartbeat goes stale; it
+clears on its own.
+
+## Broadcast delay and DUMP
+
+The key safety feature. What you switch (the **Live (you)** monitor) reaches viewers *delay* seconds
+later (the **On air (+10 s)** monitor), so a slip can be removed before it airs.
+
+- **DUMP** — the big red button or the **D** key, no confirmation. It (1) discards everything in the
+  delay (video ring buffer and audio delay line), (2) cuts Program to the safe slate and mutes the
+  guest, and (3) rebuilds the delay behind it: viewers see "We'll be right back" and silence for
+  *delay* seconds ("DUMPED · Delay rebuilding… 6 s" on the On-air monitor), then the delayed Program
+  — still the slate until you press Release. The dumped segment never airs and is not recorded.
+- **Safe slate (S)** — the same instant cut and guest mute, but *without* discarding the buffer: what
+  is already in the delay still airs. Use DUMP when something has just been said; Safe slate when you
+  see trouble coming.
+- Hotkeys work while the Live show tab is showing and focus is not in a text field. Screen readers
+  hear "ON AIR", "OFF AIR", "DUMPED…" and reconnect announcements (aria-live).
+- **Off** (no delay): DUMP only cuts to the slate — whatever was said has already aired.
+
+How it works (`lib/podcast/live/broadcast-delay.ts`, `delay-ring.ts`, `audio-mix.ts`):
+
+- Video: on each compositor tick the Program canvas becomes a `VideoFrame`, is encoded with WebCodecs
+  (VP8 → VP9 → H.264, ~6 Mbps intermediate), and the compressed chunks wait in a ring buffer stamped
+  with their capture time; after the delay they are decoded onto the Air canvas, whose
+  `captureStream()` is what WHIP sends. Memory ≈ 0.75 MB per second of delay (≈ 25 MB at 30 s).
+- Fallback without WebCodecs: `createImageBitmap` snapshots at reduced fps/size, chosen to stay under
+  ~400 MB (7 s → 1280×720 @15 fps; 10 s → 960×540 @15 fps; 30 s → 640×360 @15 fps). An encoder
+  error switches to the fallback *and* dumps, so nothing undelayed ever airs.
+- Audio: a `DelayNode` after the limiter. DUMP swaps in a fresh `DelayNode`, whose buffer starts silent.
+- A/V stay aligned: both use the same delay and are started/dumped at the same instant; frames are
+  released at capture time + delay, within one 33 ms tick (`__tests__/delay-ring.test.ts`).
+- Frames captured before a DUMP are rejected even if the encoder hands them back late.
+
+## Face blur
+
+`lib/podcast/vision/face-blur.ts` — MediaPipe Tasks Vision **Face Detector** (BlazeFace short-range,
+Apache-2.0). The JS is the `@mediapipe/tasks-vision` npm package (loaded lazily); at runtime the WASM
+comes from `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm` and the model from
+`https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite`.
+**When you upgrade the npm package, update `MEDIAPIPE_VERSION` in that file** (JS and WASM must match).
+If you add a Content-Security-Policy, allow those two hosts and `'wasm-unsafe-eval'`.
+
+- Toggle per person under **Privacy**. **Guest blur is ON by default**; turn it off only if the guest
+  agreed to show their face. (The guest consent step does not record a face-blur choice yet; when it
+  does, use it as the default here.)
+- Applied inside the compositor, before the delay — Live, On air and the local recording are all blurred.
+- Faces are pixelated (≈8 blocks across) with 30% padding. If a face drops out, the last box is kept
+  for 500 ms; after that, with no face found, the **whole picture** is pixelated (a missed detection
+  must not reveal a face).
+- **Fail-safe:** while the detector loads, if it stalls for more than 300 ms, or if it fails, that
+  person is replaced by a silhouette card — never an unblurred face. The Privacy panel and the
+  pre-flight show the detector state.
+- Cost: detection runs ~15×/s on a 320 px copy per blurred person — a few ms each; budget roughly
+  5–15% of one core per person on CPU, less with the GPU delegate. On weak machines blur only the guest.
+- The same API (`createFaceBlurrer()` → `process(src, ctx, x, y, w, h)`) is meant for the recorded
+  picture export later.
+
+## Voice disguise (live)
+
+Optional pitch shift on the guest's Program feed (`lib/podcast/live/voice-disguise.ts`, an
+AudioWorklet delay-line shifter: −4, −7 or +4 semitones). Your headphones keep the natural voice. If
+the worklet cannot start, the guest is held **out** of Program until you turn disguise off.
+
+> Pitch shifting is not anonymity. A recording of a shifted voice can often be shifted back, and
+> speech patterns, accent and word choice still identify people. If the guest must not be recognised,
+> keep them off mic and have the host summarise, or use a re-voiced segment in the edited episode.
 
 ## Safety notes (survivor-centred)
 
-- **Safe slate is the kill switch.** It is an instant cut (never a fade) to a branded
-  "We'll be right back" slate and hard-mutes the guest in the Program mix inside the host's
-  browser — it does not depend on the guest's connection or cooperation. Host mic stays live so
-  you can speak to viewers; use **Host muted** if you also need silence.
-- The **delay is not zero but it is not a safety buffer either**: HLS viewers are ~3–10 s behind,
-  WHEP viewers < 1 s. Anything said before you press Safe slate has already gone out.
-  Brief guests beforehand; agree a hand signal; keep the button in reach.
+- **DUMP is the kill switch** when a delay is set (default 10 s): the slip is thrown away before it
+  airs. **Safe slate** is an instant cut (never a fade) to a branded "We'll be right back" slate and
+  hard-mutes the guest in the Program mix inside the host's browser — it does not depend on the
+  guest's connection or cooperation. Host mic stays live so you can speak to viewers; use
+  **Host muted** if you also need silence. You still hear the guest in your headphones.
+- Provider latency (HLS ~3–10 s, WHEP < 1 s) is **not** a safety buffer — only the broadcast delay
+  is. With the delay Off, anything said before you press Safe slate has already gone out.
+  Brief guests beforehand; agree a hand signal; keep a finger near **D**.
+- Keep **guest face blur** on unless the guest explicitly agreed to show their face. It fails safe to
+  a silhouette, but it is automated: still avoid identifying backgrounds.
 - Guests never receive the provider URL or any viewer data. The guest link is the same hashed,
   expiring, revocable invite used for pre-records. Revoke it after the show.
 - Do not show identifying details on camera (street signs, mail, school logos). Consider a
@@ -147,7 +234,11 @@ the publisher retries with backoff (1, 2, 4, 8, 15, 30 s…) until you press End
 | `Live provider answered 409` (or similar conflict) | Another publisher may be on the same input (another tab, OBS). Stop it. |
 | Ingest `connected` but viewers see "Connecting…" | HLS takes 5–15 s to appear; Cloudflare WHIP may need the WHEP URL instead of HLS. |
 | Ingest keeps `reconnecting` | Corporate/hotel Wi-Fi blocking UDP. Try a phone hotspot or wired. Ingest uses the same ICE list as the guest booth (`TURN_*` env), so setting TURN helps here too. |
-| Frame rate drops when switching tabs | Keep the control room tab visible; browsers throttle background tabs. |
+| Frame rate drops when switching tabs | Switching *console* tabs is fine (the Live tab stays mounted). Keep the *browser* tab in the foreground; browsers throttle background tabs. |
+| On-air monitor says "frame buffer" | WebCodecs unavailable or the encoder failed; the fallback uses more memory and lower fps. Use current Chrome/Edge. |
+| Guest shows as a silhouette | Face blur is loading, stalled or failed (see Privacy). Check jsdelivr.net and storage.googleapis.com are reachable, or turn blur off if the guest agreed. |
+| Guest missing from Program with disguise on | Voice disguise failed to start (AudioWorklet); the guest is held out on purpose. Turn disguise off. |
+| Pre-flight "Live provider reachable" blocked | The server could not reach the WHIP host at all (DNS, firewall, typo in LIVE_WHIP_URL). |
 | Guest camera shows "camera off" | Guest camera disabled or P2P failed — see the Guest panel (TURN env for strict networks). |
 | `podcast_live_sessions is missing` | Apply the migration. |
 | Save draft fails with storage error | Create the `media` storage bucket (same as episode audio uploads). |
@@ -155,9 +246,13 @@ the publisher retries with backoff (1, 2, 4, 8, 15, 30 s…) until you press End
 ## Files
 
 - `lib/podcast/live/` — `types.ts`, `server.ts` (env + sealed resource tokens), `admin.ts` (auth guard),
-  `whip-client.ts`, `whep-client.ts`, `compositor.ts`, `audio-mix.ts`, `recorder.ts`, `client.ts`
+  `whip-client.ts`, `whep-client.ts`, `compositor.ts`, `audio-mix.ts`, `recorder.ts`, `client.ts`,
+  `broadcast-delay.ts` + `delay-ring.ts` (delay/DUMP), `preflight.ts`, `voice-disguise.ts`,
+  `__tests__/` (`npx vitest run`)
+- `lib/podcast/vision/face-blur.ts`
 - `app/api/admin/podcast/live/route.ts` (list/create), `[id]/route.ts` (edit, start/end/heartbeat, delete),
-  `whip/route.ts` (WHIP proxy)
+  `whip/route.ts` (WHIP proxy; `GET ?probe=1` reachability), `speedtest/route.ts` (pre-flight upload test)
 - `app/api/podcast/live/route.ts` (public, `s-maxage=5`)
 - `app/podcast/live/page.tsx`, `components/podcast/live-player.tsx`, `live-banner.tsx`, `live-control-room.tsx`
-- Third-party: `hls.js` (Apache-2.0). WHIP/WHEP clients are written in-house following RFC 9725.
+- Third-party: `hls.js` (Apache-2.0), `@mediapipe/tasks-vision` + the BlazeFace model (Apache-2.0).
+  The WHIP/WHEP clients (RFC 9725), the delay and the pitch shifter are written in-house.

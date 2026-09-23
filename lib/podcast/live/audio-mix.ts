@@ -1,29 +1,48 @@
 /**
- * Live Program audio: host mic + guest mic + SFX → limiter → MediaStreamDestination.
- * The destination track is what WHIP sends and what the local recorder captures.
+ * Live Program audio: host mic + guest mic + SFX → limiter → [air delay] → MediaStreamDestination.
+ * The destination track (the *air* feed) is what WHIP sends and what the local recorder captures.
  *
- * Guest mute (safe slate) is a hard gain of 0 on the guest bus, applied
+ *   source → pre (fader) ─┬─► monitor (host headphones, guest only, undelayed)
+ *                         └─► [voice disguise] → gate (mute) → Program → limiter ─┬─► meters
+ *                                                                               └─► airDelay → dest (WHIP)
+ *
+ * Guest mute (safe slate) is a hard gain of 0 on the guest gate, applied
  * immediately — it does not depend on the guest's browser honouring a signal.
+ * DUMP swaps in a fresh DelayNode: its buffer starts silent, so the dumped
+ * audio never reaches the destination and the delay rebuilds behind it.
  */
 
 import { renderSfx, type SfxId } from '@/lib/podcast/sfx'
+import { createVoiceDisguiseNode } from '@/lib/podcast/live/voice-disguise'
 
 type Bus = {
+  /** Fader level; also feeds the host monitor. */
+  pre: GainNode
+  /** Program mute gate (safe slate / mute / disguise not ready). */
   gain: GainNode
   analyser: AnalyserNode
+  disguise: AudioWorkletNode | null
   source: MediaStreamAudioSourceNode | null
   stream: MediaStream | null
   /** Chrome only pulls remote WebRTC audio into WebAudio if a media element plays it. */
   sink: HTMLAudioElement | null
 }
 
-export type LiveLevels = { host: number; guest: number; program: number }
+export type LiveLevels = { host: number; guest: number; program: number; air: number }
 
 export class LiveAudioMix {
   readonly ctx: AudioContext
   private dest: MediaStreamAudioDestinationNode
   private programGain: GainNode
   private programAnalyser: AnalyserNode
+  private airIn: GainNode
+  private airDelay: DelayNode | null = null
+  private airDelaySec = 0
+  private airAnalyser: AnalyserNode
+  /** Guest disguise requested but not (yet) working → guest held out of Program. */
+  private disguiseHold = false
+  private disguiseSemitones: number | null = null
+  private disguiseGen = 0
   private sfxGain: GainNode
   private monitor: GainNode
   private host: Bus
@@ -47,7 +66,12 @@ export class LiveAudioMix {
     this.programAnalyser.fftSize = 1024
     this.programGain.connect(limiter)
     limiter.connect(this.programAnalyser)
-    limiter.connect(this.dest)
+    this.airIn = this.ctx.createGain()
+    this.airAnalyser = this.ctx.createAnalyser()
+    this.airAnalyser.fftSize = 1024
+    limiter.connect(this.airIn)
+    this.airIn.connect(this.dest)
+    this.airIn.connect(this.airAnalyser)
     this.sfxGain = this.ctx.createGain()
     this.sfxGain.gain.value = 0.7
     this.sfxGain.connect(this.programGain)
@@ -60,8 +84,51 @@ export class LiveAudioMix {
     this.guest = this.makeBus(true)
   }
 
+  /** Air feed (after the broadcast delay). */
   get stream() {
     return this.dest.stream
+  }
+
+  get delaySec() {
+    return this.airDelaySec
+  }
+
+  /** Set the broadcast delay (0 = none). Starts empty: the first `sec` seconds on air are silent. */
+  setAirDelay(sec: number) {
+    this.airDelaySec = Math.max(0, sec)
+    this.rebuildAirDelay()
+  }
+
+  /** DUMP: discard everything in the delay line; air is silent until the delay has rebuilt. */
+  dumpAir() {
+    if (this.airDelaySec > 0) this.rebuildAirDelay()
+  }
+
+  private rebuildAirDelay() {
+    const old = this.airDelay
+    // Disconnect first so not one more sample of the dumped buffer reaches the air.
+    try {
+      this.airIn.disconnect()
+    } catch {
+      /* not connected */
+    }
+    try {
+      old?.disconnect()
+    } catch {
+      /* not connected */
+    }
+    this.airDelay = null
+    if (this.airDelaySec <= 0) {
+      this.airIn.connect(this.dest)
+      this.airIn.connect(this.airAnalyser)
+      return
+    }
+    const delay = this.ctx.createDelay(Math.min(179, this.airDelaySec + 1))
+    delay.delayTime.value = this.airDelaySec
+    this.airIn.connect(delay)
+    delay.connect(this.dest)
+    delay.connect(this.airAnalyser)
+    this.airDelay = delay
   }
 
   async resume() {
@@ -97,6 +164,60 @@ export class LiveAudioMix {
     this.applyGain(this.guest, muted ? 0 : this.guestLevel)
   }
 
+  /**
+   * Voice disguise on the guest's Program feed (null = off). The host monitor keeps the
+   * natural voice. Fail-safe: while the worklet loads, or if it fails, the guest is held
+   * out of Program (the returned promise rejects on failure).
+   */
+  async setGuestDisguise(semitones: number | null) {
+    const gen = ++this.disguiseGen
+    this.disguiseSemitones = semitones
+    const bus = this.guest
+    const old = bus.disguise
+    if (semitones == null) {
+      bus.disguise = null
+      this.rewireGuest(old)
+      this.disguiseHold = false
+      this.applyGain(bus, this.guestMuted ? 0 : this.guestLevel)
+      return
+    }
+    this.disguiseHold = true
+    this.applyGain(bus, 0)
+    const node = await createVoiceDisguiseNode(this.ctx, semitones)
+    if (gen !== this.disguiseGen) {
+      node.disconnect()
+      return
+    }
+    bus.disguise = node
+    this.rewireGuest(old)
+    this.disguiseHold = false
+    this.applyGain(bus, this.guestMuted ? 0 : this.guestLevel)
+  }
+
+  get guestDisguise() {
+    return this.disguiseSemitones
+  }
+
+  private rewireGuest(old: AudioWorkletNode | null) {
+    const bus = this.guest
+    try {
+      bus.pre.disconnect(old || bus.gain)
+    } catch {
+      /* not connected */
+    }
+    try {
+      old?.disconnect()
+    } catch {
+      /* not connected */
+    }
+    if (bus.disguise) {
+      bus.pre.connect(bus.disguise)
+      bus.disguise.connect(bus.gain)
+    } else {
+      bus.pre.connect(bus.gain)
+    }
+  }
+
   setMonitor(on: boolean) {
     this.monitor.gain.setValueAtTime(on ? 1 : 0, this.ctx.currentTime)
   }
@@ -115,6 +236,7 @@ export class LiveAudioMix {
       host: rms(this.host.analyser),
       guest: rms(this.guest.analyser),
       program: rms(this.programAnalyser),
+      air: rms(this.airAnalyser),
     }
   }
 
@@ -128,19 +250,29 @@ export class LiveAudioMix {
   }
 
   private makeBus(monitored: boolean): Bus {
+    const pre = this.ctx.createGain()
     const gain = this.ctx.createGain()
     const analyser = this.ctx.createAnalyser()
     analyser.fftSize = 1024
+    pre.connect(gain)
     gain.connect(analyser)
     gain.connect(this.programGain)
-    if (monitored) gain.connect(this.monitor)
-    return { gain, analyser, source: null, stream: null, sink: null }
+    if (monitored) pre.connect(this.monitor)
+    return { pre, gain, analyser, disguise: null, source: null, stream: null, sink: null }
   }
 
+  /**
+   * `value` is the fader level or 0 for a mute. The fader goes on `pre` (so the host
+   * monitor follows it), the mute on the Program gate only.
+   */
   private applyGain(bus: Bus, value: number) {
     const t = this.ctx.currentTime
+    const level = bus === this.guest ? this.guestLevel : this.hostLevel
+    const open = value > 0 && !(bus === this.guest && this.disguiseHold)
+    bus.pre.gain.cancelScheduledValues(t)
+    bus.pre.gain.setValueAtTime(level, t)
     bus.gain.gain.cancelScheduledValues(t)
-    bus.gain.gain.setValueAtTime(value, t)
+    bus.gain.gain.setValueAtTime(open ? 1 : 0, t)
   }
 
   private attach(bus: Bus, stream: MediaStream | null, remote: boolean) {
@@ -167,7 +299,7 @@ export class LiveAudioMix {
       bus.sink = sink
     }
     bus.source = this.ctx.createMediaStreamSource(audioOnly)
-    bus.source.connect(bus.gain)
+    bus.source.connect(bus.pre)
   }
 }
 
