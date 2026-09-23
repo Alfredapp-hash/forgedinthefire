@@ -1,6 +1,18 @@
 /** Multi-track mix / schedule helpers for the podcast vocal studio. */
 
 import type { EffectId } from '@/lib/podcast/effects'
+import {
+  automationValue,
+  DEFAULT_XFADE_SEC,
+  renderMixPlan,
+  type CompWindow,
+  type MixPlan,
+  type MixTrackPlan,
+} from '@/lib/podcast/engine/mix-core'
+import { resampleSinc, SESSION_SAMPLE_RATE } from '@/lib/podcast/engine/resample'
+
+export { SESSION_SAMPLE_RATE } from '@/lib/podcast/engine/resample'
+export type { CompWindow } from '@/lib/podcast/engine/mix-core'
 
 export type TrackRole = 'vocal' | 'guest' | 'music' | 'bed' | 'sfx' | 'master' | 'custom'
 export type PersonKind = 'voice' | 'bed' | 'sfx'
@@ -290,17 +302,7 @@ export function ensureClips(track: StudioTrack): StudioTrack {
 
 export function automationAt(points: AutomationPoint[] | undefined, t: number, fallback = 1) {
   if (!points || points.length === 0) return fallback
-  if (t <= points[0].t) return points[0].v
-  for (let i = 1; i < points.length; i++) {
-    if (t <= points[i].t) {
-      const a = points[i - 1]
-      const b = points[i]
-      const span = b.t - a.t
-      if (span <= 0) return b.v
-      return a.v + (b.v - a.v) * ((t - a.t) / span)
-    }
-  }
-  return points[points.length - 1].v
+  return automationValue(points, t, fallback)
 }
 
 export function trackDuration(track: StudioTrack): number {
@@ -430,71 +432,153 @@ export function audibleForMix(tracks: StudioTrack[], excludeIds: string[] = []) 
   return audibleTracks(tracks.filter((t) => !excludeIds.includes(t.id)))
 }
 
-/** Sum all audible tracks into a stereo master with pan, gain, offset, fades. */
-export function mixdownTracks(
-  tracks: StudioTrack[],
-  opts?: { startSec?: number; endSec?: number; sampleRate?: number },
-): AudioBuffer {
-  const live = audibleTracks(tracks)
-  if (live.length === 0) {
-    return emptyStereo(opts?.sampleRate || 44100, 1)
-  }
-
-  const sampleRate =
-    opts?.sampleRate ||
-    live.find((t) => t.buffer)?.buffer?.sampleRate ||
-    44100
-
-  const fullEnd = sessionDuration(live)
-  const startSec = Math.max(0, opts?.startSec ?? 0)
-  const endSec = Math.min(fullEnd, opts?.endSec ?? fullEnd)
-  const length = Math.max(1, Math.ceil((endSec - startSec) * sampleRate))
-  const master = emptyStereo(sampleRate, length)
-  const L = master.getChannelData(0)
-  const R = master.getChannelData(1)
-
-  const startSample = Math.floor(startSec * sampleRate)
-
-  for (const track of live) {
-    const buf = monoToStereo(track.buffer!)
-    const srcL = buf.getChannelData(0)
-    const srcR = buf.getChannelData(1)
-    const pan = Math.max(-1, Math.min(1, track.pan))
-    const panL = Math.min(1, 1 - pan)
-    const panR = Math.min(1, 1 + pan)
-    const autom = track.automation || []
-
-    for (const clip of clipsOf(track)) {
-      if (clip.muted) continue
-      const srcStart = Math.floor(clip.sourceStart * sampleRate)
-      const clipLen = Math.max(1, Math.floor(clip.duration * sampleRate))
-      const offsetSamples = Math.floor(clip.offset * sampleRate)
-      const fadeInN = Math.floor(Math.max(0, clip.fadeIn) * sampleRate)
-      const fadeOutN = Math.floor(Math.max(0, clip.fadeOut) * sampleRate)
-
-      for (let i = 0; i < clipLen; i++) {
-        const srcIdx = srcStart + i
-        if (srcIdx < 0 || srcIdx >= buf.length) continue
-        const abs = offsetSamples + i
-        const masterIdx = abs - startSample
-        if (masterIdx < 0 || masterIdx >= length) continue
-        if (!takeAudibleAt(tracks, track, abs / sampleRate)) continue
-
-        let env = track.volume * clip.gain * automationAt(autom, abs / sampleRate)
-        if (fadeInN > 0 && i < fadeInN) env *= i / fadeInN
-        if (fadeOutN > 0 && i > clipLen - fadeOutN) env *= (clipLen - i) / fadeOutN
-
-        L[masterIdx] = clamp(L[masterIdx] + srcL[srcIdx] * panL * env)
-        R[masterIdx] = clamp(R[masterIdx] + srcR[srcIdx] * panR * env)
-      }
+/**
+ * Session-time windows where `track` is the audible take (same rule as takeAudibleAt),
+ * precomputed once instead of scanning siblings per sample. Returns null when the take
+ * is audible everywhere. Interior edges are take switch points and get a crossfade.
+ */
+export function takeAudibleWindows(tracks: StudioTrack[], track: StudioTrack): CompWindow[] | null {
+  if (track.layered || !isVoiceRole(track.role)) return null
+  const siblings = tracks.filter((x) => x.personId === track.personId && isVoiceRole(x.role) && x.buffer && !x.muted)
+  if (siblings.length <= 1) return null
+  const edges = new Set<number>()
+  for (const s of siblings) {
+    for (const r of s.compRanges || []) {
+      edges.add(r.start)
+      edges.add(r.end)
     }
   }
-
-  return master
+  const bounds = [...edges].sort((a, b) => a - b)
+  if (!bounds.length) return takeAudibleAt(tracks, track, 0) ? null : []
+  const windows: CompWindow[] = []
+  const cells: [number, number][] = [[-Infinity, bounds[0]]]
+  for (let i = 0; i + 1 < bounds.length; i++) cells.push([bounds[i], bounds[i + 1]])
+  cells.push([bounds[bounds.length - 1], Infinity])
+  for (const [a, b] of cells) {
+    const probe = !Number.isFinite(a) ? b - 1 : !Number.isFinite(b) ? a + 1 : (a + b) / 2
+    if (!takeAudibleAt(tracks, track, probe)) continue
+    const last = windows[windows.length - 1]
+    if (last && last.end === a) last.end = b
+    else windows.push({ start: a, end: b, xfadeIn: false, xfadeOut: false })
+  }
+  for (const w of windows) {
+    w.xfadeIn = Number.isFinite(w.start)
+    w.xfadeOut = Number.isFinite(w.end)
+  }
+  if (windows.length === 1 && !windows[0].xfadeIn && !windows[0].xfadeOut) return null
+  return windows
 }
 
-function clamp(n: number) {
-  return Math.max(-1, Math.min(1, n))
+const resampleCache = new WeakMap<AudioBuffer, Map<number, Float32Array[]>>()
+
+/** Channel data (max 2) at `rate` — band-limited sinc, cached per decoded buffer. */
+export function channelsAtRate(buffer: AudioBuffer, rate: number): Float32Array[] {
+  const raw = Array.from({ length: Math.min(2, buffer.numberOfChannels) }, (_, ch) => buffer.getChannelData(ch))
+  if (buffer.sampleRate === rate) return raw
+  let byRate = resampleCache.get(buffer)
+  if (!byRate) {
+    byRate = new Map()
+    resampleCache.set(buffer, byRate)
+  }
+  const hit = byRate.get(rate)
+  if (hit) return hit
+  const out = raw.map((c) => resampleSinc(c, buffer.sampleRate, rate))
+  byRate.set(rate, out)
+  return out
+}
+
+/** Synchronous band-limited resample of an AudioBuffer (returns the same buffer when rates match). */
+export function toSessionRateSync(buffer: AudioBuffer, sampleRate = SESSION_SAMPLE_RATE): AudioBuffer {
+  if (buffer.sampleRate === sampleRate) return buffer
+  const chans = Array.from({ length: buffer.numberOfChannels }, (_, ch) =>
+    resampleSinc(buffer.getChannelData(ch), buffer.sampleRate, sampleRate),
+  )
+  const out = new AudioBuffer({ length: chans[0].length, numberOfChannels: chans.length, sampleRate })
+  chans.forEach((c, ch) => out.copyToChannel(c as Float32Array<ArrayBuffer>, ch))
+  return out
+}
+
+/**
+ * Resample to the session rate (48 kHz default) with OfflineAudioContext — the browser's
+ * own band-limited resampler. Falls back to the sinc resampler outside the browser.
+ */
+export async function toSessionRate(buffer: AudioBuffer, sampleRate = SESSION_SAMPLE_RATE): Promise<AudioBuffer> {
+  if (buffer.sampleRate === sampleRate) return buffer
+  if (typeof OfflineAudioContext === 'undefined') return toSessionRateSync(buffer, sampleRate)
+  try {
+    const length = Math.max(1, Math.round((buffer.length * sampleRate) / buffer.sampleRate))
+    const ctx = new OfflineAudioContext(buffer.numberOfChannels, length, sampleRate)
+    const src = ctx.createBufferSource()
+    src.buffer = buffer
+    src.connect(ctx.destination)
+    src.start(0)
+    return await ctx.startRendering()
+  } catch {
+    return toSessionRateSync(buffer, sampleRate)
+  }
+}
+
+export type MixdownOptions = {
+  startSec?: number
+  endSec?: number
+  /** Session rate. Default 48 kHz; every track is resampled to it. */
+  sampleRate?: number
+  /** Equal-power crossfade at comp / take switch points. Default 16 ms. */
+  crossfadeSec?: number
+}
+
+/**
+ * Plain-data mix plan (for the worker path or custom renders).
+ * `resampleOnMainThread: false` leaves source rates as-is so the worker resamples.
+ */
+export function buildMixPlan(tracks: StudioTrack[], opts?: MixdownOptions & { resampleOnMainThread?: boolean }): MixPlan {
+  const live = audibleTracks(tracks)
+  const sampleRate = opts?.sampleRate || SESSION_SAMPLE_RATE
+  const fullEnd = sessionDuration(live)
+  const startSec = Math.max(0, opts?.startSec ?? 0)
+  const endSec = Math.max(startSec, Math.min(fullEnd, opts?.endSec ?? fullEnd))
+  const main = opts?.resampleOnMainThread !== false
+  const plans: MixTrackPlan[] = live.map((track) => {
+    const buf = track.buffer!
+    const channels = main
+      ? channelsAtRate(buf, sampleRate)
+      : Array.from({ length: Math.min(2, buf.numberOfChannels) }, (_, ch) => buf.getChannelData(ch))
+    return {
+      channels,
+      sourceRate: main ? sampleRate : buf.sampleRate,
+      pan: track.pan,
+      volume: track.volume,
+      automation: track.automation || [],
+      clips: clipsOf(track)
+        .filter((c) => !c.muted)
+        .map((c) => ({
+          sourceStart: c.sourceStart,
+          duration: c.duration,
+          offset: c.offset,
+          gain: c.gain,
+          fadeIn: c.fadeIn,
+          fadeOut: c.fadeOut,
+        })),
+      windows: takeAudibleWindows(tracks, track),
+    }
+  })
+  return { sampleRate, startSec, endSec, xfadeSec: opts?.crossfadeSec ?? DEFAULT_XFADE_SEC, tracks: plans }
+}
+
+/**
+ * Sum all audible tracks into a stereo master with pan, gain, offset, fades.
+ * Every track is resampled to the session rate (48 kHz unless `sampleRate` is given),
+ * take switch points get an equal-power crossfade, and the output keeps float headroom —
+ * nothing is clipped here; limit (renderMaster) and clamp at export.
+ */
+export function mixdownTracks(tracks: StudioTrack[], opts?: MixdownOptions): AudioBuffer {
+  const sampleRate = opts?.sampleRate || SESSION_SAMPLE_RATE
+  if (audibleTracks(tracks).length === 0) return emptyStereo(sampleRate, 1)
+  const { left, right } = renderMixPlan(buildMixPlan(tracks, opts))
+  const master = emptyStereo(sampleRate, left.length)
+  master.copyToChannel(left as Float32Array<ArrayBuffer>, 0)
+  master.copyToChannel(right as Float32Array<ArrayBuffer>, 1)
+  return master
 }
 
 /** Resample / stretch length by copying into a target sample rate (nearest). */
@@ -544,7 +628,7 @@ export function splitBuffer(
 
 export function appendBuffers(a: AudioBuffer, b: AudioBuffer): AudioBuffer {
   const rate = a.sampleRate
-  const bb = b.sampleRate === rate ? b : resampleNearest(b, rate)
+  const bb = b.sampleRate === rate ? b : toSessionRateSync(b, rate)
   const channels = Math.max(a.numberOfChannels, bb.numberOfChannels)
   const out = new AudioBuffer({
     length: a.length + bb.length,

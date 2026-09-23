@@ -25,13 +25,16 @@ export const SFX_META: { id: SfxId; label: string; hint: string }[] = [
   { id: 'breath', label: 'Room air', hint: 'Soft noise bed, 2 seconds' },
 ]
 
-const cache = new Map<SfxId, AudioBuffer>()
+/** Keyed by id AND sample rate — a 44.1k render must never be served to a 48k session. */
+const cache = new Map<string, AudioBuffer>()
 
-export async function renderSfx(id: SfxId, sampleRate = 44100): Promise<AudioBuffer> {
-  const hit = cache.get(id)
+/** Renders at the requested rate (default: 48 kHz session rate). */
+export async function renderSfx(id: SfxId, sampleRate = 48000): Promise<AudioBuffer> {
+  const key = `${id}@${sampleRate}`
+  const hit = cache.get(key)
   if (hit) return hit
   const buffer = await buildSfx(id, sampleRate)
-  cache.set(id, buffer)
+  cache.set(key, buffer)
   return buffer
 }
 

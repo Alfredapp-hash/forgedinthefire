@@ -6,9 +6,15 @@ import {
   clipsOf,
   lastTakeEnd,
   sessionDuration,
-  takeAudibleAt,
+  takeAudibleWindows,
   type StudioTrack,
 } from '@/lib/podcast/multitrack'
+import type { LaneCapture } from '@/lib/podcast/capture'
+import { compGainAt, DEFAULT_XFADE_SEC } from '@/lib/podcast/engine/mix-core'
+import { latencyCompensationFrames } from '@/lib/podcast/engine/latency'
+
+export { createSessionContext } from '@/lib/podcast/engine/context'
+export { latencyCompensationFrames } from '@/lib/podcast/engine/latency'
 
 export type RecMode = 'after_mix' | 'after_mine' | 'at_playhead' | 'from_start'
 
@@ -69,6 +75,12 @@ export type CueHandle = {
   sessionTime: () => number
   /** Live mix tap for guest headphones. Never feed this into a Guest take. */
   stream: MediaStream
+  /** AudioContext frame at which session time `fromSec` plays (cue clock origin). */
+  startFrame?: number
+  /** Session seconds at `startFrame`. */
+  fromSec?: number
+  /** True when the context was supplied by the caller (it is not closed on stop). */
+  sharedContext?: boolean
 }
 
 function audibleCueTracks(tracks: StudioTrack[], excludeIds: string[]) {
@@ -84,14 +96,22 @@ export function startLiveMix(
     gain?: number
     /** Host speakers/phones. Default on. Guest tap is always created. */
     monitor?: boolean
+    /** Shared session AudioContext (same one passed to startLaneCapture). Not closed on stop. */
+    context?: AudioContext
+    /** Comp / take-switch crossfade, matches mixdownTracks. Default 16 ms. */
+    crossfadeSec?: number
+    /** Schedule start slightly ahead so all sources begin on the same frame. Default 0. */
+    startDelaySec?: number
   },
 ): CueHandle | null {
   const fromSec = Math.max(0, opts.fromSec)
   const live = audibleCueTracks(tracks, opts.excludeIds || [])
   if (live.length === 0) return null
 
-  const ctx = new AudioContext()
+  const shared = !!opts.context && opts.context.state !== 'closed'
+  const ctx = shared ? opts.context! : new AudioContext()
   void ctx.resume()
+  const xfade = opts.crossfadeSec ?? DEFAULT_XFADE_SEC
   const master = ctx.createGain()
   master.gain.value = opts.gain ?? 1
   if (opts.monitor !== false) master.connect(ctx.destination)
@@ -107,11 +127,23 @@ export function startLiveMix(
   }
 
   const sources: AudioBufferSourceNode[] = []
-  const origin = ctx.currentTime
+  const nodes: AudioNode[] = [master]
+  const origin = ctx.currentTime + Math.max(0, opts.startDelaySec ?? 0)
 
   for (const track of live) {
     const buf = track.buffer!
     const panVal = Math.max(-1, Math.min(1, track.pan))
+    // Same precomputed comp windows + equal-power crossfades as the offline mixdown.
+    const windows = takeAudibleWindows(tracks, track)
+    const switchTimes: number[] = []
+    if (windows) {
+      for (const w of windows) {
+        for (const edge of [w.xfadeIn ? w.start : NaN, w.xfadeOut ? w.end : NaN]) {
+          if (!Number.isFinite(edge)) continue
+          for (const k of [-0.5, -0.25, 0, 0.25, 0.5]) switchTimes.push(edge + k * xfade)
+        }
+      }
+    }
     for (const clip of clipsOf(track)) {
       if (clip.muted) continue
       const clipEnd = clip.offset + clip.duration
@@ -130,6 +162,7 @@ export function startLiveMix(
       source.connect(g)
       g.connect(pan)
       pan.connect(master)
+      nodes.push(g, pan)
 
       const startDelay = Math.max(0, clip.offset - fromSec)
       const when = origin + startDelay
@@ -145,7 +178,7 @@ export function startLiveMix(
         }
         return Math.max(
           0.0001,
-          (takeAudibleAt(tracks, track, t) ? 1 : 0.0001) *
+          Math.max(0.0001, compGainAt(windows, t, xfade)) *
             track.volume *
             clip.gain *
             automationAt(track.automation, t) *
@@ -153,7 +186,11 @@ export function startLiveMix(
         )
       }
       g.gain.setValueAtTime(levelAt(playFrom), when)
-      for (let t = playFrom + step; t < playUntil; t += step) {
+      const times: number[] = []
+      for (let t = playFrom + step; t < playUntil; t += step) times.push(t)
+      for (const t of switchTimes) if (t > playFrom && t < playUntil) times.push(t)
+      times.sort((a, b) => a - b)
+      for (const t of times) {
         g.gain.linearRampToValueAtTime(levelAt(t), origin + (t - fromSec))
       }
       g.gain.linearRampToValueAtTime(levelAt(playUntil), origin + (playUntil - fromSec))
@@ -163,14 +200,28 @@ export function startLiveMix(
     }
   }
 
+  const teardown = () => {
+    for (const node of nodes) {
+      try {
+        node.disconnect()
+      } catch {
+        /* already disconnected */
+      }
+    }
+    if (!shared) void ctx.close()
+  }
+
   if (sources.length === 0) {
-    void ctx.close()
+    teardown()
     return null
   }
 
   return {
     ctx,
     stream,
+    startFrame: Math.round(origin * ctx.sampleRate),
+    fromSec,
+    sharedContext: shared,
     sessionTime() {
       if (ctx.state === 'closed') return fromSec
       return fromSec + Math.max(0, ctx.currentTime - origin)
@@ -190,9 +241,49 @@ export function startLiveMix(
           /* already ended */
         }
       }
-      void ctx.close()
+      teardown()
     },
   }
+}
+
+/**
+ * Seconds to trim from the head of a decoded punch capture so it lines up with the cue:
+ *   preroll + (cueStartFrame − captureStartFrame)/sr + round-trip latency
+ * where round-trip = ctx.outputLatency + ctx.baseLatency + track latency, or the
+ * measured loop-back value (measureRoundTripLatency) when given. The frame delta is used
+ * only when cue and capture share one AudioContext (pass `context` to both).
+ * Call after `capture.done` resolves.
+ */
+export function punchTrimSec(opts: {
+  prerollSec: number
+  capture: LaneCapture
+  cue?: CueHandle | null
+  roundTripSec?: number | null
+  /** Set false to skip device latency (e.g. a remote guest stream). Default true. */
+  compensateLatency?: boolean
+}): number {
+  const timing = opts.capture.timing?.()
+  const pre = Math.max(0, opts.prerollSec)
+  if (!timing) return pre
+  const cue = opts.cue
+  const sameClock = !!cue && cue.startFrame != null && timing.context === cue.ctx && timing.startFrame != null
+  const cueCtx = cue?.ctx
+  const frames = latencyCompensationFrames({
+    sampleRate: timing.sampleRate,
+    cueStartFrame: sameClock ? cue!.startFrame : null,
+    captureStartFrame: sameClock ? timing.startFrame : null,
+    outputLatency: opts.compensateLatency === false ? 0 : cueCtx && typeof cueCtx.outputLatency === 'number' ? cueCtx.outputLatency : timing.outputLatency,
+    baseLatency: opts.compensateLatency === false ? 0 : cueCtx && typeof cueCtx.baseLatency === 'number' ? cueCtx.baseLatency : timing.baseLatency,
+    inputLatency: opts.compensateLatency === false ? 0 : timing.inputLatency,
+    measuredRoundTripSec: opts.compensateLatency === false ? null : opts.roundTripSec ?? null,
+  })
+  return Math.max(0, pre + frames / timing.sampleRate)
+}
+
+/** Loop-back click calibration (see worklet-capture.measureRoundTripLatency). */
+export async function measureRoundTripLatency(ctx: AudioContext, stream: MediaStream): Promise<number | null> {
+  const mod = await import('@/lib/podcast/worklet-capture')
+  return mod.measureRoundTripLatency(ctx, stream)
 }
 
 /** Mix every audible lane except `excludeIds` and play from `fromSec`. */
@@ -218,9 +309,10 @@ export function clickAt(ctx: AudioContext, when: number, freq = 880) {
   osc.stop(when + 0.08)
 }
 
-export async function playCountIn(beats: number, bpm: number, signal?: AbortSignal) {
+export async function playCountIn(beats: number, bpm: number, signal?: AbortSignal, context?: AudioContext) {
   if (beats <= 0) return
-  const ctx = new AudioContext()
+  const shared = !!context && context.state !== 'closed'
+  const ctx = shared ? context! : new AudioContext()
   await ctx.resume()
   const interval = 60 / Math.max(40, bpm)
   const start = ctx.currentTime + 0.05
@@ -230,7 +322,7 @@ export async function playCountIn(beats: number, bpm: number, signal?: AbortSign
   try {
     await waitUntilContextTime(ctx, start + beats * interval, signal)
   } finally {
-    void ctx.close()
+    if (!shared) void ctx.close()
   }
 }
 
