@@ -20,7 +20,7 @@ SFX     ──┘
 
 ## 1. Apply the migration
 
-Run `supabase/migrations/20260923_podcast_live.sql` in the Supabase SQL editor (or `supabase db push`).
+Run `supabase/migrations/20260923000001_podcast_live.sql` in the Supabase SQL editor (or `supabase db push`).
 It creates `podcast_live_sessions`:
 
 | column | notes |

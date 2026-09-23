@@ -152,7 +152,7 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ error: `${key} must be an http(s) URL` }, { status: 400 })
       }
     }
-    // Loudness columns arrive with 20260923_podcast_release.sql; accept them only as numbers.
+    // Loudness columns arrive with 20260923000002_podcast_release.sql; accept them only as numbers.
     for (const key of ['loudness_lufs', 'loudness_peak_db', 'audio_channels'] as const) {
       if (body[key] === undefined) continue
       const n = Number(body[key])

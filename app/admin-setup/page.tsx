@@ -18,7 +18,7 @@ function normalizeEmail(email: string | null | undefined): string {
 
 /**
  * Self-service admin check. It only ever reads the signed-in user's OWN
- * admin_users row (RLS enforces this since 20260923_podcast_security.sql).
+ * admin_users row (RLS enforces this since 20260923000003_podcast_security.sql).
  * No owner emails live in this client bundle.
  */
 const SQL_TEMPLATE = `-- Run in the Supabase SQL editor as a project owner.
@@ -27,7 +27,7 @@ INSERT INTO admin_users (email, role)
 VALUES (lower(trim('owner@example.org')), 'owner')
 ON CONFLICT (email) DO UPDATE SET role = 'owner', updated_at = NOW();
 
--- Policies are managed by supabase/migrations/20260923_podcast_security.sql
+-- Policies are managed by supabase/migrations/20260923000003_podcast_security.sql
 -- (signed-in users can read only their own row; admins manage the table).`
 
 export default function AdminSetupCheck() {

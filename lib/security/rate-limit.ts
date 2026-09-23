@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 
 /**
  * Fixed-window limiter backed by Postgres (public.api_rate_limit_hit, see
- * supabase/migrations/20260923_podcast_security.sql). Netlify functions are
+ * supabase/migrations/20260923000003_podcast_security.sql). Netlify functions are
  * stateless, so an in-memory counter would reset on every cold start.
  *
  * Buckets never hold raw IPs or tokens: callers pass already-hashed keys via

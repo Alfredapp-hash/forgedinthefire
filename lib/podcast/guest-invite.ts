@@ -12,7 +12,7 @@ export type {
 /** Raw tokens are 24 random bytes as hex (192 bits). Anything else is rejected before a DB hit. */
 export const GUEST_TOKEN_PATTERN = /^[a-f0-9]{48}$/
 
-/** Private bucket for guest backup takes (created in 20260923_podcast_security.sql). */
+/** Private bucket for guest backup takes (created in 20260923000003_podcast_security.sql). */
 export const GUEST_TAKE_BUCKET = 'podcast-guest-takes'
 const TAKE_REF_PREFIX = `private://${GUEST_TAKE_BUCKET}/`
 

@@ -43,7 +43,7 @@ export function liveError(err: unknown) {
   return NextResponse.json(
     {
       error: missingTable
-        ? 'podcast_live_sessions is missing — apply supabase/migrations/20260923_podcast_live.sql'
+        ? 'podcast_live_sessions is missing — apply supabase/migrations/20260923000001_podcast_live.sql'
         : raw.slice(0, 240),
     },
     { status: missingTable ? 503 : 500 },

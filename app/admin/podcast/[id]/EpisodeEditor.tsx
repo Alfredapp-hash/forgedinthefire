@@ -155,7 +155,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
     }
   }
 
-  /** Loudness columns need 20260923_podcast_release.sql — never let a missing column block work. */
+  /** Loudness columns need 20260923000002_podcast_release.sql — never let a missing column block work. */
   async function persistLoudness(value: Loudness) {
     const current = episodeRef.current
     if (!current) return
