@@ -5,6 +5,7 @@
   "description": "Forged in the Fire - Survivor-centered nonprofit website supporting survivors of commercial sex trafficking",
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node --experimental-strip-types scripts/build-advocate-pdfs.ts",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -35,6 +36,7 @@
     "lucide-react": "^0.460.0",
     "nanoid": "^5.1.11",
     "next": "^16.2.6",
+    "pdfkit": "^0.20.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "resend": "^4.0.1",
@@ -45,6 +47,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
+    "@types/pdfkit": "^0.17.6",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "autoprefixer": "^10.4.20",
