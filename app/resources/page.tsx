@@ -4,11 +4,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { generateMetaTags } from '@/lib/utils';
 import { BookOpen, Download, FileText, Video, ExternalLink, ChevronRight } from 'lucide-react';
+import { AdvocateResourceDirectory } from '@/components/advocate-resource-directory';
 
 export const metadata: Metadata = generateMetaTags({
   title: 'Human Trafficking Resources Lorain County Ohio',
   description:
-    'Free human trafficking resources for Lorain County and Northeast Ohio, including survivor support information, awareness education, prevention materials, and trusted hotline links.',
+    'Free human trafficking resources for Lorain County and Northeast Ohio, including survivor guides and a Cuyahoga County adult advocate referral directory for shelter, food, medical care, and behavioral health.',
 });
 
 const RESOURCES = [
@@ -61,7 +62,20 @@ export default function ResourcesPage() {
               resources for human trafficking awareness and survivor support in Lorain County 
               and Northeast Ohio.
             </p>
+            <a
+              href="#advocate-guide"
+              className="inline-flex items-center mt-8 text-ember font-medium hover:underline"
+            >
+              Open the adult advocate referral directory
+              <ChevronRight className="ml-1 h-4 w-4" />
+            </a>
           </div>
+        </div>
+      </section>
+
+      <section className="py-20 bg-charcoal border-b border-steel-800">
+        <div className="container-wide section-padding">
+          <AdvocateResourceDirectory />
         </div>
       </section>
 
