@@ -27,7 +27,7 @@ export default function AnalyticsPage() {
     <div className="max-w-5xl mx-auto space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-[#F6FAFC]">Analytics</h1>
-        <p className="text-sm text-[#A9B8C6]">Site traffic and operational metrics</p>
+        <p className="text-sm text-[#A9B8C6]">Site traffic and operational metrics · <Link href="/admin/ads" className="text-[#53D6FF] underline">Ad spend, ROAS, and peer report</Link></p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

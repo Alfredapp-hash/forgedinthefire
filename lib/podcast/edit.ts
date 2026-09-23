@@ -245,6 +245,7 @@ export function fullClipForBuffer(
   offset: number,
   fadeIn = 0.05,
   fadeOut = 0.15,
+  syncGroup?: string,
 ): TrackClip {
   return {
     id: newClipId(),
@@ -255,6 +256,7 @@ export function fullClipForBuffer(
     muted: false,
     fadeIn,
     fadeOut,
+    syncGroup,
   }
 }
 

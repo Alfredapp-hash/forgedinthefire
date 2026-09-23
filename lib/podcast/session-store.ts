@@ -1,7 +1,7 @@
 /** IndexedDB autosave for in-progress production-room takes (per episode). */
 
 import { encodeWav } from '@/lib/podcast/audio'
-import type { CameraClip } from '@/lib/podcast/camera'
+import { cameraKind, normalizeCameraClip, type CameraClip } from '@/lib/podcast/camera'
 import { bufferFromBlob } from '@/lib/podcast/effects'
 import type { SessionPerson, StudioTrack } from '@/lib/podcast/multitrack'
 
@@ -92,14 +92,43 @@ async function packCameras(episodeId: string, cameras: CameraClip[]): Promise<St
   const stored: StoredCameraClip[] = []
   for (const clip of cameras) {
     const old = reuse.get(clip.id)
+    const meta = {
+      id: clip.id,
+      personId: clip.personId,
+      mime: clip.mime,
+      offset: clip.offset,
+      duration: clip.duration,
+      trimStart: clip.sourceStart ?? clip.trimStart,
+      sourceStart: clip.sourceStart ?? clip.trimStart,
+      sourceDuration: clip.sourceDuration || old?.sourceDuration || clip.trimStart + clip.duration,
+      muted: Boolean(clip.muted),
+      syncGroup: clip.syncGroup,
+      kind: clip.kind,
+      layer: clip.layer,
+      label: clip.label,
+      sublabel: clip.sublabel,
+      fadeIn: clip.fadeIn,
+      fadeOut: clip.fadeOut,
+      filter: clip.filter,
+      overlayFit: clip.overlayFit,
+      stingerStyle: clip.stingerStyle,
+      keyframes: clip.keyframes,
+    }
+    if (cameraKind(clip) === 'title' || cameraKind(clip) === 'stinger' || !clip.url) {
+      stored.push({
+        ...meta,
+        mime: clip.mime || 'text/plain',
+        bytes: 0,
+        data: new ArrayBuffer(0),
+      })
+      continue
+    }
     if (old && old.bytes === clip.bytes && old.data.byteLength > 64) {
       stored.push({
         ...old,
-        offset: clip.offset,
-        duration: clip.duration,
-        trimStart: clip.trimStart,
+        ...meta,
         mime: clip.mime,
-        personId: clip.personId,
+        bytes: old.bytes,
       })
       continue
     }
@@ -111,17 +140,13 @@ async function packCameras(episodeId: string, cameras: CameraClip[]): Promise<St
       const data = await blob.arrayBuffer()
       if (data.byteLength < 64) continue
       stored.push({
-        id: clip.id,
-        personId: clip.personId,
+        ...meta,
         mime: clip.mime || blob.type || 'video/webm',
-        offset: clip.offset,
-        duration: clip.duration,
-        trimStart: clip.trimStart,
         bytes: data.byteLength,
         data,
       })
     } catch {
-      if (old) stored.push(old)
+      if (old) stored.push({ ...old, ...meta })
     }
   }
   return stored
@@ -218,18 +243,39 @@ export async function loadSession(
 
   const cameras: CameraClip[] = []
   for (const stored of row.cameras || []) {
-    if (!stored.data || stored.data.byteLength < 64) continue
-    const blob = new Blob([stored.data], { type: stored.mime || 'video/webm' })
-    cameras.push({
-      id: stored.id,
-      personId: stored.personId,
-      url: URL.createObjectURL(blob),
-      mime: stored.mime || blob.type || 'video/webm',
-      offset: stored.offset,
-      duration: stored.duration,
-      trimStart: stored.trimStart,
-      bytes: stored.bytes || blob.size,
-    })
+    const kind =
+      stored.kind === 'title' || stored.kind === 'broll' || stored.kind === 'stinger' ? stored.kind : 'camera'
+    if (kind !== 'title' && kind !== 'stinger' && (!stored.data || stored.data.byteLength < 64)) continue
+    const blob =
+      stored.data && stored.data.byteLength >= 64
+        ? new Blob([stored.data], { type: stored.mime || 'video/webm' })
+        : null
+    cameras.push(
+      normalizeCameraClip({
+        id: stored.id,
+        personId: stored.personId,
+        url: blob ? URL.createObjectURL(blob) : '',
+        mime: stored.mime || blob?.type || (kind === 'title' || kind === 'stinger' ? 'text/plain' : 'video/webm'),
+        offset: stored.offset,
+        duration: stored.duration,
+        trimStart: stored.trimStart,
+        sourceStart: stored.sourceStart ?? stored.trimStart,
+        sourceDuration: stored.sourceDuration || stored.trimStart + stored.duration,
+        muted: Boolean(stored.muted),
+        syncGroup: stored.syncGroup,
+        bytes: stored.bytes || blob?.size || 0,
+        kind,
+        layer: stored.layer,
+        label: stored.label,
+        sublabel: stored.sublabel,
+        fadeIn: stored.fadeIn,
+        fadeOut: stored.fadeOut,
+        filter: stored.filter,
+        overlayFit: stored.overlayFit,
+        stingerStyle: stored.stingerStyle,
+        keyframes: stored.keyframes,
+      }),
+    )
   }
 
   return { people: row.people, tracks, cameras }

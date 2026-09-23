@@ -94,7 +94,8 @@ import {
   stopStreams,
   type LaneCapture,
 } from '@/lib/podcast/capture'
-import { renderPictureMix, type PictureMode } from '@/lib/podcast/picture'
+import { renderPictureMix, type PictureMode, type PictureScene } from '@/lib/podcast/picture'
+import type { PodcastChapter } from '@/lib/studio/types'
 import { applyFollowTalker } from '@/lib/podcast/auto-mix'
 import { gainForTargetLufs, measureLoudness, PODCAST_LUFS } from '@/lib/podcast/lufs'
 import { slugFile, zipStore } from '@/lib/podcast/zip'
@@ -105,19 +106,52 @@ import { GuestInvitePanel } from '@/components/podcast/guest-invite-panel'
 import type { GuestTallyPhase } from '@/lib/podcast/guest-types'
 import { CameraClipReview, CameraLane } from '@/components/podcast/camera-lane'
 import { CameraPreview } from '@/components/podcast/camera-preview'
+import { ProgramMonitor, ProgramSwitcher } from '@/components/podcast/program-monitor'
 import {
   CAMERA_ARM_WARNING,
   CAMERA_MB_PER_MIN,
+  cameraClipEnd,
+  cameraLayer,
   cameraStorageHint,
   formatBytes,
   measureVideoDuration,
+  newBrollClip,
   newCameraClipId,
+  newStingerClip,
+  newSyncGroupId,
+  newTitleClip,
+  normalizeCameraClip,
   openCameraStream,
+  pictureEnd,
   startCameraCapture,
   streamHasLiveVideo,
   type CameraCapture,
   type CameraClip,
 } from '@/lib/podcast/camera'
+import {
+  addKeyframeAt,
+  deleteCameraRange,
+  dissolveCameraPair,
+  joinAdjacentCamera,
+  moveCameraClip,
+  removeKeyframe,
+  seedCameraKeyframes,
+  setCameraFades,
+  setCameraFilter,
+  setStingerStyle,
+  slipCameraClip,
+  splitCameraAt,
+  toggleCameraMute,
+  trimCameraClip,
+  updateKeyframe,
+} from '@/lib/podcast/camera-edit'
+import {
+  avBroken,
+  avDriftForPerson,
+  nudgeAudioWithCamera,
+  nudgeCamerasWithAudio,
+  personAvLinked,
+} from '@/lib/podcast/av-sync'
 
 const REMOTE_GUEST_KEY = 'remote:guest'
 import {
@@ -147,11 +181,14 @@ type Props = {
   onExported: (file: File, durationSeconds: number) => Promise<void>
   onPublished?: () => Promise<void>
   onMarkChapter?: (seconds: number) => void
+  chapters?: PodcastChapter[]
 }
 
 type Snapshot = {
   tracks: StudioTrack[]
+  cameras: CameraClip[]
   selectedId: string | null
+  selectedCamClipId: string | null
 }
 
 function snapshotTracks(tracks: StudioTrack[]): StudioTrack[] {
@@ -164,7 +201,7 @@ function snapshotTracks(tracks: StudioTrack[]): StudioTrack[] {
   }))
 }
 
-export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter }: Props) {
+export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters }: Props) {
   const [tracks, setTracks] = useState<StudioTrack[]>(() => defaultSessionTracks())
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
@@ -206,6 +243,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [cameraStreams, setCameraStreams] = useState<Record<string, MediaStream>>({})
   const [cameraClips, setCameraClips] = useState<CameraClip[]>([])
   const [selectedCamClipId, setSelectedCamClipId] = useState<string | null>(null)
+  const [pictureMode, setPictureMode] = useState<PictureMode>('a-roll')
+  const [pvwScene, setPvwScene] = useState<PictureScene>('host')
+  const [pgmScene, setPgmScene] = useState<PictureScene>('host')
+  const [pgmFrom, setPgmFrom] = useState<PictureScene>('host')
+  const [pgmMix, setPgmMix] = useState(1)
+  const [fadeNext, setFadeNext] = useState(false)
+  const fadeAnimRef = useRef(0)
   const [camWarnFor, setCamWarnFor] = useState<string | null>(null)
   const [camStorageHint, setCamStorageHint] = useState<string | null>(null)
   const camWarnedRef = useRef(false)
@@ -259,9 +303,17 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     () => tracks.find((t) => t.id === selectedId) || tracks[0] || null,
     [tracks, selectedId],
   )
+  const pictureMarkers = useMemo(
+    () =>
+      (chapters || []).map((ch) => ({
+        time: Math.max(0, (ch.start_ms || 0) / 1000),
+        label: ch.title || 'Chapter',
+      })),
+    [chapters],
+  )
 
   const hasAudio = tracks.some((t) => Boolean(t.buffer))
-  const sessionLen = sessionDuration(tracks)
+  const sessionLen = Math.max(sessionDuration(tracks), pictureEnd(cameraClips))
   const ready = hasAudio
   const anyArmed = tracks.some((t) => t.armed)
   const personIdsArmed = new Set(tracks.filter((t) => t.armed).map((t) => t.personId)).size
@@ -295,11 +347,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const pushHistory = useCallback(() => {
     historyRef.current.push({
       tracks: snapshotTracks(tracks),
+      cameras: cameraClips.map((c) => ({ ...c })),
       selectedId,
+      selectedCamClipId,
     })
     if (historyRef.current.length > 20) historyRef.current.shift()
     setHistoryLen(historyRef.current.length)
-  }, [tracks, selectedId])
+  }, [tracks, cameraClips, selectedId, selectedCamClipId])
 
   const onRemoteGuestStream = useCallback((stream: MediaStream | null) => {
     remoteGuestRef.current = stream
@@ -461,6 +515,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }, 1600)
     return () => window.clearTimeout(t)
   }, [episodeId, people, tracks, cameraClips, recording, sessionStatus])
+
+  useEffect(() => {
+    return () => {
+      if (fadeAnimRef.current) cancelAnimationFrame(fadeAnimRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     setRange((prev) => {
@@ -676,6 +736,23 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         event.preventDefault()
         splitSelectedAtPlayhead()
       }
+      if ((event.key === 'v' || event.key === 'V') && !event.metaKey && !event.ctrlKey && !recording) {
+        event.preventDefault()
+        splitSelectedCameraAtPlayhead()
+      }
+      if ((event.key === 'j' || event.key === 'J') && !recording) {
+        event.preventDefault()
+        if (playing) stopMix()
+        nudge(event.shiftKey ? -5 : -1)
+      }
+      if ((event.key === 'k' || event.key === 'K') && !recording) {
+        event.preventDefault()
+        if (playing) stopMix()
+      }
+      if ((event.key === 'l' || event.key === 'L') && !recording) {
+        event.preventDefault()
+        if (!playing) void togglePlay()
+      }
       if ((event.key === 'Backspace' || event.key === 'Delete') && !recording) {
         event.preventDefault()
         editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, event.shiftKey), event.shiftKey ? 'Ripple-deleted range' : 'Cut hole in lane')
@@ -764,7 +841,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         url: t.buffer ? bufferToUrl(t.buffer) : null,
       })),
     )
+    setCameraClips(prev.cameras.map((c) => normalizeCameraClip({ ...c })))
     setSelectedId(prev.selectedId)
+    setSelectedCamClipId(prev.selectedCamClipId)
     setApplied([])
     setOk('Undid last change')
   }
@@ -785,7 +864,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       cameraClips.forEach((clip) => revokeUrl(clip.url))
       setPeople(saved.people)
       setTracks(ensurePersonLanes(saved.tracks, saved.people))
-      setCameraClips(saved.cameras)
+      setCameraClips(saved.cameras.map(normalizeCameraClip))
       setSelectedCamClipId(saved.cameras[0]?.id || null)
       setSelectedId(saved.tracks.find((t) => t.armed)?.id || saved.tracks.find((t) => t.buffer)?.id || null)
       seededRef.current = true
@@ -951,12 +1030,119 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   }
 
   function discardCameraClip(id: string) {
-    setCameraClips((prev) => {
-      const clip = prev.find((c) => c.id === id)
-      if (clip) revokeUrl(clip.url)
-      return prev.filter((c) => c.id !== id)
-    })
+    pushHistory()
+    setCameraClips((prev) => prev.filter((c) => c.id !== id))
     if (selectedCamClipId === id) setSelectedCamClipId(null)
+    setOk('Removed camera take from the lane — file bytes were not rewritten')
+  }
+
+  function addLowerThird(personId: string) {
+    const person = people.find((p) => p.id === personId)
+    pushHistory()
+    const clip = newTitleClip({
+      personId,
+      offset: playheadRef.current,
+      label: person?.name || 'Title',
+      sublabel: person?.id === 'guest' ? 'Guest' : person?.id === 'host' ? 'Host' : '',
+      duration: 5,
+    })
+    setCameraClips((prev) => [...prev, clip])
+    setSelectedCamClipId(clip.id)
+    setOk(`Lower third at ${formatClock(clip.offset)} — Program overlay, not RSS`)
+  }
+
+  function addStinger(personId: string, where: 'playhead' | 'cut' | 'chapters', style: 'black' | 'title' = 'black') {
+    const person = people.find((p) => p.id === personId)
+    const label = style === 'title' ? title || person?.name || 'Title' : ''
+    const sublabel = style === 'title' ? person?.name || '' : ''
+    const times: number[] = []
+    if (where === 'playhead') times.push(playheadRef.current)
+    if (where === 'cut') {
+      const selected = cameraClips.find((c) => c.id === selectedCamClipId && c.personId === personId)
+      times.push(selected ? cameraClipEnd(selected) : playheadRef.current)
+    }
+    if (where === 'chapters') {
+      for (const mark of pictureMarkers) times.push(mark.time)
+    }
+    const unique = [...new Set(times.map((t) => Math.max(0, t)))]
+    if (unique.length === 0) return
+    pushHistory()
+    const laid = unique.map((offset) =>
+      newStingerClip({
+        personId,
+        offset,
+        style,
+        label,
+        sublabel,
+        duration: style === 'title' ? 0.7 : 0.4,
+      }),
+    )
+    setCameraClips((prev) => [...prev, ...laid])
+    setSelectedCamClipId(laid[0].id)
+    setOk(
+      where === 'chapters'
+        ? `Stingers at ${laid.length} chapter${laid.length === 1 ? '' : 's'} — Program only`
+        : `Stinger at ${formatClock(laid[0].offset)} — Program flash, not RSS`,
+    )
+  }
+
+  function cancelPgmFade() {
+    if (fadeAnimRef.current) {
+      cancelAnimationFrame(fadeAnimRef.current)
+      fadeAnimRef.current = 0
+    }
+  }
+
+  function takeProgram(scene: PictureScene, fade: boolean) {
+    cancelPgmFade()
+    setPictureMode(scene === 'pip' ? 'pip' : 'a-roll')
+    if (!fade || scene === pgmScene) {
+      setPgmFrom(scene)
+      setPgmScene(scene)
+      setPgmMix(1)
+      return
+    }
+    const from = pgmScene
+    setPgmFrom(from)
+    setPgmScene(scene)
+    setPgmMix(0)
+    const started = performance.now()
+    const dur = 450
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - started) / dur)
+      setPgmMix(t)
+      if (t < 1) fadeAnimRef.current = requestAnimationFrame(tick)
+      else fadeAnimRef.current = 0
+    }
+    fadeAnimRef.current = requestAnimationFrame(tick)
+  }
+
+  async function importBroll(personId: string, file: File | null) {
+    if (!file) return
+    setBusy('Loading B-roll…')
+    setError(null)
+    try {
+      const url = URL.createObjectURL(file)
+      const fullDur = await measureVideoDuration(url)
+      const duration = Math.max(0.1, Number.isFinite(fullDur) && fullDur > 0 ? fullDur : 5)
+      pushHistory()
+      const clip = newBrollClip({
+        personId,
+        url,
+        mime: file.type || 'video/webm',
+        offset: playheadRef.current,
+        duration,
+        bytes: file.size,
+        overlayFit: 'cover',
+      })
+      setCameraClips((prev) => [...prev, clip])
+      setSelectedCamClipId(clip.id)
+      setOk(`B-roll at ${formatClock(clip.offset)} — covers A-roll picture, audio mix unchanged`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load B-roll')
+    } finally {
+      setBusy(null)
+    }
   }
 
   async function applyGuestCamera(url: string) {
@@ -969,14 +1155,17 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       if (blob.size < 64) throw new Error('Guest camera backup was empty')
       const objectUrl = URL.createObjectURL(blob)
       const fullDur = await measureVideoDuration(objectUrl)
+      const full = Math.max(0.1, Number.isFinite(fullDur) && fullDur > 0 ? fullDur : 0.1)
       const clip: CameraClip = {
         id: newCameraClipId(),
         personId: 'guest',
         url: objectUrl,
         mime: blob.type || 'video/webm',
         offset: playheadRef.current,
-        duration: Math.max(0.1, Number.isFinite(fullDur) && fullDur > 0 ? fullDur : 0.1),
+        duration: full,
         trimStart: 0,
+        sourceStart: 0,
+        sourceDuration: full,
         bytes: blob.size,
       }
       setCameraClips((prev) => [...prev, clip])
@@ -1230,6 +1419,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           if (decoded.length === 0) {
             setError('Audio take was empty — keep rolling through the preroll. Camera file may still land.')
           }
+          const punchSync: Record<string, string> = {}
           if (decoded.length > 0) setTracks((prev) => {
             let next = prev
             const laidIds: string[] = []
@@ -1241,6 +1431,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   ? next.find((t) => t.id === lane.id)
                   : emptyTakeForPerson(next, lane.personId) || (lane.buffer ? null : next.find((t) => t.id === lane.id))
               const offset = replaceArmed && reuse?.buffer ? reuse.offset : punch
+              const syncGroup = newSyncGroupId()
               const takeLabel =
                 sharedNames.length > 1
                   ? `${sharedNames.join(' + ')} · take`
@@ -1261,7 +1452,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                           buffer: cloneAudioBuffer(buffer),
                           url,
                           offset,
-                          clips: [fullClipForBuffer(buffer, offset, t.fadeIn, t.fadeOut)],
+                          clips: [fullClipForBuffer(buffer, offset, t.fadeIn, t.fadeOut, syncGroup)],
                           inserts: cleanup || t.inserts,
                           armed: true,
                           listen: true,
@@ -1270,8 +1461,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   ),
                   reuse.id,
                 )
+                punchSync[lane.personId] = syncGroup
               } else {
                 const take = nextTakeNumber(next, lane.personId)
+                punchSync[lane.personId] = syncGroup
                 const made = createEmptyTrack({
                   name: `${takeLabel} ${take}`,
                   role: person ? roleForPerson(person) : lane.role,
@@ -1283,7 +1476,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   volume: 1,
                   listen: true,
                   inserts: cleanup || [],
-                  clips: [fullClipForBuffer(buffer, punch, 0.05, 0.15)],
+                  clips: [fullClipForBuffer(buffer, punch, 0.05, 0.15, syncGroup)],
                 })
                 made.buffer = cloneAudioBuffer(buffer)
                 made.url = bufferToUrl(buffer)
@@ -1311,14 +1504,18 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             const fullDur = await measureVideoDuration(url)
             const fallback = Math.max(0.1, (performance.now() - recStartedAtRef.current) / 1000)
             const rawDur = Number.isFinite(fullDur) && fullDur > 0 ? fullDur : fallback + recTrim
+            const personId = camCaptures[i].key
             laidCams.push({
               id: newCameraClipId(),
-              personId: camCaptures[i].key,
+              personId,
               url,
               mime: blob.type || 'video/webm',
               offset: punch,
               duration: Math.max(0.1, rawDur - recTrim),
               trimStart: recTrim,
+              sourceStart: recTrim,
+              sourceDuration: rawDur,
+              syncGroup: punchSync[personId] || newSyncGroupId(),
               bytes: blob.size,
             })
           }
@@ -1326,9 +1523,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             setCameraClips((prev) => [...prev, ...laidCams])
             setSelectedCamClipId(laidCams[0].id)
           }
+          const punchedPeople = new Set(decoded.map((d) => d.lane.personId))
+          const pictureHeld = cameraClips.some((c) => punchedPeople.has(c.personId)) && laidCams.length === 0
           const camNote = laidCams.length
             ? ` · ${laidCams.length} camera file${laidCams.length === 1 ? '' : 's'} (${laidCams.map((c) => formatBytes(c.bytes)).join(', ')}, not in RSS)`
-            : ''
+            : pictureHeld
+              ? ' · punch under picture (existing camera stays on the clock)'
+              : ''
           if (decoded.length > 0) {
             setOk(
               decoded.length > 1
@@ -1689,6 +1890,40 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setOk('Split on this lane — both pieces stay on the same track')
   }
 
+  function splitSelectedCameraAtPlayhead() {
+    const personId = cameraClips.find((c) => c.id === selectedCamClipId)?.personId
+    if (!personId && cameraClips.length === 0) return
+    pushHistory()
+    setCameraClips((prev) => splitCameraAt(prev, playheadRef.current, personId))
+    setOk('Split picture at playhead — audio clips unchanged')
+  }
+
+  function editCameraRange(ripple: boolean) {
+    const cur = rangeRef.current
+    const a = Math.min(cur.start, cur.end)
+    const b = Math.max(cur.start, cur.end)
+    const personId =
+      cameraClips.find((c) => c.id === selectedCamClipId)?.personId ||
+      people.find((p) => p.kind === 'voice' && cameraClips.some((c) => c.personId === p.id))?.id
+    if (b - a < 0.05) {
+      setError('Drag a range on the camera lane (shift-drag), then Cut hole / Ripple')
+      return
+    }
+    pushHistory()
+    setCameraClips((prev) => deleteCameraRange(prev, a, b, personId, ripple))
+    setOk(ripple ? 'Ripple-deleted picture (audio unchanged)' : 'Cut hole in picture (audio unchanged)')
+  }
+
+  function moveSelectedCamera(clipId: string, offset: number) {
+    const clip = cameraClips.find((c) => c.id === clipId)
+    if (!clip) return
+    const linked = personAvLinked(people.find((p) => p.id === clip.personId))
+    setCameraClips((prev) => moveCameraClip(prev, clipId, offset))
+    if (linked) {
+      setTracks((prev) => nudgeAudioWithCamera(prev, clip, clip.offset, offset, true))
+    }
+  }
+
   function bounceSelectedToStem() {
     if (!selected?.buffer) return
     pushHistory()
@@ -1756,9 +1991,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   }
 
   async function downloadPicture(mode: PictureMode) {
-    const host = cameraClips.find((c) => c.personId === 'host') || cameraClips[0] || null
-    const guest = cameraClips.find((c) => c.personId === 'guest') || null
-    if (!host && !guest) {
+    const host = cameraClips.filter((c) => c.personId === 'host')
+    const guest = cameraClips.filter((c) => c.personId === 'guest')
+    const lead = host[0] || guest[0] || cameraClips[0] || null
+    if (!lead) {
       setError('Record a camera file first — picture export is a local canvas mix, not the RSS')
       return
     }
@@ -1769,10 +2005,11 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       let mixed = mixdownTracks(prepared)
       mixed = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
       if (matchLufs) mixed = applyGainAndFades(mixed, gainForTargetLufs(measureLoudness(mixed).lufs, PODCAST_LUFS), 0, 0)
+      const overlays = cameraClips.filter((c) => cameraLayer(c) === 'overlay')
       const { blob, realtime: usedRealtime } = await renderPictureMix({
         mode,
-        host,
-        guest: mode === 'pip' ? guest : null,
+        host: [...(host.length ? host : cameraClips.filter((c) => c.personId === lead.personId)), ...overlays],
+        guest: mode === 'pip' ? guest : [],
         audio: mixed,
         onProgress: (ratio, info) => {
           const label = mode === 'pip' ? 'Encoding PIP' : 'Encoding A-roll'
@@ -1900,7 +2137,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     },
     onPlayhead: setHead,
     onMoveClip: (id: string, clipId: string, offset: number) => {
+      const track = tracks.find((t) => t.id === id)
+      const clip = track ? clipsOf(track).find((c) => c.id === clipId) : null
       setTracks((prev) => mapTrack(prev, id, (t) => moveClip(t, clipId, offset)))
+      if (track && clip && personAvLinked(people.find((p) => p.id === track.personId))) {
+        setCameraClips((prev) => nudgeCamerasWithAudio(prev, clip, track.personId, clip.offset, offset, true))
+      }
     },
     onTrimClip: (id: string, clipId: string, edge: 'in' | 'out', time: number) => {
       setTracks((prev) => mapTrack(prev, id, (t) => trimClip(t, clipId, edge, time)))
@@ -2103,38 +2345,48 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             </label>
           )}
           </div>
-          {(Object.keys(cameraStreams).length > 0 || (remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest)))) && (
+          {(Object.keys(cameraStreams).length > 0 ||
+            (remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest))) ||
+            cameraClips.length > 0) && (
             <div className="flex items-start gap-2 shrink-0">
-              <div className="space-y-1">
-                <p className="text-[10px] uppercase tracking-wider text-[#7C8B97]">Program</p>
-                {cameraStreams.host ? (
+              {cameraStreams.host ? (
+                <div className="space-y-1">
+                  <p className="text-[10px] uppercase tracking-wider text-[#7C8B97]">Preview</p>
                   <CameraPreview
                     stream={cameraStreams.host}
                     label={people.find((p) => p.id === 'host')?.name || 'Host'}
                     live={recording}
                     compact
+                    role="preview"
                   />
-                ) : remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest)) ? (
+                </div>
+              ) : remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest)) ? (
+                <div className="space-y-1">
+                  <p className="text-[10px] uppercase tracking-wider text-[#7C8B97]">Preview</p>
                   <CameraPreview
                     stream={remoteGuest}
                     label={people.find((p) => p.id === 'guest')?.name || 'Guest'}
                     live={recording}
                     compact
+                    role="preview"
                   />
-                ) : (
-                  Object.entries(cameraStreams)
-                    .slice(0, 1)
-                    .map(([id, stream]) => (
+                </div>
+              ) : (
+                Object.entries(cameraStreams)
+                  .slice(0, 1)
+                  .map(([id, stream]) => (
+                    <div key={id} className="space-y-1">
+                      <p className="text-[10px] uppercase tracking-wider text-[#7C8B97]">Preview</p>
                       <CameraPreview
-                        key={id}
                         stream={stream}
                         label={people.find((p) => p.id === id)?.name || 'Camera'}
                         live={recording}
                         compact
+                        role="preview"
                       />
-                    ))
-                )}
-              </div>
+                    </div>
+                  ))
+              )}
               {cameraStreams.host && remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest)) ? (
                 <div className="space-y-1 pt-4">
                   <CameraPreview
@@ -2142,6 +2394,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                     label={people.find((p) => p.id === 'guest')?.name || 'Guest'}
                     live={recording}
                     compact
+                    role="preview"
                   />
                 </div>
               ) : (
@@ -2157,10 +2410,54 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                         label={people.find((p) => p.id === id)?.name || 'Camera'}
                         live={recording}
                         compact
+                        role="preview"
                       />
                     </div>
                   ))
               )}
+              <ProgramMonitor
+                clips={cameraClips}
+                playhead={playhead}
+                mode={pictureMode}
+                scene={pgmScene}
+                fromScene={pgmFrom}
+                mix={pgmMix}
+                recording={recording}
+                liveStream={
+                  recording
+                    ? cameraStreams.host ||
+                      (remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest)) ? remoteGuest : null) ||
+                      Object.values(cameraStreams)[0] ||
+                      null
+                    : null
+                }
+                livePersonId={recording && !cameraStreams.host && remoteGuest ? 'guest' : 'host'}
+              />
+              <div className="space-y-1 pt-4">
+                <ProgramSwitcher
+                  pvw={pvwScene}
+                  pgm={pgmScene}
+                  fading={pgmMix < 0.999 && pgmFrom !== pgmScene}
+                  fadeArmed={fadeNext}
+                  onPvw={(scene) => {
+                    setPvwScene(scene)
+                    takeProgram(scene, fadeNext)
+                    setFadeNext(false)
+                  }}
+                  onCut={() => {
+                    setFadeNext(false)
+                    takeProgram(pvwScene, false)
+                  }}
+                  onFade={() => {
+                    if (pvwScene !== pgmScene) {
+                      setFadeNext(false)
+                      takeProgram(pvwScene, true)
+                    } else {
+                      setFadeNext((v) => !v)
+                    }
+                  }}
+                />
+              </div>
             </div>
           )}
         </div>
@@ -2306,7 +2603,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                     ? ' Two mics, one punch — quieter lane mutes while the other person talks. Both recordings keep rolling.'
                     : ' Shared mic — Host and Guest record onto one take.'
                 : ''}{' '}
-              Space plays. R records. S splits. Delete cuts a hole. 1–0 drops SFX. C marks a chapter.
+              Space / L plays. J / K / L is the playhead. R records. S splits audio. V splits picture. Delete cuts a hole. 1–0 drops SFX. C marks a chapter.
             </p>
           )}
         </div>
@@ -2614,6 +2911,60 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                       {cameraStreams[person.id] ? <Video size={12} /> : <VideoOff size={12} />}
                       {cameraStreams[person.id] ? 'Cam on' : camWarnFor === person.id ? 'Confirm' : 'Cam'}
                     </button>
+                    <button
+                      type="button"
+                      className={chip}
+                      disabled={recording}
+                      title="Kdenlive-style title clip on the picture clock at the playhead"
+                      onClick={() => addLowerThird(person.id)}
+                    >
+                      Lower third
+                    </button>
+                    <label className={`${chip} cursor-pointer`} title="Import a B-roll movie onto this picture lane">
+                      B-roll
+                      <input
+                        type="file"
+                        accept="video/*,.mp4,.webm,.mov"
+                        className="hidden"
+                        disabled={recording}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] || null
+                          e.target.value = ''
+                          void importBroll(person.id, file)
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className={chip}
+                      disabled={recording}
+                      title="OBS-style black flash at the playhead — canvas, not a plugin"
+                      onClick={() => addStinger(person.id, 'playhead')}
+                    >
+                      Stinger
+                    </button>
+                    {cameraClips.some((c) => c.personId === person.id) && (
+                      <button
+                        type="button"
+                        className={personAvLinked(person) ? chip : btn}
+                        title={
+                          personAvLinked(person)
+                            ? 'Linked: moving a take can nudge this camera. Trim/split/cut stay independent.'
+                            : 'Unlinked: audio and picture edit on their own. Same playhead.'
+                        }
+                        onClick={() =>
+                          setPeople((prev) =>
+                            prev.map((p) => (p.id === person.id ? { ...p, avLinked: !personAvLinked(p) } : p)),
+                          )
+                        }
+                      >
+                        {personAvLinked(person)
+                          ? avBroken(tracks, cameraClips, person)
+                            ? 'Linked · sync off'
+                            : 'Linked'
+                          : 'Unlinked'}
+                      </button>
+                    )}
                     </>
                   ) : null}
                   {person.kind === 'voice' && (
@@ -2867,10 +3218,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                       stream={remoteGuest}
                       label={`${person.name} camera (live)`}
                       live={recording}
+                      role="preview"
                     />
                     <p className="max-w-xs text-[11px] text-[#7C8B97]">
                       Inbound guest camera on the same WebRTC peer. Record writes a separate camera file
-                      on the same punch — not muxed into the take, not written to the RSS mix.
+                      on the same punch — not muxed into the take. Cam off punches audio under existing
+                      picture. Not written to the RSS mix.
                     </p>
                   </div>
                 ) : person.kind === 'voice' && cameraStreams[person.id] ? (
@@ -2879,10 +3232,11 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                       stream={cameraStreams[person.id]}
                       label={`${person.name} camera`}
                       live={recording}
+                      role="preview"
                     />
                     <p className="max-w-xs text-[11px] text-[#7C8B97]">
-                      Local preview, capped ~720p. Admin on/off and device pick. Record writes a separate
-                      camera file on the same punch — not muxed into the take, not written to the RSS mix.
+                      Local preview, capped ~720p. Record writes a separate camera file on the same punch.
+                      Cam off + Record is punch-under-picture — new audio, same video. Not muxed, not RSS.
                     </p>
                   </div>
                 ) : null}
@@ -2897,6 +3251,53 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                     color={person.color}
                     selectedId={selectedCamClipId}
                     onSelect={setSelectedCamClipId}
+                    onPlayhead={setHead}
+                    onMoveClip={moveSelectedCamera}
+                    onTrimClip={(clipId, edge, time) => {
+                      setCameraClips((prev) => trimCameraClip(prev, clipId, edge, time))
+                    }}
+                    onRange={(start, end) => setRange((prev) => ({ ...prev, start, end }))}
+                    range={range}
+                    linked={personAvLinked(person)}
+                    onLinkedChange={(next) =>
+                      setPeople((prev) => prev.map((p) => (p.id === person.id ? { ...p, avLinked: next } : p)))
+                    }
+                    drift={avDriftForPerson(tracks, cameraClips, person.id)}
+                    broken={avBroken(tracks, cameraClips, person)}
+                    disabled={Boolean(busy) || recording}
+                    onSplit={splitSelectedCameraAtPlayhead}
+                    onCutHole={(ripple) => editCameraRange(ripple)}
+                    onTrimEdge={(edge) => {
+                      if (!selectedCamClipId) return
+                      pushHistory()
+                      setCameraClips((prev) => trimCameraClip(prev, selectedCamClipId, edge, playheadRef.current))
+                      setOk(edge === 'in' ? 'Trimmed picture in at playhead' : 'Trimmed picture out at playhead')
+                    }}
+                    onSlip={(delta) => {
+                      if (!selectedCamClipId) return
+                      pushHistory()
+                      setCameraClips((prev) => slipCameraClip(prev, selectedCamClipId, delta))
+                      setOk('Slipped picture (timeline seat stays)')
+                    }}
+                    onMute={() => {
+                      if (!selectedCamClipId) return
+                      pushHistory()
+                      setCameraClips((prev) => toggleCameraMute(prev, selectedCamClipId))
+                      setOk('Toggled picture mute — audio unchanged')
+                    }}
+                    onJoin={() => {
+                      pushHistory()
+                      setCameraClips((prev) => joinAdjacentCamera(prev, playheadRef.current, person.id))
+                      setOk('Joined adjacent picture clips')
+                    }}
+                    onDissolve={() => {
+                      if (!selectedCamClipId) return
+                      pushHistory()
+                      setCameraClips((prev) => dissolveCameraPair(prev, selectedCamClipId, 0.5))
+                      setOk('Dissolved into the next picture clip — audio unchanged')
+                    }}
+                    onStinger={(where) => addStinger(person.id, where)}
+                    markers={pictureMarkers}
                   />
                 )}
                 {person.kind === 'voice' &&
@@ -2908,6 +3309,35 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                         clip={clip}
                         label={person.name}
                         onDiscard={() => discardCameraClip(clip.id)}
+                        onFilter={(filter) => setCameraClips((prev) => setCameraFilter(prev, clip.id, filter))}
+                        onFades={(fadeIn, fadeOut) =>
+                          setCameraClips((prev) => setCameraFades(prev, clip.id, fadeIn, fadeOut))
+                        }
+                        onTitle={(name, sub) =>
+                          setCameraClips((prev) =>
+                            prev.map((c) => (c.id === clip.id ? { ...c, label: name, sublabel: sub } : c)),
+                          )
+                        }
+                        onOverlayFit={(fit) =>
+                          setCameraClips((prev) =>
+                            prev.map((c) => (c.id === clip.id ? { ...c, overlayFit: fit } : c)),
+                          )
+                        }
+                        onStingerStyle={(style) =>
+                          setCameraClips((prev) => setStingerStyle(prev, clip.id, style))
+                        }
+                        onSeedKeyframes={() =>
+                          setCameraClips((prev) => seedCameraKeyframes(prev, clip.id))
+                        }
+                        onAddKeyframe={() =>
+                          setCameraClips((prev) => addKeyframeAt(prev, clip.id, playheadRef.current))
+                        }
+                        onUpdateKeyframe={(index, patch) =>
+                          setCameraClips((prev) => updateKeyframe(prev, clip.id, index, patch))
+                        }
+                        onRemoveKeyframe={(index) =>
+                          setCameraClips((prev) => removeKeyframe(prev, clip.id, index))
+                        }
                       />
                     ))}
               </div>
@@ -3222,7 +3652,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         {error && <p className="text-sm text-red-300">{error}</p>}
         {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
         <p className="text-[11px] text-[#A9B8C6]">
-          After the mix lays the next person at the end of the session. After my last take is a pickup. Cue mix plays live from the other lanes — no bounce before Record. Record capture starts with preroll and trims to punch. Two mics auto-mute the quieter lane (recordings keep rolling). Isolate uses RNNoise on the insert rack. Cam on a voice card is a real local preview; Record also writes a parallel camera file (autosaved in this browser, not episode audio_url). If this browser runs out of space, takes still save and you are told to download the camera files. Remote guest can send live camera on the same WebRTC peer, plus a local camera backup if the peer is thin. Download A-roll / PIP encodes as fast as this computer can (WebCodecs); the public feed stays audio. A picks the default audible take; Comp assigns a range to another take; L layers. Drag a range on the music lane to duck without a second track. Export can match −16 LUFS; stems zip is a local download. Mix is hosted on your site (Supabase media). Public feed{' '}
+          After the mix lays the next person at the end of the session. After my last take is a pickup. Cue mix plays live from the other lanes — no bounce before Record. Record capture starts with preroll and trims to punch. Two mics auto-mute the quieter lane (recordings keep rolling). Isolate uses RNNoise on the insert rack. Cam on a voice card is a real local preview; Record also writes a parallel camera file on the same clock (autosaved in this browser, not episode audio_url). Linked moves can nudge picture; Unlinked edits audio and video apart. A broken-sync badge shows if in-points drift. Punch with Cam off lays new audio under existing picture. Preview is live cameras; Program is punched/edited output (titles, B-roll, stingers, keyframes, dissolves, color). Host / Guest / PIP is the Program scene — Cut or Fade takes Preview to Program. Stinger is a black or title flash on the picture clock. Keyframes move opacity and position on the selected clip. Lower third and B-roll sit on the picture lane. Dissolve overlaps the next clip. Color is a non-destructive insert. Chapters (C) tick on the camera lane. V splits picture; J/K/L is the playhead. If this browser runs out of space, takes still save and you are told to download the camera files. Remote guest can send live camera on the same WebRTC peer, plus a local camera backup if the peer is thin. Download A-roll / PIP follows edited clip offsets and encodes as fast as this computer can (WebCodecs); the public feed stays audio. A picks the default audible take; Comp assigns a range to another take; L layers. Drag a range on the music lane to duck without a second track. Export can match −16 LUFS; stems zip is a local download. Mix is hosted on your site (Supabase media). Public feed{' '}
           <code className="text-[#8DEBFF]">/podcast/rss.xml</code> powers Apple Podcasts, Spotify for
           Podcasters, and Amazon Music — submit that URL once; new published mixes appear automatically.
         </p>
