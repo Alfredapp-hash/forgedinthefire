@@ -4,6 +4,8 @@ import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { AlertTriangle, CheckCircle2, Mic2, Plus, Trash2, XCircle } from 'lucide-react'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
+import { confirmLeaveStudio, setStudioGuard } from '@/components/podcast/studio/leave-guard'
+import { InfoTip } from '@/components/podcast/studio/step-nav'
 import { measureAudioDuration, uploadPodcastMedia } from '@/lib/podcast/media-upload'
 import type {
   ContentTopic,
@@ -146,12 +148,20 @@ export function RecordingStudio({
     }
   }
 
+  /** Switching episode remounts the editor — confirm first while recording or with an unsaved mix. */
+  function selectEpisode(id: string) {
+    if (id === selectedId) return
+    if (!confirmLeaveStudio()) return
+    onSelect(id)
+  }
+
   async function writeNewEpisode() {
     const title = draftTitle.trim()
     if (!title) {
       setError('Give the episode a title before opening the studio')
       return
     }
+    if (episode && !confirmLeaveStudio()) return
     const created = await createEpisode(
       {
         title,
@@ -172,6 +182,7 @@ export function RecordingStudio({
   }
 
   async function openFromTopic(topic: ContentTopic) {
+    if (episode && !confirmLeaveStudio()) return
     const notes = [
       topic.summary ? `Summary: ${topic.summary}` : '',
       ...(topic.talking_points || []).map((point, i) => `${i + 1}. ${point}`),
@@ -189,8 +200,16 @@ export function RecordingStudio({
     )
   }
 
-  async function saveMix(file: File, durationSeconds: number) {
+  async function saveMix(file: File, durationSeconds: number): Promise<void | false> {
     if (!episode) throw new Error('Pick or write an episode first')
+    if (
+      episode.status === 'published' &&
+      !window.confirm(
+        `This episode is live. Replace the audio listeners hear with this new mix (${formatMs(Math.round(durationSeconds * 1000))})?`,
+      )
+    ) {
+      return false
+    }
     const asset = await uploadPodcastMedia(file, episode.title)
     const seconds = durationSeconds || (await measureAudioDuration(asset.url)) || null
     await saveEpisode(
@@ -222,6 +241,9 @@ export function RecordingStudio({
   /** Publishing / scheduling always goes through the episode's release checklist. */
   function openReleaseChecklist(id = episode?.id) {
     if (!id) return
+    if (!confirmLeaveStudio()) return
+    // Already confirmed — don't let beforeunload ask a second time.
+    setStudioGuard({ recording: false, unsaved: false })
     window.location.assign(`/admin/podcast/${id}`)
   }
 
@@ -285,14 +307,15 @@ export function RecordingStudio({
     <div className="space-y-4">
       <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-4">
         <div>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Production room</p>
-          <p className="text-sm text-[#B8C4CF] mt-1">
-            Pull a planned episode, write the show, record takes per person, mix, and publish — all in this room.
-            Recording, punch-in, effects, and mixdown run in Chrome on this computer. Host and Guest can share one mic
-            on a take, or each take a local mic and land on the same punch. Two mics follow the talker (quieter lane
-            mutes; both recordings stay). Cam on a voice card is a local 720p preview; Record can write a parallel
-            camera file. A-roll / PIP downloads encode as fast as this computer can. RSS publish stays the audio mix.
-          </p>
+          <div className="flex items-center gap-2">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Production room</p>
+            <InfoTip label="About the production room">
+              Pick or write an episode, record each person, edit, and save the mix — all in this room. Recording and
+              editing run in this browser on this computer, and takes are backed up here as you go. Publishing always
+              goes through the episode’s review checklist.
+            </InfoTip>
+          </div>
+          <p className="text-sm text-[#D5DEE6] mt-1">Pick an episode, then follow the steps: set up, record, edit, publish.</p>
         </div>
 
         <div className="flex flex-wrap gap-1">
@@ -322,7 +345,7 @@ export function RecordingStudio({
               </span>
               <select
                 value={selectedId}
-                onChange={(e) => onSelect(e.target.value)}
+                onChange={(e) => selectEpisode(e.target.value)}
                 className={input}
               >
                 <option value="">Select an episode…</option>
@@ -428,19 +451,23 @@ export function RecordingStudio({
         <>
           <section key={episode.id} className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-4">
             <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
-              <input
-                defaultValue={episode.title}
-                onBlur={(e) => {
-                  const title = e.target.value.trim()
-                  if (title && title !== episode.title) void saveEpisode({ title })
-                }}
-                className="flex-1 bg-transparent text-xl font-bold text-[#F6FAFC] focus:outline-none"
-              />
+              <label className="flex-1 min-w-0">
+                <span className="block text-[11px] uppercase tracking-[0.16em] text-[#A9B8C6] mb-1">Episode title</span>
+                <input
+                  defaultValue={episode.title}
+                  onBlur={(e) => {
+                    const title = e.target.value.trim()
+                    if (title && title !== episode.title) void saveEpisode({ title })
+                  }}
+                  className="w-full rounded-lg border border-transparent bg-transparent px-1 text-xl font-bold text-[#F6FAFC] hover:border-[#4A5968] focus-visible:border-[#4A5968] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8DEBFF]"
+                />
+              </label>
               <div className="flex flex-wrap gap-2">
                 <select
+                  aria-label="Episode status"
                   value={episode.status}
                   onChange={(e) => changeStatus(e.target.value as EpisodeStatus)}
-                  className="rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
+                  className="min-h-[36px] rounded-lg border border-[#4A5968] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8DEBFF]"
                 >
                   {EPISODE_PIPELINE.map((status) => (
                     <option key={status} value={status}>{status}</option>
@@ -448,7 +475,7 @@ export function RecordingStudio({
                 </select>
                 <Link
                   href={`/admin/podcast/${episode.id}`}
-                  className="px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
+                  className="inline-flex min-h-[36px] items-center px-3 py-2 rounded-lg border border-[#4A5968] text-sm text-[#D5DEE6] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8DEBFF]"
                 >
                   Episode page
                 </Link>
@@ -726,7 +753,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-const input = 'w-full rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]'
+const input =
+  'w-full rounded-lg border border-[#4A5968] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8DEBFF]'
 
 function normalizeEpisode(raw: PodcastEpisode): PodcastEpisode {
   return {

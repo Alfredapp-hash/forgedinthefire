@@ -26,6 +26,7 @@ import type {
 import { DISTRIBUTION_LABELS, EPISODE_PIPELINE } from '@/lib/studio/types'
 import { APPLE_CATEGORIES, PODCAST } from '@/lib/podcast-meta'
 import { RecordingStudio } from './RecordingStudio'
+import { confirmLeaveStudio } from '@/components/podcast/studio/leave-guard'
 import { LiveControlRoom } from '@/components/podcast/live-control-room'
 import { setAdminPath } from '@/lib/fbot/path-signal'
 
@@ -64,6 +65,10 @@ export function PodcastDesk() {
   const [tab, setTab] = useState<DeskTab>('studio')
   const [liveVisited, setLiveVisited] = useState(false)
   if (tab === 'live' && !liveVisited) setLiveVisited(true)
+  // The production room holds live mics, a guest call and in-progress takes: once opened it stays
+  // mounted (hidden) when another tab is shown, like the live room — a tab switch never drops a take.
+  const [studioVisited, setStudioVisited] = useState(false)
+  if (tab === 'studio' && !studioVisited) setStudioVisited(true)
   const [studioEpisodeId, setStudioEpisodeId] = useState('')
   const [episodes, setEpisodes] = useState<PodcastEpisode[]>([])
   const [topics, setTopics] = useState<ContentTopic[]>([])
@@ -143,7 +148,10 @@ export function PodcastDesk() {
     setAdminPath('/admin/podcast?tab=studio')
   }, [])
 
-  function openStudio(episodeId?: string) {
+  function openStudio(requestedId?: string) {
+    // Opening a different episode remounts the editor — confirm while recording / unsaved.
+    const episodeId =
+      requestedId && requestedId !== studioEpisodeId && !confirmLeaveStudio() ? undefined : requestedId
     const id = episodeId || studioEpisodeId
     if (episodeId) setStudioEpisodeId(episodeId)
     setTab('studio')
@@ -348,14 +356,16 @@ export function PodcastDesk() {
       {error && <p className="text-sm text-red-300">{error}</p>}
       {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
 
-      {tab === 'studio' && (
-        <RecordingStudio
-          episodes={episodes}
-          topics={topics}
-          selectedId={studioEpisodeId}
-          onSelect={selectStudioEpisode}
-          onEpisodesChange={setEpisodes}
-        />
+      {(tab === 'studio' || studioVisited) && (
+        <div hidden={tab !== 'studio'}>
+          <RecordingStudio
+            episodes={episodes}
+            topics={topics}
+            selectedId={studioEpisodeId}
+            onSelect={selectStudioEpisode}
+            onEpisodesChange={setEpisodes}
+          />
+        </div>
       )}
 
       {/* Stay mounted after first visit so switching tabs never drops a live stream. */}
