@@ -204,4 +204,6 @@ function sanitizeNotes(html: string) {
     .replace(/<(?!\/?(p|br|a|ul|ol|li|strong|em|b|i|h[2-4])\b)[^>]*>/gi, '')
     .replace(/\s(on\w+|style)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
     .replace(/href\s*=\s*("|')\s*(?!https?:|mailto:|\/)[^"']*\1/gi, 'href="#"')
+    // Unquoted href (href=javascript:…) slips past the quoted form above.
+    .replace(/href\s*=\s*(?!["'])(?!https?:|mailto:|\/)[^\s>]*/gi, 'href="#"')
 }

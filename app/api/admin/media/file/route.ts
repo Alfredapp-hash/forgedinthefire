@@ -31,7 +31,12 @@ export async function GET(request: Request) {
         .storage.from(GUEST_TAKE_BUCKET)
         .createSignedUrl(privatePath, 60)
       if (error || !data?.signedUrl) return NextResponse.json({ error: 'Guest take not found' }, { status: 404 })
-      fetchUrl = data.signedUrl
+      // Camera backups run to 400MB: far past what a Netlify function can stream back.
+      // Hand the browser the 60 s single-object signed URL (Storage serves CORS) instead of proxying.
+      return new NextResponse(null, {
+        status: 302,
+        headers: { Location: data.signedUrl, 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' },
+      })
     } else {
       let parsed: URL
       try {

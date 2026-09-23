@@ -15,7 +15,11 @@ export async function withStudioAdmin() {
 
 export function studioError(err: unknown) {
   const raw = err instanceof Error ? err.message : 'Studio request failed'
-  if (raw.toLowerCase().includes('admin') || raw.toLowerCase().includes('forbidden')) {
+  // requireAdmin() throws 'Not authenticated' / 'Insufficient privileges' / 'Not authorized as admin'.
+  if (raw === 'Not authenticated') {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+  }
+  if (/admin|forbidden|privileges/i.test(raw)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
   if (raw.toLowerCase().includes('not configured')) {
