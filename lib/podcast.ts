@@ -80,6 +80,22 @@ function sortByRelease(list: PodcastEpisode[]) {
   return list.sort((a, b) => Date.parse(b.published_at || b.created_at) - Date.parse(a.published_at || a.created_at))
 }
 
+/**
+ * Columns the public lists (site, RSS, embed) need — every PodcastEpisode field, but not the heavy
+ * editor-only columns (transcript_words word timings, post_edit_snapshot, safety bookkeeping).
+ */
+export const EPISODE_LIST_COLUMNS = [
+  'id', 'guid', 'topic_id', 'show_id', 'title', 'slug', 'summary', 'show_notes', 'guest_name', 'guest_bio',
+  'audio_url', 'audio_mime', 'duration_seconds', 'file_size', 'cover_url', 'transcript', 'season',
+  'episode_number', 'episode_type', 'visibility', 'explicit', 'status', 'scheduled_for', 'published_at',
+  'chapters', 'keywords', 'ad_markers', 'loudness_lufs', 'loudness_peak_db', 'audio_channels', 'created_by',
+  'created_at', 'updated_at',
+].join(', ')
+
+function isUndefinedColumn(err: { code?: string; message?: string }) {
+  return err.code === '42703' || err.code === 'PGRST204' || /column .* does not exist/i.test(err.message || '')
+}
+
 export async function getPublishedEpisodes(opts?: {
   includePrivate?: boolean
   includeUnlisted?: boolean
@@ -95,20 +111,24 @@ export async function getPublishedEpisodes(opts?: {
       ? ['public', 'unlisted']
       : ['public']
 
-  const { data, error } = await supabase
-    .from('podcast_episodes')
-    .select('*')
-    .eq('status', 'published')
-    .not('audio_url', 'is', null)
-    .in('visibility', visibility)
-    .order('published_at', { ascending: false })
+  const query = (columns: string) =>
+    supabase
+      .from('podcast_episodes')
+      .select(columns)
+      .eq('status', 'published')
+      .not('audio_url', 'is', null)
+      .in('visibility', visibility)
+      .order('published_at', { ascending: false })
+  let { data, error } = await query(EPISODE_LIST_COLUMNS)
+  // A database that predates one of the listed columns: fall back rather than empty the feed.
+  if (error && isUndefinedColumn(error)) ({ data, error } = await query('*'))
 
   if (error) {
     console.error('Podcast list error:', error.message)
     return []
   }
   const now = Date.now()
-  return sortByRelease(((data ?? []) as PodcastEpisode[]).filter((ep) => isReleased(ep, now)))
+  return sortByRelease(((data ?? []) as unknown as PodcastEpisode[]).filter((ep) => isReleased(ep, now)))
 }
 
 export type Subscriber = { id: string; show_id: string; email: string; token: string }
