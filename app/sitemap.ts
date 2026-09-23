@@ -1,4 +1,6 @@
 import { MetadataRoute } from 'next';
+import { GUIDE_SECTIONS } from '@/lib/advocate-resource-guide';
+import { educationGuides } from '@/lib/education-resources';
 
 /**
  * SITEMAP STRATEGY FOR FORGEDINTHEFIREOHIO.ORG
@@ -96,10 +98,28 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
     {
       url: `${baseUrl}/resources`,
-      lastModified: staticLastmod,
+      lastModified: '2026-09-23',
       changeFrequency: 'monthly',
       priority: 0.8,
     },
+    {
+      url: `${baseUrl}/resources/advocate`,
+      lastModified: '2026-09-23',
+      changeFrequency: 'monthly',
+      priority: 0.7,
+    },
+    ...GUIDE_SECTIONS.map((section) => ({
+      url: `${baseUrl}/resources/advocate/${section.id}`,
+      lastModified: '2026-09-23' as const,
+      changeFrequency: 'monthly' as const,
+      priority: 0.6,
+    })),
+    ...educationGuides().map((guide) => ({
+      url: `${baseUrl}/resources/library/${guide.slug}`,
+      lastModified: staticLastmod,
+      changeFrequency: 'yearly' as const,
+      priority: 0.5,
+    })),
     {
       url: `${baseUrl}/donate`,
       lastModified: staticLastmod,

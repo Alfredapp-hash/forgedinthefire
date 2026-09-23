@@ -1,23 +1,22 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Phone, Search, ExternalLink, AlertTriangle } from 'lucide-react';
+import Link from 'next/link';
+import { Phone, Search, ExternalLink, AlertTriangle, Download } from 'lucide-react';
 import {
   GUIDE_GROUPS,
   GUIDE_META,
   GUIDE_SECTIONS,
   URGENT_CONTACTS,
   type GuideEntry,
-  type GuideFlag,
   type GuideSection,
 } from '@/lib/advocate-resource-guide';
-
-const FLAG_LABEL: Record<GuideFlag, string> = {
-  waitlist: 'Waiting list',
-  closed: 'Not accepting applications',
-  future: 'Not open yet',
-  confirm: 'Confirm before referral',
-};
+import {
+  FLAG_LABEL,
+  FULL_GUIDE_PDF,
+  guidePagePath,
+  guidePdfPath,
+} from '@/lib/advocate-guide-routes';
 
 function digitsOnly(value: string) {
   return value.replace(/\D/g, '');
@@ -95,7 +94,23 @@ export function AdvocateResourceDirectory() {
           {GUIDE_META.title}
         </h2>
         <p className="mb-4 text-lg leading-relaxed text-cream-300/80">{GUIDE_META.purpose}</p>
-        <p className="mb-8 text-sm leading-relaxed text-silver-label">{GUIDE_META.researchNote}</p>
+        <p className="mb-6 text-sm leading-relaxed text-silver-label">{GUIDE_META.researchNote}</p>
+        <div className="mb-8 flex flex-wrap gap-3">
+          <Link
+            href="/resources/advocate"
+            className="inline-flex items-center rounded-lg border border-ember bg-ember px-4 py-2 text-sm font-semibold text-[#061016]"
+          >
+            View the full guide
+          </Link>
+          <a
+            href={FULL_GUIDE_PDF}
+            download="cuyahoga-county-adult-advocate-resource-guide.pdf"
+            className="inline-flex items-center gap-2 rounded-lg border border-ember/40 px-4 py-2 text-sm font-semibold text-cream-100"
+          >
+            <Download className="h-4 w-4" aria-hidden />
+            Download full PDF
+          </a>
+        </div>
 
         <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {URGENT_CONTACTS.map((contact) => (
@@ -185,9 +200,22 @@ export function AdvocateResourceDirectory() {
           <div className="space-y-12">
             {visible.map(({ section, entries }) => (
               <section key={section.id} id={section.id} className="scroll-mt-64">
-                <h3 className="mb-2 font-serif text-2xl font-semibold text-cream-100">
-                  {section.title}
-                </h3>
+                <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
+                  <h3 className="font-serif text-2xl font-semibold text-cream-100">{section.title}</h3>
+                  <div className="flex gap-4 text-sm">
+                    <Link href={guidePagePath(section.id)} className="text-ember hover:underline">
+                      View page
+                    </Link>
+                    <a
+                      href={guidePdfPath(section.id)}
+                      download={`${section.id}.pdf`}
+                      className="inline-flex items-center gap-1 text-ember hover:underline"
+                    >
+                      <Download className="h-3.5 w-3.5" aria-hidden />
+                      Download PDF
+                    </a>
+                  </div>
+                </div>
                 {section.intro ? (
                   <p className="mb-4 leading-relaxed text-cream-300/80">{section.intro}</p>
                 ) : null}
