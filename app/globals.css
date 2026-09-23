@@ -218,6 +218,42 @@
   }
 }
 
+/* Admin portal form fields: light text must sit on dark surfaces.
+   Bare <input>/<textarea> otherwise inherit browser white backgrounds. */
+.admin-portal {
+  color-scheme: dark;
+}
+
+.admin-portal input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='hidden']):not([type='range']):not([type='color']),
+.admin-portal textarea,
+.admin-portal select {
+  background-color: #05070a;
+  color: #f6fafc;
+  border-color: #27313b;
+  caret-color: #8debff;
+}
+
+.admin-portal input::placeholder,
+.admin-portal textarea::placeholder {
+  color: #a9b8c6;
+  opacity: 1;
+}
+
+.admin-portal select option {
+  background-color: #05070a;
+  color: #f6fafc;
+}
+
+.admin-portal input:-webkit-autofill,
+.admin-portal input:-webkit-autofill:hover,
+.admin-portal input:-webkit-autofill:focus,
+.admin-portal textarea:-webkit-autofill {
+  -webkit-text-fill-color: #f6fafc;
+  caret-color: #8debff;
+  box-shadow: 0 0 0 1000px #05070a inset;
+  transition: background-color 99999s ease-out;
+}
+
 @layer utilities {
   /* Typography utilities */
   .text-balance {

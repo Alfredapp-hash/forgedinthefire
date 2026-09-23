@@ -4,35 +4,33 @@ import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import { 
   Plus, 
-  Search, 
   Edit2, 
   Eye, 
-  Trash2,
   FileText,
   CheckCircle,
   Clock,
   Archive
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-
-const TEAL = '#53D6FF'
-const GOLD = '#8DEBFF'
+import { ContentDeleteButton } from './ContentDeleteButton'
 
 function StatusBadge({ status }: { status: string }) {
-  const styles = {
+  const styles: Record<string, string> = {
     published: 'bg-[#8DEBFF]/15 text-[#8DEBFF] border-[#8DEBFF]/30',
     draft: 'bg-[#53D6FF]/10 text-[#8DEBFF] border-[#53D6FF]/30',
+    scheduled: 'bg-blue-100 text-blue-700 border-blue-200',
     archived: 'bg-gray-100 text-gray-600 border-gray-200',
   }
-  const icons = {
+  const icons: Record<string, typeof CheckCircle> = {
     published: CheckCircle,
     draft: Clock,
+    scheduled: Clock,
     archived: Archive,
   }
-  const Icon = icons[status as keyof typeof icons] || Clock
+  const Icon = icons[status] || Clock
   
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${styles[status as keyof typeof styles] || styles.draft}`}>
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${styles[status] || styles.draft}`}>
       <Icon size={12} />
       {status.charAt(0).toUpperCase() + status.slice(1)}
     </span>
@@ -49,19 +47,21 @@ function TypeBadge({ type }: { type: string }) {
   }
   return (
     <span className="text-xs text-[#A9B8C6] bg-[#1A232C]/10 px-2 py-1 rounded">
-      {labels[type] || type}
+      {labels[type] || type || '—'}
     </span>
   )
 }
 
+type ContentSearchParams = { filter?: string; type?: string }
+
 export default async function ContentPage({ 
-  searchParams 
+  searchParams,
 }: { 
-  searchParams: { filter?: string; type?: string } 
+  searchParams: Promise<ContentSearchParams> | ContentSearchParams
 }) {
+  const params = await Promise.resolve(searchParams)
   const supabase = await createClient()
   
-  // Handle missing Supabase configuration
   if (!supabase) {
     return (
       <div className="max-w-6xl mx-auto p-8">
@@ -80,24 +80,27 @@ export default async function ContentPage({
     .select('*')
     .order('updated_at', { ascending: false })
   
-  if (searchParams.filter && searchParams.filter !== 'all') {
-    query = query.eq('status', searchParams.filter)
+  if (params.filter && params.filter !== 'all') {
+    query = query.eq('status', params.filter)
   }
-  if (searchParams.type && searchParams.type !== 'all') {
-    query = query.eq('type', searchParams.type)
+  if (params.type && params.type !== 'all') {
+    query = query.eq('type', params.type)
   }
   
-  const { data: items } = await query
+  const { data: items, error } = await query
+  if (error) {
+    console.error('Admin content list failed:', error.message)
+    throw new Error(`Could not load content: ${error.message}`)
+  }
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[#F6FAFC]">Content Manager</h1>
           <p className="text-sm text-[#A9B8C6]">Manage blog posts, stories, and site content.</p>
         </div>
-        <Button asChild >
+        <Button asChild>
           <Link href="/admin/content/new">
             <Plus className="w-4 h-4 mr-2" />
             New Content
@@ -105,17 +108,16 @@ export default async function ContentPage({
         </Button>
       </div>
 
-      {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 bg-[#151B22] rounded-xl p-4 border border-[#27313B]">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-[#A9B8C6]">Status:</span>
           <div className="flex gap-1">
-            {['all', 'published', 'draft', 'archived'].map((filter) => (
+            {['all', 'published', 'draft', 'scheduled', 'archived'].map((filter) => (
               <Link
                 key={filter}
-                href={`/admin/content?filter=${filter}${searchParams.type ? `&type=${searchParams.type}` : ''}`}
+                href={`/admin/content?filter=${filter}${params.type ? `&type=${params.type}` : ''}`}
                 className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
-                  searchParams.filter === filter || (!searchParams.filter && filter === 'all')
+                  params.filter === filter || (!params.filter && filter === 'all')
                     ? 'bg-[#53D6FF] text-[#061016]'
                     : 'text-[#A9B8C6] hover:bg-[#1A232C]/10'
                 }`}
@@ -132,9 +134,9 @@ export default async function ContentPage({
             {['all', 'blog', 'success_story', 'news', 'resource'].map((type) => (
               <Link
                 key={type}
-                href={`/admin/content?${searchParams.filter ? `filter=${searchParams.filter}&` : ''}type=${type}`}
+                href={`/admin/content?${params.filter ? `filter=${params.filter}&` : ''}type=${type}`}
                 className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
-                  searchParams.type === type || (!searchParams.type && type === 'all')
+                  params.type === type || (!params.type && type === 'all')
                     ? 'bg-[#53D6FF] text-[#061016]'
                     : 'text-[#A9B8C6] hover:bg-[#1A232C]/10'
                 }`}
@@ -146,7 +148,6 @@ export default async function ContentPage({
         </div>
       </div>
 
-      {/* Content List */}
       <div className="bg-[#151B22] rounded-2xl border border-[#27313B] overflow-hidden">
         {items && items.length > 0 ? (
           <table className="w-full">
@@ -180,7 +181,7 @@ export default async function ContentPage({
                     <StatusBadge status={item.status} />
                   </td>
                   <td className="px-6 py-4 text-sm text-[#A9B8C6]">
-                    {new Date(item.updated_at).toLocaleDateString()}
+                    {item.updated_at ? new Date(item.updated_at).toLocaleDateString() : '—'}
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center justify-end gap-2">
@@ -201,16 +202,7 @@ export default async function ContentPage({
                           <Eye className="w-4 h-4" />
                         </Link>
                       )}
-                      <form action={`/api/admin/content/${item.id}/delete`} method="POST" className="inline">
-                        <button
-                          type="submit"
-                          className="p-2 rounded-lg hover:bg-[#8DEBFF]/15 text-[#A9B8C6] hover:text-[#8DEBFF] transition-colors"
-                          title="Delete"
-                          onClick={(e) => confirm('Are you sure you want to delete this content?') ? null : e.preventDefault()}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </form>
+                      <ContentDeleteButton action={`/api/admin/content/${item.id}/delete`} />
                     </div>
                   </td>
                 </tr>
@@ -224,7 +216,7 @@ export default async function ContentPage({
             </div>
             <h3 className="text-lg font-medium text-[#F6FAFC] mb-1">No content yet</h3>
             <p className="text-sm text-[#A9B8C6] mb-4">Get started by creating your first piece of content.</p>
-            <Button asChild >
+            <Button asChild>
               <Link href="/admin/content/new">
                 <Plus className="w-4 h-4 mr-2" />
                 Create Content

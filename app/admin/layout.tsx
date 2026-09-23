@@ -74,7 +74,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   }
 
   return (
-    <div className="flex min-h-screen bg-[#05070A]">
+    <div className="admin-portal flex min-h-screen bg-[#05070A]" style={{ colorScheme: 'dark' }}>
       {/* Sidebar */}
       <aside className="w-64 shrink-0 text-white flex flex-col bg-[#05070A] border-r border-[#27313B]">
         <div className="px-5 py-5 border-b border-[#27313B]">
