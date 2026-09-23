@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'crypto'
+import { createHash, randomBytes, timingSafeEqual } from 'crypto'
 import type { GuestInviteAdmin, GuestInvitePublic, GuestInviteRow } from '@/lib/podcast/guest-types'
 
 export type {
@@ -9,11 +9,38 @@ export type {
   GuestSignal,
 } from '@/lib/podcast/guest-types'
 
+/** Raw tokens are 24 random bytes as hex (192 bits). Anything else is rejected before a DB hit. */
+export const GUEST_TOKEN_PATTERN = /^[a-f0-9]{48}$/
+
+/** Private bucket for guest backup takes (created in 20260923_podcast_security.sql). */
+export const GUEST_TAKE_BUCKET = 'podcast-guest-takes'
+const TAKE_REF_PREFIX = `private://${GUEST_TAKE_BUCKET}/`
+
+export function isGuestTokenShape(raw: string) {
+  return GUEST_TOKEN_PATTERN.test(String(raw || '').trim())
+}
+
 export function hashGuestToken(raw: string) {
   return createHash('sha256').update(raw.trim(), 'utf8').digest('hex')
 }
 
+/** Constant-time compare of two hex digests of the same length. */
+export function hashesMatch(a: string | null | undefined, b: string | null | undefined) {
+  if (!a || !b || a.length !== b.length) return false
+  try {
+    return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'))
+  } catch {
+    return false
+  }
+}
+
 export function mintGuestToken() {
+  const raw = randomBytes(24).toString('hex')
+  return { raw, hash: hashGuestToken(raw) }
+}
+
+/** One device per invite: the booth gets this after Join and sends it on every call. */
+export function mintGuestSession() {
   const raw = randomBytes(24).toString('hex')
   return { raw, hash: hashGuestToken(raw) }
 }
@@ -28,19 +55,36 @@ export function inviteIsLive(row: Pick<GuestInviteRow, 'expires_at' | 'revoked_a
   return new Date(row.expires_at).getTime() > Date.now()
 }
 
+/** Stored in take_url / camera_url for private-bucket objects. Not a fetchable URL. */
+export function guestTakeRef(path: string) {
+  return `${TAKE_REF_PREFIX}${path}`
+}
+
+/** Returns the object path for a private guest take ref, or null for anything else. */
+export function parseGuestTakeRef(ref: string | null | undefined) {
+  if (!ref || !ref.startsWith(TAKE_REF_PREFIX)) return null
+  const path = ref.slice(TAKE_REF_PREFIX.length)
+  if (!/^guest-takes\/[0-9a-f-]{36}\/(camera-)?\d{10,16}\.(webm|m4a|mp4|ogg)$/.test(path)) return null
+  return path
+}
+
+/**
+ * What the guest booth sees. No host label, no take URLs, no admin metadata:
+ * the booth only needs the episode title, its own name, expiry and state.
+ */
 export function publicInvite(row: GuestInviteRow, episodeTitle: string): GuestInvitePublic {
   return {
     id: row.id,
     episodeTitle,
-    label: row.label,
+    label: null,
     guestName: row.guest_name,
     expiresAt: row.expires_at,
     state: row.connection_state,
     recording: row.connection_state === 'recording',
     takeReady: Boolean(row.take_url),
-    takeUrl: row.take_url,
+    takeUrl: null,
     cameraReady: Boolean(row.camera_url),
-    cameraUrl: row.camera_url,
+    cameraUrl: null,
   }
 }
 
@@ -54,6 +98,10 @@ export function adminInvite(
   const revoked = Boolean(row.revoked_at)
   return {
     ...publicInvite(row, episodeTitle),
+    label: row.label,
+    // Private refs are resolved by the admin-only /api/admin/media/file proxy.
+    takeUrl: row.take_url,
+    cameraUrl: row.camera_url,
     lastSeenAt: row.last_seen_at,
     revoked,
     expired,

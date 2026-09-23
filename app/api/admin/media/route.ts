@@ -1,5 +1,7 @@
 import { createAdminClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { requireAdmin } from '@/lib/admin/auth'
+import { MEDIA_MAX_BYTES, baseMediaMime, mediaExtension, mediaObjectPath } from '@/lib/admin/media-policy'
 import { NextResponse } from 'next/server'
 
 export async function GET() {
@@ -32,19 +34,22 @@ export async function POST(request: Request) {
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 })
     }
-    const allowed = /^(image|audio|video)\//.test(file.type) || file.type === 'application/pdf'
-    if (!allowed) {
-      return NextResponse.json({ error: 'Upload an image, audio, video, or PDF file' }, { status: 400 })
+    const ext = mediaExtension(file.type, file.name)
+    if (!ext) {
+      return NextResponse.json({ error: 'Upload an image (JPG, PNG, WebP, GIF), audio, video, or PDF file' }, { status: 400 })
+    }
+    if (file.size > MEDIA_MAX_BYTES) {
+      return NextResponse.json({ error: 'File too large (max 200MB)' }, { status: 413 })
     }
 
-    const admin = await createAdminClient()
-    const ext = file.name.split('.').pop() ?? 'jpg'
-    const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+    const admin = createServiceClient()
+    const path = mediaObjectPath(ext)
+    const contentType = baseMediaMime(file.type)
 
     const buffer = Buffer.from(await file.arrayBuffer())
     const { error: uploadError } = await admin.storage
       .from('media')
-      .upload(path, buffer, { contentType: file.type, upsert: false })
+      .upload(path, buffer, { contentType, upsert: false })
 
     if (uploadError) {
       // Bucket may not exist — return data URL fallback for dev
@@ -62,10 +67,10 @@ export async function POST(request: Request) {
     const { data: asset, error: dbError } = await admin
       .from('media_assets')
       .insert({
-        filename: file.name,
+        filename: file.name.slice(0, 200),
         url,
-        alt,
-        mime_type: file.type,
+        alt: alt.slice(0, 500),
+        mime_type: contentType,
         size_bytes: file.size,
         uploaded_by: user.id,
       })

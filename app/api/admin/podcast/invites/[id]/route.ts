@@ -1,16 +1,21 @@
 import { NextResponse } from 'next/server'
-import { studioError, withStudioAdmin } from '@/lib/studio/api'
+import { requireAdmin } from '@/lib/admin/auth'
+import { studioError } from '@/lib/studio/api'
+import { createServiceClient } from '@/lib/supabase/service'
 import { adminInvite } from '@/lib/podcast/guest-invite'
 import { GUEST_STATES, type GuestInviteRow } from '@/lib/podcast/guest-types'
 
-export async function PATCH(
-  request: Request,
-  context: { params: Promise<{ id: string }> },
-) {
+export const dynamic = 'force-dynamic'
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const { supabase } = await withStudioAdmin()
+    await requireAdmin()
+    const supabase = createServiceClient()
     const { id } = await context.params
-    const body = (await request.json()) as {
+    if (!UUID.test(id)) return NextResponse.json({ error: 'Invite not found' }, { status: 404 })
+    const body = (await request.json().catch(() => ({}))) as {
       revoke?: boolean
       connection_state?: string
     }
@@ -29,12 +34,19 @@ export async function PATCH(
       .select('*')
       .single()
     if (error) throw error
+    if (body.revoke) {
+      // Revoked links keep no SDP/ICE (which carry IP candidates) around.
+      await supabase.from('podcast_guest_signals').delete().eq('invite_id', id)
+    }
     const { data: episode } = await supabase
       .from('podcast_episodes')
       .select('title')
       .eq('id', data.episode_id)
       .maybeSingle()
-    return NextResponse.json({ invite: adminInvite(data as GuestInviteRow, episode?.title || 'Episode') })
+    return NextResponse.json(
+      { invite: adminInvite(data as GuestInviteRow, episode?.title || 'Episode') },
+      { headers: { 'Cache-Control': 'no-store' } },
+    )
   } catch (err) {
     return studioError(err)
   }

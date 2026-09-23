@@ -2,7 +2,8 @@
  * Two-person guest path without a paid SFU.
  *
  * Live talk + admin punch use P2P WebRTC. ICE starts with public STUN.
- * TURN is optional via /api/studio/ice (TURN_URL, TURN_USERNAME, TURN_CREDENTIAL).
+ * TURN is optional via /api/studio/ice: TURN_URL + TURN_SECRET (short-lived REST
+ * credentials, preferred) or TURN_URL + TURN_USERNAME + TURN_CREDENTIAL (static).
  * Guest mic + optional camera arrive on the admin tab as one MediaStream.
  * Audio is recorded with startLaneCapture; inbound video is a parallel camera
  * file on the same punch clock. Do not mux video into the take AudioBuffer
@@ -24,7 +25,7 @@ export const STUN_SERVERS: RTCIceServer[] = [
 export const ICE_SERVERS = STUN_SERVERS
 
 export const ICE_FAILED_HINT =
-  'Peer failed. This booth is STUN-only until TURN_URL, TURN_USERNAME, and TURN_CREDENTIAL are set on Netlify. Stay on this tab for a local camera backup, or try a phone hotspot.'
+  'Peer failed. This booth is STUN-only until TURN_URL and TURN_SECRET (or TURN_USERNAME + TURN_CREDENTIAL) are set on Netlify. Stay on this tab for a local camera backup, or try a phone hotspot.'
 
 export function iceFailedHint(turnConfigured: boolean) {
   return turnConfigured
@@ -37,9 +38,17 @@ export type StudioIceConfig = {
   turnConfigured: boolean
 }
 
-export async function loadStudioIceServers(): Promise<StudioIceConfig> {
+/**
+ * Fetch ICE (STUN + short-lived TURN) from the server. The host is recognised by
+ * its admin session; the guest booth passes its invite token, which goes in a
+ * header so it never lands in a query string or access log.
+ */
+export async function loadStudioIceServers(guestToken?: string): Promise<StudioIceConfig> {
   try {
-    const res = await fetch('/api/studio/ice', { cache: 'no-store' })
+    const res = await fetch('/api/studio/ice', {
+      cache: 'no-store',
+      headers: guestToken ? { 'x-guest-token': guestToken } : undefined,
+    })
     if (!res.ok) throw new Error('ice')
     const data = (await res.json()) as StudioIceConfig
     if (Array.isArray(data.iceServers) && data.iceServers.length) return data
@@ -47,6 +56,45 @@ export async function loadStudioIceServers(): Promise<StudioIceConfig> {
     /* STUN-only until the route is up */
   }
   return { iceServers: STUN_SERVERS, turnConfigured: false }
+}
+
+/** Random id for one RTCPeerConnection lifetime; tags offers/answers/candidates. */
+export function newPeerGeneration() {
+  const bytes = new Uint8Array(9)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * ICE restart on the SAME peer (keeps DTLS, tracks and transceivers): new ICE
+ * credentials, fresh candidates, usually recovers a network change in 1-3 s.
+ * Only the offerer (the guest) calls this. Returns null if the peer cannot restart now.
+ */
+export async function makeRestartOffer(peer: RTCPeerConnection) {
+  if (peer.signalingState === 'closed') return null
+  if (peer.signalingState === 'have-local-offer') {
+    try {
+      await peer.setLocalDescription({ type: 'rollback' })
+    } catch {
+      return null
+    }
+  }
+  if (peer.signalingState !== 'stable') return null
+  try {
+    peer.restartIce?.()
+  } catch {
+    /* older Safari: iceRestart flag below still works */
+  }
+  const offer = await peer.createOffer({ iceRestart: true })
+  await peer.setLocalDescription(offer)
+  return peer.localDescription
+}
+
+/** Plain-language guest help when the connection cannot be made. */
+export function guestConnectionHelp(turnConfigured: boolean) {
+  return turnConfigured
+    ? 'We could not connect you to the host. This is usually the network, not you. Press "Try again". If it keeps happening, try another Wi-Fi network or your phone\'s hotspot.'
+    : 'We could not connect you to the host. Some work, school, or public Wi-Fi networks block calls like this. Press "Try again", or switch to another Wi-Fi network or your phone\'s hotspot.'
 }
 
 export function createStudioPeer(iceServers: RTCIceServer[] = STUN_SERVERS) {

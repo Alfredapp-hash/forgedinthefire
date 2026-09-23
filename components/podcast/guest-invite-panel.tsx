@@ -85,6 +85,8 @@ export function GuestInvitePanel({
   const [cueToGuest, setCueToGuest] = useState(false)
   const iceCfgRef = useRef<StudioIceConfig | null>(null)
   const peerRef = useRef<RTCPeerConnection | null>(null)
+  /** Generation tag of the guest peer we are answering; drops stale answers/candidates. */
+  const peerGenRef = useRef<string | null>(null)
   const afterRef = useRef(0)
   const hostRef = useRef<MediaStream | null>(null)
   const talkbackRef = useRef(false)
@@ -145,8 +147,14 @@ export function GuestInvitePanel({
         const data = await pullAdminSignals(liveId, afterRef.current)
         if (cancelled) return
         setInvites((prev) => prev.map((i) => (i.id === data.invite.id ? { ...i, ...data.invite } : i)))
-        for (const signal of data.signals) {
+        // Only the newest fresh offer in a batch matters (e.g. after the host tab reloads).
+        let lastOffer = -1
+        data.signals.forEach((signal, index) => {
+          if (signal.kind === 'offer' && !signal.payload.restart) lastOffer = index
+        })
+        for (const [index, signal] of data.signals.entries()) {
           afterRef.current = Math.max(afterRef.current, signal.id)
+          if (signal.kind === 'offer' && !signal.payload.restart && index < lastOffer) continue
           await handleSignal(liveId, signal.kind, signal.payload)
         }
       } catch {
@@ -266,13 +274,36 @@ export function GuestInvitePanel({
   }, [onRemoteStream, onRemoteVideo])
 
   async function handleSignal(inviteId: string, kind: string, payload: Record<string, unknown>) {
+    const gen = typeof payload.gen === 'string' ? payload.gen : null
     if (kind === 'offer' && payload.sdp) {
+      const offer: RTCSessionDescriptionInit = { type: 'offer', sdp: String(payload.sdp) }
+      const current = peerRef.current
+      // ICE restart from the same guest peer: renegotiate in place (keeps DTLS + tracks).
+      if (
+        payload.restart &&
+        current &&
+        gen &&
+        gen === peerGenRef.current &&
+        current.signalingState === 'stable' &&
+        current.connectionState !== 'closed'
+      ) {
+        try {
+          const desc = await answerOffer(current, offer)
+          if (desc) await pushAdminSignal(inviteId, 'answer', { type: desc.type, sdp: desc.sdp, gen })
+          return
+        } catch {
+          /* fall through to a fresh peer */
+        }
+      }
       const cfg = await readyIce()
       resetPeer(inviteId, cfg.iceServers)
+      peerGenRef.current = gen
       const peer = peerRef.current
       if (!peer) return
-      const desc = await answerOffer(peer, payload as unknown as RTCSessionDescriptionInit)
-      if (desc) await pushAdminSignal(inviteId, 'answer', { type: desc.type, sdp: desc.sdp })
+      const desc = await answerOffer(peer, offer)
+      if (desc) {
+        await pushAdminSignal(inviteId, 'answer', gen ? { type: desc.type, sdp: desc.sdp, gen } : { type: desc.type, sdp: desc.sdp })
+      }
       pushHeadphonesToPeer()
       void pushAdminSignal(inviteId, 'tally', { phase: tallyRef.current }).catch(() => {})
       if (talkbackRef.current) void pushAdminSignal(inviteId, 'talkback', { on: true }).catch(() => {})
@@ -285,6 +316,7 @@ export function GuestInvitePanel({
     }
     if (kind === 'ice') {
       const peer = peerRef.current
+      if (gen && peerGenRef.current && gen !== peerGenRef.current) return
       if (peer) await addIce(peer, (payload.candidate as RTCIceCandidateInit) || null)
       return
     }
@@ -331,8 +363,13 @@ export function GuestInvitePanel({
 
   function wirePeer(inviteId: string, peer: RTCPeerConnection) {
     peer.onicecandidate = (event) => {
-      if (event.candidate) {
-        void pushAdminSignal(inviteId, 'ice', { candidate: event.candidate.toJSON() })
+      if (event.candidate && peerRef.current === peer) {
+        const gen = peerGenRef.current
+        void pushAdminSignal(
+          inviteId,
+          'ice',
+          gen ? { candidate: event.candidate.toJSON(), gen } : { candidate: event.candidate.toJSON() },
+        ).catch(() => {})
       }
     }
     const pushRemote = () => {
@@ -400,7 +437,6 @@ export function GuestInvitePanel({
         talkbackMicRef.current = await openInputStream(undefined, false)
       }
       if (!on) releaseTalkbackMic()
-      const peer = peerRef.current
       talkbackRef.current = on
       setTalkback(on)
       pushHeadphonesToPeer()
@@ -655,7 +691,13 @@ export function GuestInvitePanel({
         </div>
       )}
       {freshUrl && (
-        <p className="text-[11px] font-mono text-[#8DEBFF] break-all">{freshUrl}</p>
+        <div className="space-y-1">
+          <p className="text-[11px] font-mono text-[#8DEBFF] break-all">{freshUrl}</p>
+          <p className="text-[11px] text-[#7C8B97]">
+            Private link: send it only to your guest, by a channel they chose. It is shown once — it cannot be
+            recovered later (only a hash is stored). Revoke it if it goes to the wrong person.
+          </p>
+        </div>
       )}
       <p className="text-[11px] text-[#7C8B97]">
         Talkback is your mic in their phones. Cue to guest sends the live mix (other lanes, beds,
@@ -664,7 +706,7 @@ export function GuestInvitePanel({
         Record, punch, FX, mix, and export.{' '}
         {turnConfigured
           ? 'TURN is on for this site.'
-          : 'ICE is STUN-only until TURN_URL, TURN_USERNAME, and TURN_CREDENTIAL are set on Netlify.'}{' '}
+          : 'ICE is STUN-only until TURN_URL + TURN_SECRET (or TURN_USERNAME + TURN_CREDENTIAL) are set on Netlify.'}{' '}
         Retry uses the same invite — no new token. If the peer fails, their booth can still upload a
         camera file.
       </p>

@@ -37,6 +37,10 @@ export type GuestHeadphoneMix = {
   setCueVolume: (gain: number) => void
   talkPeak: () => number
   stop: () => void
+  /** iOS/Safari: resume audio from inside a tap if the context was suspended. */
+  resume?: () => Promise<void>
+  /** False while the browser is still blocking sound (needs a tap). */
+  running?: () => boolean
 }
 
 /** Mix talkback + cue in the booth. Talkback ducks cue so the host still cuts through. */
@@ -104,6 +108,16 @@ export function createGuestHeadphoneMix(): GuestHeadphoneMix {
     },
     talkPeak() {
       return lastPeak
+    },
+    async resume() {
+      try {
+        await ctx.resume()
+      } catch {
+        /* still blocked; caller shows the tap prompt */
+      }
+    },
+    running() {
+      return ctx.state === 'running'
     },
     stop() {
       cancelAnimationFrame(raf)
