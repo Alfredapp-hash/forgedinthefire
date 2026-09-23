@@ -60,7 +60,9 @@ export function trimCameraClip(
       const src = cameraSourceStart(c)
       const fileDur = c.sourceDuration || src + c.duration
       if (edge === 'in') {
-        const t = Math.max(c.offset, Math.min(sessionTime, cameraClipEnd(c) - MIN_CLIP))
+        // Clamp to the file, not the current in-point, so a trimmed head can be dragged back.
+        const earliest = Math.max(0, c.offset - src)
+        const t = Math.max(earliest, Math.min(sessionTime, cameraClipEnd(c) - MIN_CLIP))
         const delta = t - c.offset
         const sourceStart = Math.max(0, src + delta)
         const duration = Math.min(fileDur - sourceStart, c.duration - delta)

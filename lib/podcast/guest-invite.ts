@@ -27,8 +27,13 @@ export function hashGuestToken(raw: string) {
 }
 
 /** Constant-time compare of two hex digests of the same length. */
+const SHA256_HEX = /^[0-9a-f]{64}$/i
+
 export function hashesMatch(a: string | null | undefined, b: string | null | undefined) {
   if (!a || !b || a.length !== b.length) return false
+  // Buffer.from(x, 'hex') silently drops non-hex input, so junk of equal length would compare as
+  // two empty buffers. Accept only full SHA-256 hex digests.
+  if (!SHA256_HEX.test(a) || !SHA256_HEX.test(b)) return false
   try {
     return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'))
   } catch {

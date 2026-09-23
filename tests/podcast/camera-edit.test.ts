@@ -45,6 +45,13 @@ describe('trim / slip', () => {
     expect(spans(trimCameraClip([c], c.id, 'out', 20))).toEqual([[0, 10, 0]])
   })
 
+  it('a trimmed in-point drags back left, clamped to the start of the file', () => {
+    const c = cam({ offset: 0, duration: 10, sourceDuration: 10 })
+    const trimmed = trimCameraClip([c], c.id, 'in', 4)
+    expect(spans(trimCameraClip(trimmed, c.id, 'in', 1))).toEqual([[1, 9, 1]])
+    expect(spans(trimCameraClip(trimmed, c.id, 'in', -5))).toEqual([[0, 10, 0]])
+  })
+
   it('slip moves media under a fixed seat, bounded by the file', () => {
     const c = cam({ offset: 5, duration: 4, sourceStart: 2, trimStart: 2, sourceDuration: 10 })
     expect(spans(slipCameraClip([c], c.id, 3))).toEqual([[5, 4, 5]])

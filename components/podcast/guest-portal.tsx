@@ -1031,8 +1031,10 @@ export function GuestPortal({
       setCamOn(false)
       setMicReady(false)
     }
-    phonesRef.current?.stop()
+    // stop() is idempotent; the booth effect's cleanup may run after this and find nothing to do.
+    const phones = phonesRef.current
     phonesRef.current = null
+    phones?.stop()
     if (hostAudioRef.current) hostAudioRef.current.srcObject = null
   }
 

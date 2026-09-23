@@ -1,6 +1,6 @@
 /** Linked A/V on one session clock. Unlink is the default edit; badge if they drift. */
 
-import { isLinkedPicture, type CameraClip } from '@/lib/podcast/camera'
+import { cameraSourceStart, isLinkedPicture, type CameraClip } from '@/lib/podcast/camera'
 import { clipsOf, isVoiceRole, type SessionPerson, type StudioTrack, type TrackClip } from '@/lib/podcast/multitrack'
 
 /** ~1 frame at 24fps — Shotcut-style sync slop, not silent drift. */
@@ -27,20 +27,26 @@ export type AvDrift = {
   cameraOffset: number
 }
 
-/** Largest in-point gap between overlapping listen-audio and camera clips. */
+/**
+ * Largest source-alignment gap between listen audio and linked picture of one person.
+ *
+ * Pairs overlapping clips only (split halves of one punch must not be compared across the cut);
+ * a camera clip with no overlapping audio falls back to its punch's syncGroup mates so a clip
+ * dragged far away still reads as out of sync. Drift compares where each clip's source starts on
+ * the session clock (offset − sourceStart), so trims and splits — which move in-points but not
+ * the media — never read as drift.
+ */
 export function avDriftForPerson(tracks: StudioTrack[], cameras: CameraClip[], personId: string): AvDrift | null {
   const audio = listenAudioClips(tracks, personId)
   const pics = cameras.filter((c) => c.personId === personId && !c.muted && isLinkedPicture(c))
   if (audio.length === 0 || pics.length === 0) return null
   let worst: AvDrift | null = null
   for (const cam of pics) {
-    const mates = audio.filter(
-      (a) =>
-        (cam.syncGroup && a.syncGroup === cam.syncGroup) ||
-        overlaps(a.offset, a.duration, cam.offset, cam.duration),
-    )
+    let mates = audio.filter((a) => overlaps(a.offset, a.duration, cam.offset, cam.duration))
+    if (mates.length === 0 && cam.syncGroup) mates = audio.filter((a) => a.syncGroup === cam.syncGroup)
+    const camOrigin = cam.offset - cameraSourceStart(cam)
     for (const a of mates) {
-      const seconds = Math.abs(a.offset - cam.offset)
+      const seconds = Math.abs(a.offset - a.sourceStart - camOrigin)
       if (!worst || seconds > worst.seconds) {
         worst = { personId, seconds, audioOffset: a.offset, cameraOffset: cam.offset }
       }

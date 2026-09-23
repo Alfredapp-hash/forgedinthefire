@@ -266,7 +266,7 @@ async function saveSessionNow(
     ...tracks.map((t) => {
       const clips = Array.isArray(t.clips) ? t.clips : []
       if (clips.length) return Math.max(0, ...clips.map((c) => c.offset + c.duration))
-      return t.buffer ? t.offset + t.buffer.duration : 0
+      return t.buffer && !t.noClips ? t.offset + t.buffer.duration : 0
     }),
     ...cameras.map((c) => c.offset + c.duration),
   )

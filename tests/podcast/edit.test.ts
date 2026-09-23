@@ -5,6 +5,7 @@ import {
   deleteRange,
   joinAdjacentClips,
   muteRange,
+  pasteClip,
   splitRange,
   splitTrackAt,
   trimClip,
@@ -69,13 +70,15 @@ describe('trimClip', () => {
     expect(dur).toBeCloseTo(0.04, 3)
   })
 
-  // An NLE in-point can be dragged back out to reveal trimmed source. Here it only ever shortens.
-  it.fails('BUG: in-point cannot be dragged back left to reveal trimmed-off source', () => {
+  // An NLE in-point can be dragged back out to reveal trimmed source (clamped to source 0).
+  it('in-point can be dragged back left to reveal trimmed-off source', () => {
     const t = take({ seconds: 10 })
     const id = t.clips[0].id
     const trimmed = trimClip(t, id, 'in', 4) // offset 4, sourceStart 4
     const restored = trimClip(trimmed, id, 'in', 1)
     expect(spans(restored)).toEqual([[1, 9, 1]])
+    // …but never before the start of the source.
+    expect(spans(trimClip(trimmed, id, 'in', -3))).toEqual([[0, 10, 0]])
   })
 })
 
@@ -114,16 +117,26 @@ describe('deleteRange', () => {
     expect(deleteRange(t, 3, 3.01)).toBe(t)
   })
 
-  // withClips(track, []) stores clips: [] and clipsOf() treats an empty list on a track that still
-  // has a buffer as "one clip covering the whole buffer" — so the deleted take comes straight back.
-  it.fails('BUG: deleting a range that covers the whole (only) clip resurrects the full take', () => {
+  // withClips(track, []) marks the lane noClips so clipsOf() does not read the bare [] as
+  // "one clip covering the whole buffer" (which resurrected the deleted take).
+  it('deleting a range that covers the whole (only) clip leaves the lane empty', () => {
     const t = take({ seconds: 10 })
     expect(clipsOf(deleteRange(t, 0, 10)).length).toBe(0)
   })
 
-  it.fails('BUG: same for a range wider than the clip, with ripple', () => {
+  it('same for a range wider than the clip, with ripple', () => {
     const t = take({ seconds: 10, offset: 2, clips: [clip({ offset: 2, duration: 10 })] })
     expect(clipsOf(deleteRange(t, 0, 20, true)).length).toBe(0)
+  })
+
+  it('an emptied lane comes back when a clip is pasted onto it', () => {
+    const t = take({ seconds: 10 })
+    const src = clipsOf(t)[0]
+    const empty = deleteRange(t, 0, 10)
+    expect(empty.noClips).toBe(true)
+    const pasted = pasteClip(empty, src, 3)
+    expect(pasted.noClips).toBe(false)
+    expect(spans(pasted)).toEqual([[3, 10, 0]])
   })
 
   it('deleting one of two clips works (control for the bug above)', () => {

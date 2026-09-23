@@ -29,7 +29,8 @@ export function withClips(track: StudioTrack, clips: TrackClip[]): StudioTrack {
     .map((c) => ({ ...c }))
     .sort((a, b) => a.offset - b.offset)
   const offset = clean[0]?.offset ?? track.offset
-  return { ...track, clips: clean, offset }
+  // An emptied lane must stay empty: clipsOf() reads a bare [] as "whole buffer".
+  return { ...track, clips: clean, offset, noClips: clean.length === 0 && Boolean(track.buffer) }
 }
 
 export function moveClip(track: StudioTrack, clipId: string, offset: number): StudioTrack {
@@ -54,7 +55,10 @@ export function trimClip(
     clipsOf(base).map((c) => {
       if (c.id !== clipId) return c
       if (edge === 'in') {
-        const t = Math.max(c.offset, Math.min(sessionTime, clipEnd(c) - MIN_CLIP))
+        // Clamp to the source, not the current in-point: dragging left reveals trimmed-off audio
+        // (never before source 0 or session 0).
+        const earliest = Math.max(0, c.offset - c.sourceStart)
+        const t = Math.max(earliest, Math.min(sessionTime, clipEnd(c) - MIN_CLIP))
         const delta = t - c.offset
         const sourceStart = Math.max(0, c.sourceStart + delta)
         const maxDur = buf.duration - sourceStart

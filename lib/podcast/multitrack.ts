@@ -65,8 +65,13 @@ export type StudioTrack = {
   url: string | null
   /** Non-destructive insert chain; original buffer is unchanged */
   inserts: InsertSlot[]
-  /** Regions on this lane. Empty means one clip covering the whole buffer. */
+  /** Regions on this lane. Empty means one clip covering the whole buffer — unless `noClips`. */
   clips: TrackClip[]
+  /**
+   * Every region on this lane was deleted: the buffer stays (undo, re-trim) but nothing plays.
+   * Distinguishes "no clips" from the legacy "empty list = one full clip" shorthand.
+   */
+  noClips?: boolean
   /** Volume envelope in session time. 1 = the track fader. Independent per track. */
   automation: AutomationPoint[]
   /** Playlist comps: this take is the audible one in these session ranges. */
@@ -278,7 +283,7 @@ export function monoToStereo(buffer: AudioBuffer): AudioBuffer {
 
 export function clipsOf(track: StudioTrack): TrackClip[] {
   if (track.clips && track.clips.length > 0) return track.clips
-  if (!track.buffer) return []
+  if (!track.buffer || track.noClips) return []
   return [
     {
       id: `${track.id}_full`,
@@ -308,7 +313,7 @@ export function automationAt(points: AutomationPoint[] | undefined, t: number, f
 export function trackDuration(track: StudioTrack): number {
   const clips = clipsOf(track)
   if (clips.length > 0) return Math.max(0, ...clips.map((c) => c.offset + c.duration))
-  if (!track.buffer) return 0
+  if (!track.buffer || track.noClips) return 0
   return track.offset + track.buffer.duration
 }
 

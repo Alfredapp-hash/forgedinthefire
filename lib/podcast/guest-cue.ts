@@ -70,6 +70,7 @@ export function createGuestHeadphoneMix(shared?: AudioContext | null): GuestHead
   let cueVol = 0.85
   let lastPeak = 0
   let raf = 0
+  let stopped = false
 
   const applyGains = () => {
     talkGain.gain.value = talkOn ? 1 : 0
@@ -125,6 +126,9 @@ export function createGuestHeadphoneMix(shared?: AudioContext | null): GuestHead
       return ctx.state === 'running'
     },
     stop() {
+      // Idempotent: the booth effect cleanup and teardown() may both stop the same mix.
+      if (stopped) return
+      stopped = true
       cancelAnimationFrame(raf)
       talkSrc?.disconnect()
       cueSrc?.disconnect()
@@ -134,7 +138,7 @@ export function createGuestHeadphoneMix(shared?: AudioContext | null): GuestHead
       } catch {
         /* ignore */
       }
-      if (ownsContext) void ctx.close()
+      if (ownsContext) closeQuietly(ctx)
     },
   }
 }
@@ -189,10 +193,23 @@ export function createHostFallbackSendMix(): HostFallbackSendMix {
       void ctx.resume()
     },
     stop() {
+      // Idempotent: the booth effect cleanup and teardown() may both stop the same mix.
+      if (stopped) return
+      stopped = true
       cancelAnimationFrame(raf)
       talkSrc?.disconnect()
       cueSrc?.disconnect()
-      void ctx.close()
+      closeQuietly(ctx)
     },
+  }
+}
+
+/** Close an AudioContext we own without throwing if it is already closed (or closing). */
+function closeQuietly(ctx: AudioContext) {
+  if (ctx.state === 'closed') return
+  try {
+    void ctx.close().catch(() => {})
+  } catch {
+    /* already closing */
   }
 }

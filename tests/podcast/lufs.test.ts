@@ -30,9 +30,8 @@ describe('lib/podcast/lufs measureLoudness', () => {
   })
 
   // BS.1770 gates blocks under −70 LUFS; when EVERY block is under the gate the programme is −∞.
-  // lufs.ts falls back to the ungated blocks instead, so a near-silent mix (muted mic, room tone)
-  // reads e.g. −85 LUFS and "Match −16 LUFS" on export applies ~+69 dB of gain → limiter-crushed noise.
-  it.fails('BUG: all-below-gate mix is not treated as silence (huge make-up gain on export)', () => {
+  // A near-silent mix (muted mic, room tone) must read −∞ so "Match −16 LUFS" leaves it alone.
+  it('all-below-gate mix is treated as silence (no huge make-up gain on export)', () => {
     const x = sine(997, -85, 3, 48000)
     const r = measureLoudness(buffer([x], 48000))
     expect(gainForTargetLufs(r.lufs)).toBeLessThan(10 ** (24 / 20)) // anything under +24 dB would be sane

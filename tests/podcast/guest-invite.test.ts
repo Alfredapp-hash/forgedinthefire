@@ -74,11 +74,11 @@ describe('token helpers', () => {
     expect(hashesMatch('', '')).toBe(false)
   })
 
-  // Hardening (not exploitable today: every caller passes one side from hashGuestToken → 64 hex).
-  // Buffer.from(x, 'hex') silently drops non-hex input, so two equal-length junk strings compare as
-  // two empty buffers and timingSafeEqual returns true.
-  it.fails('HARDENING: non-hex digests of equal length "match"', () => {
+  // Buffer.from(x, 'hex') silently drops non-hex input; hashesMatch rejects anything but 64 hex.
+  it('non-hex digests of equal length never match', () => {
     expect(hashesMatch('zz', 'yy')).toBe(false)
+    expect(hashesMatch('z'.repeat(64), 'y'.repeat(64))).toBe(false)
+    expect(hashesMatch('ab', 'ab')).toBe(false)
   })
 })
 

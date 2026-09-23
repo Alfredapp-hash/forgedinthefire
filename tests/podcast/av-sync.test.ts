@@ -8,7 +8,7 @@ import {
   nudgeCamerasWithAudio,
   personAvLinked,
 } from '@/lib/podcast/av-sync'
-import { splitTrackAt } from '@/lib/podcast/edit'
+import { splitTrackAt, trimClip } from '@/lib/podcast/edit'
 import { splitCameraAt } from '@/lib/podcast/camera-edit'
 import { clipsOf, type SessionPerson } from '@/lib/podcast/multitrack'
 import { cam, clip, take } from '../helpers/tracks'
@@ -54,20 +54,34 @@ describe('av-sync', () => {
     expect(clipsOf(out[0])[0].offset).toBe(1.5)
   })
 
-  // Split pieces keep the punch's syncGroup, and avDriftForPerson pairs clips by syncGroup even
-  // when they do not overlap — so the left picture half is compared with the right audio half
-  // (4 s apart) and the voice card shows "Linked · sync off" although nothing moved.
-  it.fails('BUG: splitting audio AND picture at the same point reports broken sync', () => {
+  // Split pieces keep the punch's syncGroup; avDriftForPerson pairs only overlapping clips and
+  // compares source origins, so a split never reads as "Linked · sync off".
+  it('splitting audio AND picture at the same point keeps sync', () => {
     const { t, c } = punch(0)
     const t2 = splitTrackAt(t, 4)
     const c2 = splitCameraAt([c], 4)
     expect(avBroken([t2], c2, host)).toBe(false)
   })
 
-  it.fails('BUG: splitting only the audio take (S) reports broken sync', () => {
+  it('splitting only the audio take (S) keeps sync', () => {
     const { t, c } = punch(0)
     const t2 = splitTrackAt(t, 4)
     expect(avBroken([t2], [c], host)).toBe(false)
+  })
+
+  it('trimming the audio in-point is not drift; sliding a split half is', () => {
+    const { t, c } = punch(0)
+    const trimmed = trimClip(t, t.clips[0].id, 'in', 2)
+    expect(avBroken([trimmed], [c], host)).toBe(false)
+    const t2 = splitTrackAt(t, 4)
+    const right = clipsOf(t2)[1]
+    const moved = { ...t2, clips: clipsOf(t2).map((x) => (x.id === right.id ? { ...x, offset: 4.5 } : x)) }
+    expect(avBroken([moved], [c], host)).toBe(true)
+  })
+
+  it('a picture dragged away from its audio (no overlap) still reads broken via syncGroup', () => {
+    const { t, c } = punch(0)
+    expect(avBroken([t], [{ ...c, offset: 30 }], host)).toBe(true)
   })
 
   it('formatDrift', () => {

@@ -743,6 +743,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   ...t,
                   buffer: cloneAudioBuffer(buffer),
                   url: blobUrl,
+                  clips: [],
+                  noClips: false,
                   armed: true,
                 }
               : { ...t, armed: false },
@@ -2421,7 +2423,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       prev.map((t) => {
         if (t.id !== id) return t
         revokeLater(t.url)
-        return { ...t, buffer: null, url: null, clips: [], automation: [] }
+        return { ...t, buffer: null, url: null, clips: [], noClips: false, automation: [] }
       }),
     )
   }
