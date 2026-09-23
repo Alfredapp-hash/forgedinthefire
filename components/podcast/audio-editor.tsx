@@ -173,6 +173,7 @@ import {
   removeCameraClip,
   removeKeyframe,
   removeProgramCut,
+  rippleProgramCuts,
   seedCameraKeyframes,
   setCameraFades,
   setCameraFilter,
@@ -246,6 +247,11 @@ type SaveFilePicker = (opts: {
   suggestedName?: string
   types?: { description: string; accept: Record<string, string[]> }[]
 }) => Promise<{ name: string; createWritable: () => Promise<PictureWritable> }>
+
+/** IndexedDB key for a session set aside by "Start fresh (keep backup)". */
+function backupKey(episodeId: string) {
+  return `${episodeId}::backup`
+}
 
 function snapshotTracks(tracks: StudioTrack[]): StudioTrack[] {
   return tracks.map((t) => ({
@@ -343,6 +349,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [boardExtent, setBoardExtent] = useState(30)
   const boardExtentRef = useRef(30)
   const [recover, setRecover] = useState<SessionPeek | null>(null)
+  /** Previous session set aside by "Start fresh (keep backup)" — offered, never blocking. */
+  const [backupPeek, setBackupPeek] = useState<SessionPeek | null>(null)
   const [sessionStatus, setSessionStatus] = useState<'checking' | 'offer' | 'open'>(
     episodeId ? 'checking' : 'open',
   )
@@ -654,6 +662,11 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }).catch(() => {
       if (!cancelled) setSessionStatus('open')
     })
+    void peekSession(backupKey(episodeId))
+      .then((peek) => {
+        if (!cancelled && peek && (peek.takeCount > 0 || peek.cameraCount > 0)) setBackupPeek(peek)
+      })
+      .catch(() => {})
     return () => {
       cancelled = true
     }
@@ -1020,7 +1033,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           deleteProgramCut(selectedCutId)
           return
         }
-        editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, event.shiftKey), event.shiftKey ? 'Ripple-deleted range' : 'Cut hole in lane')
+        removeRange(event.shiftKey)
       }
       if ((event.key === 'm' || event.key === 'M') && !recording && event.shiftKey) {
         event.preventDefault()
@@ -1131,12 +1144,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setOk('Redid change')
   }
 
-  async function restoreSavedSession() {
-    if (!episodeId || !recover) return
+  async function restoreSavedSession(fromBackup = false) {
+    const peek = fromBackup ? backupPeek : recover
+    if (!episodeId || !peek) return
+    if (fromBackup && hasAudio && !window.confirm('Replace what is on the timeline now with the backup? Undo cannot bring the current session back.')) {
+      return
+    }
     setBusy('Restoring takes from this computer…')
     setError(null)
     try {
-      const saved = await loadSession(episodeId)
+      const saved = await loadSession(fromBackup ? backupKey(episodeId) : episodeId)
       if (!saved) {
         setError('No saved takes found')
         setRecover(null)
@@ -1153,12 +1170,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       setSelectedId(saved.tracks.find((t) => t.armed)?.id || saved.tracks.find((t) => t.buffer)?.id || null)
       seededRef.current = true
       setRecover(null)
+      if (fromBackup) setBackupPeek(null)
       setSessionStatus('open')
       const camNote = saved.cameras.length
         ? ` + ${saved.cameras.length} camera file${saved.cameras.length === 1 ? '' : 's'}`
         : ''
       setOk(
-        `Restored ${saved.tracks.filter((t) => t.buffer).length} takes${camNote} from ${new Date(recover.savedAt).toLocaleTimeString()}`,
+        `Restored ${saved.tracks.filter((t) => t.buffer).length} takes${camNote} from ${new Date(peek.savedAt).toLocaleTimeString()}`,
       )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not restore session')
@@ -1168,10 +1186,87 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
   }
 
-  function dismissRecover(discard = false) {
-    if (discard && episodeId) void clearSession(episodeId)
+  /** "Delete saved takes…" — permanent, so it always asks. */
+  async function discardSavedSession() {
+    if (!episodeId || !recover) return
+    const ok = window.confirm(
+      `Permanently delete ${recover.takeCount} saved take${recover.takeCount === 1 ? '' : 's'}${
+        recover.cameraCount ? ` and ${recover.cameraCount} camera file${recover.cameraCount === 1 ? '' : 's'}` : ''
+      } (${formatClock(recover.durationSec)}) from this computer? This cannot be undone.`,
+    )
+    if (!ok) return
+    await clearSession(episodeId).catch(() => {})
     setRecover(null)
     setSessionStatus('open')
+    setOk('Saved takes deleted from this computer')
+  }
+
+  /**
+   * "Start fresh (keep backup)": set the saved session aside under a backup key first, so the
+   * next autosave cannot overwrite it. Restore it later from the backup banner.
+   */
+  async function startFreshKeepBackup() {
+    if (!episodeId || !recover) return
+    const ok = window.confirm(
+      'Start with an empty session? Your saved takes are kept as a backup on this computer — you can restore them later from the banner here.',
+    )
+    if (!ok) return
+    setBusy('Keeping a backup of your saved takes…')
+    try {
+      const saved = await loadSession(episodeId)
+      if (saved) {
+        await saveSession(backupKey(episodeId), saved.people, saved.tracks, saved.cameras, {
+          programCuts: saved.programCuts,
+        })
+        saved.tracks.forEach((t) => revokeUrl(t.url))
+        saved.cameras.forEach((c) => revokeUrl(c.url))
+        setBackupPeek(await peekSession(backupKey(episodeId)).catch(() => null))
+      }
+      setRecover(null)
+      setSessionStatus('open')
+      setOk('Started fresh — your earlier takes are kept as a backup on this computer')
+    } catch (err) {
+      setError(
+        `Could not keep a backup (${err instanceof Error ? err.message : 'storage error'}). Nothing was changed — choose Restore, or try again.`,
+      )
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function deleteBackup() {
+    if (!episodeId || !backupPeek) return
+    if (!window.confirm('Permanently delete the backup of your earlier takes from this computer? This cannot be undone.')) return
+    await clearSession(backupKey(episodeId)).catch(() => {})
+    setBackupPeek(null)
+  }
+
+  /** Lay a take recovered from the crash journal onto a new take for that person. */
+  function layRecoveredTake(take: UnfinishedTake, buffer: AudioBuffer) {
+    const person = people.find((p) => p.id === take.personId) || people.find((p) => p.id === 'host') || people[0]
+    if (!person) return
+    pushHistory()
+    const url = bufferToUrl(buffer)
+    const offset = Math.max(0, take.startSec || 0)
+    setTracks((prev) => {
+      const takeNo = nextTakeNumber(prev, person.id)
+      const hasAudible = prev.some((t) => t.personId === person.id && t.buffer && t.listen)
+      const made = createEmptyTrack({
+        name: `${person.name} · recovered take ${takeNo}`,
+        role: roleForPerson(person),
+        personId: person.id,
+        take: takeNo,
+        color: person.color,
+        offset,
+        volume: 1,
+        listen: !hasAudible,
+        clips: [fullClipForBuffer(buffer, offset, 0.05, 0.15)],
+      })
+      made.buffer = cloneAudioBuffer(buffer)
+      made.url = url
+      return [...prev, made]
+    })
+    restoredJournalIdsRef.current.push(take.id)
   }
 
   async function runEffect(id: EffectId, mode: 'insert' | 'render' = isInsertFx(id) ? 'insert' : 'render') {
@@ -2295,13 +2390,43 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     )
   }
 
-  function editRange(fn: (track: StudioTrack) => StudioTrack, label: string) {
+  /**
+   * Delete the selected range on the selected lane (or every lane). `ripple` = "Remove & close
+   * gap": later audio moves left — and so do that person's camera clips, plus the Output (Program)
+   * scene cuts when every voice with audio was rippled, so picture stays in sync with sound.
+   */
+  function removeRange(ripple: boolean) {
+    const cur = rangeRef.current
+    const a = Math.min(cur.start, cur.end)
+    const b = Math.max(cur.start, cur.end)
+    const lanes = applyRangeAll ? tracks.filter((t) => t.buffer) : selected ? [selected] : []
+    const done = editRange(
+      (t) => deleteRange(t, a, b, ripple),
+      ripple ? 'Removed the range and closed the gap' : 'Removed the range, left silence',
+    )
+    if (!done || !ripple) return
+    const personIds = [...new Set(lanes.map((t) => t.personId))]
+    const voicesWithAudio = new Set(
+      tracks.filter((t) => t.buffer && isVoiceRole(t.role)).map((t) => t.personId),
+    )
+    const everyVoice = applyRangeAll || [...voicesWithAudio].every((id) => personIds.includes(id))
+    // Picture follows for people whose audio + video are linked (the default).
+    const cameraPeople = (applyRangeAll ? people.map((p) => p.id) : personIds).filter((id) =>
+      personAvLinked(people.find((p) => p.id === id)),
+    )
+    if (cameraPeople.length) {
+      setCameraClips((prev) => cameraPeople.reduce((clips, id) => deleteCameraRange(clips, a, b, id, true), prev))
+    }
+    if (everyVoice) setProgramCuts((prev) => rippleProgramCuts(prev, a, b, startScene))
+  }
+
+  function editRange(fn: (track: StudioTrack) => StudioTrack, label: string): boolean {
     const cur = rangeRef.current
     const a = Math.min(cur.start, cur.end)
     const b = Math.max(cur.start, cur.end)
     if (b - a < 0.05) {
       setError('Drag a range on the timeline (empty lane or ruler), then use the lane tools')
-      return
+      return false
     }
     const ids = applyRangeAll
       ? tracks.filter((t) => t.buffer).map((t) => t.id)
@@ -2310,11 +2435,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         : []
     if (ids.length === 0) {
       setError('Select a lane first')
-      return
+      return false
     }
     pushHistory()
     setTracks((prev) => prev.map((t) => (ids.includes(t.id) ? fn(t) : t)))
     setOk(label)
+    return true
   }
 
   function splitSelectedAtPlayhead() {
@@ -2346,7 +2472,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
     pushHistory()
     setCameraClips((prev) => deleteCameraRange(prev, a, b, personId, ripple))
-    setOk(ripple ? 'Ripple-deleted picture (audio unchanged)' : 'Cut hole in picture (audio unchanged)')
+    // Closing a gap in picture also pulls later Output scene cuts so switching stays on the shot.
+    if (ripple) setProgramCuts((prev) => rippleProgramCuts(prev, a, b, startScene))
+    setOk(
+      ripple
+        ? 'Removed picture and closed the gap (scene cuts follow; audio unchanged)'
+        : 'Removed picture, left a gap (audio unchanged)',
+    )
   }
 
   function moveSelectedCamera(clipId: string, offset: number) {
@@ -2803,14 +2935,37 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             <button type="button" className={primary} onClick={() => void restoreSavedSession()}>
               Restore
             </button>
-            <button type="button" className={btn} onClick={() => dismissRecover(false)}>
-              Keep empty
+            <button type="button" className={btn} disabled={Boolean(busy)} onClick={() => void startFreshKeepBackup()}>
+              Start fresh (keep backup)
             </button>
-            <button type="button" className={btn} onClick={() => dismissRecover(true)}>
-              Discard saved
+            <button type="button" className={btn} onClick={() => void discardSavedSession()}>
+              Delete saved takes…
             </button>
           </div>
         )}
+        {backupPeek && sessionStatus === 'open' && (
+          <div className="rounded-xl border border-[#4A5968] bg-[#0A1016] px-4 py-2 flex flex-wrap items-center gap-3">
+            <p className="text-xs text-[#D5DEE6] flex-1 min-w-[12rem]">
+              Backup on this computer: {backupPeek.takeCount} take{backupPeek.takeCount === 1 ? '' : 's'} (
+              {formatClock(backupPeek.durationSec)}) from {new Date(backupPeek.savedAt).toLocaleString()}.
+            </p>
+            <button type="button" className={btn} disabled={Boolean(busy) || recording} onClick={() => void restoreSavedSession(true)}>
+              Restore backup
+            </button>
+            <button type="button" className={btn} onClick={() => void deleteBackup()}>
+              Delete backup…
+            </button>
+          </div>
+        )}
+        <JournalRecoveryBanner
+          episodeId={episodeId}
+          onRestore={layRecoveredTake}
+          onError={setError}
+          onOk={setOk}
+          btn={btn}
+          primary={primary}
+          danger={danger}
+        />
 
         {camWarnFor && (
           <div className="rounded-xl border border-[#FFB86B]/50 bg-[#20180C] px-4 py-3 flex flex-wrap items-center gap-3">
@@ -3290,17 +3445,17 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               type="button"
               className={btn}
               disabled={!selected?.buffer}
-              onClick={() => editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, false), 'Cut hole (gap stays)')}
+              onClick={() => removeRange(false)}
             >
-              Cut hole
+              Remove, leave silence
             </button>
             <button
               type="button"
               className={btn}
               disabled={!selected?.buffer}
-              onClick={() => editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, true), 'Ripple delete')}
+              onClick={() => removeRange(true)}
             >
-              Ripple delete
+              Remove &amp; close gap
             </button>
             <button
               type="button"
