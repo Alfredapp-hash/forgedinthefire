@@ -1,13 +1,23 @@
 /** IndexedDB autosave for in-progress production-room takes (per episode). */
 
 import { encodeWav } from '@/lib/podcast/audio'
-import { cameraKind, normalizeCameraClip, type CameraClip } from '@/lib/podcast/camera'
+import {
+  cameraKind,
+  isQuotaError,
+  normalizeCameraClip,
+  normalizeProgramCuts,
+  type CameraClip,
+  type ProgramCut,
+  type ProgramScene,
+} from '@/lib/podcast/camera'
 import { bufferFromBlob } from '@/lib/podcast/effects'
 import type { SessionPerson, StudioTrack } from '@/lib/podcast/multitrack'
 
 const DB_NAME = 'forged-podcast-room'
-const DB_VERSION = 2
+/** v3: camera bytes live in their own store, once per file (split clips share one blob). */
+const DB_VERSION = 3
 const STORE = 'sessions'
+const MEDIA = 'media'
 
 export type SessionPeek = {
   episodeId: string
@@ -17,12 +27,21 @@ export type SessionPeek = {
   durationSec: number
 }
 
+/** Program switch state that is not a clip. */
+export type SessionPicture = {
+  programCuts?: ProgramCut[]
+  startScene?: ProgramScene
+}
+
 type StoredTrack = Omit<StudioTrack, 'buffer' | 'url'> & {
   wav: ArrayBuffer | null
 }
 
 type StoredCameraClip = Omit<CameraClip, 'url'> & {
-  data: ArrayBuffer
+  /** v2 rows kept the bytes inline. */
+  data?: ArrayBuffer
+  /** v3: key into the media store. */
+  mediaKey?: string
 }
 
 type StoredSession = {
@@ -32,6 +51,26 @@ type StoredSession = {
   people: SessionPerson[]
   tracks: StoredTrack[]
   cameras?: StoredCameraClip[]
+  programCuts?: ProgramCut[]
+  startScene?: ProgramScene
+}
+
+type StoredMedia = {
+  key: string
+  episodeId: string
+  blob: Blob
+  bytes: number
+}
+
+/** blob: URL → media key, so repeat autosaves never re-read a camera file already on disk. */
+const urlKeys = new Map<string, string>()
+
+function newMediaKey(episodeId: string) {
+  return `${episodeId}:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+}
+
+function episodeRange(episodeId: string) {
+  return IDBKeyRange.bound(`${episodeId}:`, `${episodeId}:￿`)
 }
 
 function openDb(): Promise<IDBDatabase> {
@@ -42,39 +81,49 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: 'episodeId' })
       }
+      if (!db.objectStoreNames.contains(MEDIA)) {
+        db.createObjectStore(MEDIA, { keyPath: 'key' })
+      }
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error || new Error('IndexedDB open failed'))
+    req.onblocked = () => reject(new Error('Close other tabs of the production room, then reload to update autosave'))
   })
 }
 
-function idbGet(episodeId: string): Promise<StoredSession | undefined> {
-  return openDb().then(
-    (db) =>
-      new Promise((resolve, reject) => {
-        const tx = db.transaction(STORE, 'readonly')
-        const req = tx.objectStore(STORE).get(episodeId)
-        req.onsuccess = () => resolve(req.result as StoredSession | undefined)
-        req.onerror = () => reject(req.error)
-        tx.oncomplete = () => db.close()
-      }),
-  )
+function request<T>(req: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
 }
 
-async function idbPut(row: StoredSession) {
-  const db = await openDb()
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite')
-    tx.objectStore(STORE).put(row)
+function done(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(tx.error || new DOMException('Transaction aborted', 'AbortError'))
   })
-  db.close()
+}
+
+async function idbGet(db: IDBDatabase, episodeId: string): Promise<StoredSession | undefined> {
+  const tx = db.transaction(STORE, 'readonly')
+  const row = await request(tx.objectStore(STORE).get(episodeId))
+  return row as StoredSession | undefined
+}
+
+async function withDb<T>(fn: (db: IDBDatabase) => Promise<T>): Promise<T> {
+  const db = await openDb()
+  try {
+    return await fn(db)
+  } finally {
+    db.close()
+  }
 }
 
 export async function peekSession(episodeId: string): Promise<SessionPeek | null> {
   if (!episodeId || typeof indexedDB === 'undefined') return null
-  const row = await idbGet(episodeId)
+  const row = await withDb((db) => idbGet(db, episodeId))
   if (!row) return null
   return {
     episodeId: row.episodeId,
@@ -85,78 +134,118 @@ export async function peekSession(episodeId: string): Promise<SessionPeek | null
   }
 }
 
-async function packCameras(episodeId: string, cameras: CameraClip[]): Promise<StoredCameraClip[]> {
-  if (cameras.length === 0) return []
-  const prev = await idbGet(episodeId)
-  const reuse = new Map((prev?.cameras || []).map((clip) => [clip.id, clip]))
-  const stored: StoredCameraClip[] = []
-  for (const clip of cameras) {
-    const old = reuse.get(clip.id)
-    const meta = {
-      id: clip.id,
-      personId: clip.personId,
-      mime: clip.mime,
-      offset: clip.offset,
-      duration: clip.duration,
-      trimStart: clip.sourceStart ?? clip.trimStart,
-      sourceStart: clip.sourceStart ?? clip.trimStart,
-      sourceDuration: clip.sourceDuration || old?.sourceDuration || clip.trimStart + clip.duration,
-      muted: Boolean(clip.muted),
-      syncGroup: clip.syncGroup,
-      kind: clip.kind,
-      layer: clip.layer,
-      label: clip.label,
-      sublabel: clip.sublabel,
-      fadeIn: clip.fadeIn,
-      fadeOut: clip.fadeOut,
-      filter: clip.filter,
-      overlayFit: clip.overlayFit,
-      stingerStyle: clip.stingerStyle,
-      keyframes: clip.keyframes,
-    }
-    if (cameraKind(clip) === 'title' || cameraKind(clip) === 'stinger' || !clip.url) {
-      stored.push({
-        ...meta,
-        mime: clip.mime || 'text/plain',
-        bytes: 0,
-        data: new ArrayBuffer(0),
-      })
-      continue
-    }
-    if (old && old.bytes === clip.bytes && old.data.byteLength > 64) {
-      stored.push({
-        ...old,
-        ...meta,
-        mime: clip.mime,
-        bytes: old.bytes,
-      })
-      continue
-    }
-    try {
-      const blob = await fetch(clip.url).then((res) => {
-        if (!res.ok) throw new Error('camera fetch failed')
-        return res.blob()
-      })
-      const data = await blob.arrayBuffer()
-      if (data.byteLength < 64) continue
-      stored.push({
-        ...meta,
-        mime: clip.mime || blob.type || 'video/webm',
-        bytes: data.byteLength,
-        data,
-      })
-    } catch {
-      if (old) stored.push({ ...old, ...meta })
-    }
+function clipMeta(clip: CameraClip): Omit<StoredCameraClip, 'data' | 'mediaKey'> {
+  return {
+    id: clip.id,
+    personId: clip.personId,
+    mime: clip.mime,
+    offset: clip.offset,
+    duration: clip.duration,
+    trimStart: clip.sourceStart ?? clip.trimStart,
+    sourceStart: clip.sourceStart ?? clip.trimStart,
+    sourceDuration: clip.sourceDuration || clip.trimStart + clip.duration,
+    muted: Boolean(clip.muted),
+    syncGroup: clip.syncGroup,
+    bytes: clip.bytes,
+    kind: clip.kind,
+    layer: clip.layer,
+    label: clip.label,
+    sublabel: clip.sublabel,
+    fadeIn: clip.fadeIn,
+    fadeOut: clip.fadeOut,
+    filter: clip.filter,
+    overlayFit: clip.overlayFit,
+    stingerStyle: clip.stingerStyle,
+    keyframes: clip.keyframes,
   }
-  return stored
 }
 
-export async function saveSession(
+/** Write each distinct camera file once. Returns clip rows + any clips whose bytes did not fit. */
+async function packCameras(
+  db: IDBDatabase,
+  episodeId: string,
+  cameras: CameraClip[],
+): Promise<{ stored: StoredCameraClip[]; dropped: number; quota: boolean }> {
+  const haveTx = db.transaction(MEDIA, 'readonly')
+  const have = new Set((await request(haveTx.objectStore(MEDIA).getAllKeys(episodeRange(episodeId)))).map(String))
+
+  const stored: StoredCameraClip[] = []
+  const failedUrls = new Set<string>()
+  let dropped = 0
+  let quota = false
+
+  for (const clip of cameras) {
+    const meta = clipMeta(clip)
+    if (cameraKind(clip) === 'title' || cameraKind(clip) === 'stinger' || !clip.url) {
+      stored.push({ ...meta, mime: clip.mime || 'text/plain', bytes: 0 })
+      continue
+    }
+    let key = urlKeys.get(clip.url)
+    if (!key || !have.has(key)) {
+      if (failedUrls.has(clip.url)) {
+        dropped++
+        continue
+      }
+      try {
+        const blob = await fetch(clip.url).then((res) => {
+          if (!res.ok) throw new Error('camera fetch failed')
+          return res.blob()
+        })
+        if (blob.size < 64) {
+          failedUrls.add(clip.url)
+          dropped++
+          continue
+        }
+        key = key || newMediaKey(episodeId)
+        const tx = db.transaction(MEDIA, 'readwrite')
+        tx.objectStore(MEDIA).put({ key, episodeId, blob, bytes: blob.size } satisfies StoredMedia)
+        await done(tx)
+        urlKeys.set(clip.url, key)
+        have.add(key)
+      } catch (err) {
+        if (isQuotaError(err)) quota = true
+        failedUrls.add(clip.url)
+        dropped++
+        continue
+      }
+    }
+    stored.push({ ...meta, mediaKey: key })
+  }
+  return { stored, dropped, quota }
+}
+
+/** Delete media blobs this episode's row no longer points at (discarded / undone takes). */
+async function collectMedia(db: IDBDatabase, episodeId: string, keep: Set<string>) {
+  const tx = db.transaction(MEDIA, 'readwrite')
+  const store = tx.objectStore(MEDIA)
+  const keys = (await request(store.getAllKeys(episodeRange(episodeId)))).map(String)
+  for (const key of keys) {
+    if (!keep.has(key)) store.delete(key)
+  }
+  await done(tx)
+}
+
+/** Saves run one at a time so media garbage collection never races a half-written row. */
+let saveChain: Promise<unknown> = Promise.resolve()
+
+export function saveSession(
   episodeId: string,
   people: SessionPerson[],
   tracks: StudioTrack[],
   cameras: CameraClip[] = [],
+  picture: SessionPicture = {},
+): Promise<void> {
+  const run = saveChain.catch(() => {}).then(() => saveSessionNow(episodeId, people, tracks, cameras, picture))
+  saveChain = run
+  return run
+}
+
+async function saveSessionNow(
+  episodeId: string,
+  people: SessionPerson[],
+  tracks: StudioTrack[],
+  cameras: CameraClip[],
+  picture: SessionPicture,
 ): Promise<void> {
   if (!episodeId || typeof indexedDB === 'undefined') return
   const withAudio = tracks.filter((t) => t.buffer)
@@ -182,113 +271,156 @@ export async function saveSession(
     ...cameras.map((c) => c.offset + c.duration),
   )
 
-  const packedCams = await packCameras(episodeId, cameras)
-  const row: StoredSession = {
-    episodeId,
-    savedAt: Date.now(),
-    durationSec,
-    people,
-    tracks: stored,
-    cameras: packedCams,
-  }
-
-  try {
-    await idbPut(row)
-  } catch (err) {
-    const quota = err instanceof DOMException && (err.name === 'QuotaExceededError' || err.code === 22 || err.code === 1014)
-    if (packedCams.length === 0) {
+  await withDb(async (db) => {
+    const packed = await packCameras(db, episodeId, cameras)
+    const row: StoredSession = {
+      episodeId,
+      savedAt: Date.now(),
+      durationSec,
+      people,
+      tracks: stored,
+      cameras: packed.stored,
+      programCuts: normalizeProgramCuts(picture.programCuts),
+      startScene: picture.startScene,
+    }
+    try {
+      const tx = db.transaction(STORE, 'readwrite')
+      tx.objectStore(STORE).put(row)
+      await done(tx)
+    } catch (err) {
+      const quota = isQuotaError(err)
       throw new Error(
         quota
           ? 'This browser is out of space for session autosave. Download takes or free disk before you close the tab.'
           : 'Could not autosave takes on this computer',
       )
     }
-    await idbPut({ ...row, cameras: [] })
-    throw new Error(
-      quota
-        ? 'Takes saved. Camera files did not fit in this browser’s storage — download the camera files before you close the tab.'
-        : 'Takes saved; camera files did not fit on this computer',
-    )
-  }
+    await collectMedia(db, episodeId, new Set(packed.stored.map((c) => c.mediaKey).filter((k): k is string => Boolean(k))))
+    if (packed.dropped > 0) {
+      throw new Error(
+        packed.quota
+          ? `Takes saved. ${packed.dropped} camera clip${packed.dropped === 1 ? '' : 's'} did not fit in this browser’s storage — download the camera files before you close the tab.`
+          : `Takes saved; ${packed.dropped} camera clip${packed.dropped === 1 ? '' : 's'} could not be saved on this computer`,
+      )
+    }
+  })
 }
 
-export async function loadSession(
-  episodeId: string,
-): Promise<{ people: SessionPerson[]; tracks: StudioTrack[]; cameras: CameraClip[] } | null> {
+export async function loadSession(episodeId: string): Promise<{
+  people: SessionPerson[]
+  tracks: StudioTrack[]
+  cameras: CameraClip[]
+  programCuts: ProgramCut[]
+  startScene?: ProgramScene
+} | null> {
   if (!episodeId || typeof indexedDB === 'undefined') return null
-  const row = await idbGet(episodeId)
-  if (!row) return null
+  return withDb(async (db) => {
+    const row = await idbGet(db, episodeId)
+    if (!row) return null
 
-  const tracks: StudioTrack[] = []
-  for (const stored of row.tracks) {
-    const { wav, ...meta } = stored
-    let buffer: AudioBuffer | null = null
-    let url: string | null = null
-    if (wav && wav.byteLength > 64) {
-      buffer = await bufferFromBlob(new Blob([wav], { type: 'audio/wav' }))
-      url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }))
+    const tracks: StudioTrack[] = []
+    for (const stored of row.tracks) {
+      const { wav, ...meta } = stored
+      let buffer: AudioBuffer | null = null
+      let url: string | null = null
+      if (wav && wav.byteLength > 64) {
+        buffer = await bufferFromBlob(new Blob([wav], { type: 'audio/wav' }))
+        url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }))
+      }
+      tracks.push({
+        ...meta,
+        inserts: Array.isArray(meta.inserts) ? meta.inserts : [],
+        clips: Array.isArray(meta.clips) ? meta.clips : [],
+        automation: Array.isArray(meta.automation) ? meta.automation : [],
+        compRanges: Array.isArray(meta.compRanges) ? meta.compRanges : [],
+        listen: meta.listen !== false,
+        layered: Boolean(meta.layered),
+        buffer,
+        url,
+      })
     }
-    tracks.push({
-      ...meta,
-      inserts: Array.isArray(meta.inserts) ? meta.inserts : [],
-      clips: Array.isArray(meta.clips) ? meta.clips : [],
-      automation: Array.isArray(meta.automation) ? meta.automation : [],
-      compRanges: Array.isArray(meta.compRanges) ? meta.compRanges : [],
-      listen: meta.listen !== false,
-      layered: Boolean(meta.layered),
-      buffer,
-      url,
-    })
-  }
 
-  const cameras: CameraClip[] = []
-  for (const stored of row.cameras || []) {
-    const kind =
-      stored.kind === 'title' || stored.kind === 'broll' || stored.kind === 'stinger' ? stored.kind : 'camera'
-    if (kind !== 'title' && kind !== 'stinger' && (!stored.data || stored.data.byteLength < 64)) continue
-    const blob =
-      stored.data && stored.data.byteLength >= 64
-        ? new Blob([stored.data], { type: stored.mime || 'video/webm' })
-        : null
-    cameras.push(
-      normalizeCameraClip({
-        id: stored.id,
-        personId: stored.personId,
-        url: blob ? URL.createObjectURL(blob) : '',
-        mime: stored.mime || blob?.type || (kind === 'title' || kind === 'stinger' ? 'text/plain' : 'video/webm'),
-        offset: stored.offset,
-        duration: stored.duration,
-        trimStart: stored.trimStart,
-        sourceStart: stored.sourceStart ?? stored.trimStart,
-        sourceDuration: stored.sourceDuration || stored.trimStart + stored.duration,
-        muted: Boolean(stored.muted),
-        syncGroup: stored.syncGroup,
-        bytes: stored.bytes || blob?.size || 0,
-        kind,
-        layer: stored.layer,
-        label: stored.label,
-        sublabel: stored.sublabel,
-        fadeIn: stored.fadeIn,
-        fadeOut: stored.fadeOut,
-        filter: stored.filter,
-        overlayFit: stored.overlayFit,
-        stingerStyle: stored.stingerStyle,
-        keyframes: stored.keyframes,
-      }),
-    )
-  }
+    const mediaUrls = new Map<string, { url: string; bytes: number; type: string }>()
+    const mediaFor = async (key: string) => {
+      const hit = mediaUrls.get(key)
+      if (hit) return hit
+      const tx = db.transaction(MEDIA, 'readonly')
+      const media = (await request(tx.objectStore(MEDIA).get(key))) as StoredMedia | undefined
+      if (!media?.blob || media.blob.size < 64) return null
+      const url = URL.createObjectURL(media.blob)
+      urlKeys.set(url, key)
+      const out = { url, bytes: media.blob.size, type: media.blob.type }
+      mediaUrls.set(key, out)
+      return out
+    }
 
-  return { people: row.people, tracks, cameras }
+    const cameras: CameraClip[] = []
+    for (const stored of row.cameras || []) {
+      const kind =
+        stored.kind === 'title' || stored.kind === 'broll' || stored.kind === 'stinger' ? stored.kind : 'camera'
+      const graphic = kind === 'title' || kind === 'stinger'
+      let url = ''
+      let bytes = stored.bytes || 0
+      let type = stored.mime
+      if (!graphic) {
+        if (stored.mediaKey) {
+          const media = await mediaFor(stored.mediaKey)
+          if (!media) continue
+          url = media.url
+          bytes = media.bytes
+          type = type || media.type
+        } else if (stored.data && stored.data.byteLength >= 64) {
+          const blob = new Blob([stored.data], { type: stored.mime || 'video/webm' })
+          url = URL.createObjectURL(blob)
+          bytes = blob.size
+        } else {
+          continue
+        }
+      }
+      cameras.push(
+        normalizeCameraClip({
+          id: stored.id,
+          personId: stored.personId,
+          url,
+          mime: type || (graphic ? 'text/plain' : 'video/webm'),
+          offset: stored.offset,
+          duration: stored.duration,
+          trimStart: stored.trimStart,
+          sourceStart: stored.sourceStart ?? stored.trimStart,
+          sourceDuration: stored.sourceDuration || stored.trimStart + stored.duration,
+          muted: Boolean(stored.muted),
+          syncGroup: stored.syncGroup,
+          bytes,
+          kind,
+          layer: stored.layer,
+          label: stored.label,
+          sublabel: stored.sublabel,
+          fadeIn: stored.fadeIn,
+          fadeOut: stored.fadeOut,
+          filter: stored.filter,
+          overlayFit: stored.overlayFit,
+          stingerStyle: stored.stingerStyle,
+          keyframes: stored.keyframes,
+        }),
+      )
+    }
+
+    return {
+      people: row.people,
+      tracks,
+      cameras,
+      programCuts: normalizeProgramCuts(row.programCuts),
+      startScene: row.startScene,
+    }
+  })
 }
 
 export async function clearSession(episodeId: string): Promise<void> {
   if (!episodeId || typeof indexedDB === 'undefined') return
-  const db = await openDb()
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite')
+  await withDb(async (db) => {
+    const tx = db.transaction([STORE, MEDIA], 'readwrite')
     tx.objectStore(STORE).delete(episodeId)
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
+    tx.objectStore(MEDIA).delete(episodeRange(episodeId))
+    await done(tx)
   })
-  db.close()
 }

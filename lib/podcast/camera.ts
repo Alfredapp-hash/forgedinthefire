@@ -82,6 +82,109 @@ export type CameraClip = {
   keyframes?: PictureKeyframe[]
 }
 
+/** Program layout. Same union as picture.ts `PictureScene` (kept here so camera.ts has no picture import). */
+export type ProgramScene = 'host' | 'guest' | 'pip'
+
+/**
+ * One Program switch on the session clock (OBS Studio-mode "Transition" / Shotcut playlist cut).
+ * Scene holds until the next cut. `fade` > 0 dissolves from the previous scene over that many seconds.
+ */
+export type ProgramCut = {
+  id: string
+  at: number
+  scene: ProgramScene
+  fade?: number
+}
+
+export const PROGRAM_FADE_SEC = 0.45
+
+export function newProgramCutId() {
+  return `pgm_${Math.random().toString(36).slice(2, 10)}`
+}
+
+function isScene(value: unknown): value is ProgramScene {
+  return value === 'host' || value === 'guest' || value === 'pip'
+}
+
+/** Sorted, de-duplicated (one cut per ~frame), clamped. */
+export function normalizeProgramCuts(raw?: ProgramCut[] | null): ProgramCut[] {
+  if (!Array.isArray(raw)) return []
+  const sorted = raw
+    .filter((c) => c && isScene(c.scene) && Number.isFinite(c.at))
+    .map((c) => ({
+      id: c.id || newProgramCutId(),
+      at: Math.max(0, c.at),
+      scene: c.scene,
+      fade: Math.max(0, Math.min(3, Number.isFinite(c.fade) ? (c.fade as number) : 0)),
+    }))
+    .sort((a, b) => a.at - b.at)
+  const out: ProgramCut[] = []
+  for (const cut of sorted) {
+    const prev = out[out.length - 1]
+    if (prev && Math.abs(prev.at - cut.at) < 1 / 60) out[out.length - 1] = cut
+    else out.push(cut)
+  }
+  return out
+}
+
+export type ProgramState = {
+  scene: ProgramScene
+  /** Scene being dissolved from; equals `scene` when no fade is running. */
+  fromScene: ProgramScene
+  /** 0 = fromScene, 1 = scene. */
+  mix: number
+  cut: ProgramCut | null
+}
+
+/** Which Program scene is on air at a session time. Before the first cut, `fallback` holds. */
+export function programStateAt(
+  cuts: ProgramCut[] | null | undefined,
+  sessionTime: number,
+  fallback: ProgramScene = 'host',
+): ProgramState {
+  const list = cuts || []
+  let idx = -1
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].at <= sessionTime + 1e-6) idx = i
+    else break
+  }
+  if (idx < 0) return { scene: fallback, fromScene: fallback, mix: 1, cut: null }
+  const cut = list[idx]
+  const prevScene = idx > 0 ? list[idx - 1].scene : fallback
+  const fade = cut.fade || 0
+  if (fade > 0.001 && prevScene !== cut.scene) {
+    const mix = Math.max(0, Math.min(1, (sessionTime - cut.at) / fade))
+    if (mix < 1) return { scene: cut.scene, fromScene: prevScene, mix, cut }
+  }
+  return { scene: cut.scene, fromScene: cut.scene, mix: 1, cut }
+}
+
+/** Human message for getUserMedia failures (denied, missing, busy, insecure). */
+export function mediaErrorMessage(err: unknown, device: 'camera' | 'microphone' = 'camera'): string {
+  const name = err instanceof DOMException || err instanceof Error ? err.name : ''
+  const noun = device === 'camera' ? 'Camera' : 'Microphone'
+  switch (name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+      return `${noun} permission was denied. Click the lock/camera icon in the address bar, allow the ${device}, then try again.`
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+      return `No ${device} was found. Plug one in (or pick another device) and try again.`
+    case 'NotReadableError':
+    case 'TrackStartError':
+      return `The ${device} is busy or blocked by the system. Close other apps using it (Zoom, Meet, OBS) and try again.`
+    case 'OverconstrainedError':
+    case 'ConstraintNotSatisfiedError':
+      return `The selected ${device} is not available any more. Pick “Default” or another device.`
+    case 'SecurityError':
+      return `${noun} is blocked on this page. It needs HTTPS (or localhost) and must not be disabled by browser policy.`
+    case 'AbortError':
+      return `${noun} failed to start. Try again, or reconnect the device.`
+    default:
+      return err instanceof Error && err.message ? err.message : `${noun} access failed`
+  }
+}
+
 export function newSyncGroupId() {
   return `av_${Math.random().toString(36).slice(2, 10)}`
 }
@@ -249,7 +352,12 @@ export type CameraCapture = {
   key: string
   recorder: MediaRecorder
   done: Promise<Blob>
+  /** Bytes buffered so far (RAM, until Stop). For long-take quota warnings. */
+  bytes?: () => number
 }
+
+/** ~2.5 Mbps keeps 720p30 near CAMERA_MB_PER_MIN instead of Chrome's much larger default. */
+export const CAMERA_VIDEO_BPS = 2_500_000
 
 export function videoInputConstraints(deviceId?: string): MediaTrackConstraints {
   return {
@@ -268,10 +376,15 @@ export async function openCameraStream(deviceId?: string): Promise<MediaStream> 
   if (!window.isSecureContext) {
     throw new Error('Camera needs a secure context (localhost or HTTPS)')
   }
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: videoInputConstraints(deviceId),
-  })
+  let stream: MediaStream
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: videoInputConstraints(deviceId),
+    })
+  } catch (err) {
+    throw new Error(mediaErrorMessage(err, 'camera'))
+  }
   const live = stream.getVideoTracks().some((t) => t.readyState === 'live')
   if (!live) {
     stream.getTracks().forEach((t) => t.stop())
@@ -295,11 +408,23 @@ export function cameraRecorderMime(): string {
 export function startCameraCapture(key: string, stream: MediaStream): CameraCapture {
   const videoOnly = new MediaStream(stream.getVideoTracks())
   const mime = cameraRecorderMime()
-  const recorder = mime ? new MediaRecorder(videoOnly, { mimeType: mime }) : new MediaRecorder(videoOnly)
+  let recorder: MediaRecorder
+  try {
+    recorder = new MediaRecorder(videoOnly, {
+      ...(mime ? { mimeType: mime } : {}),
+      videoBitsPerSecond: CAMERA_VIDEO_BPS,
+    })
+  } catch {
+    recorder = mime ? new MediaRecorder(videoOnly, { mimeType: mime }) : new MediaRecorder(videoOnly)
+  }
   const chunks: Blob[] = []
+  let total = 0
   const done = new Promise<Blob>((resolve, reject) => {
     recorder.ondataavailable = (event) => {
-      if (event.data.size) chunks.push(event.data)
+      if (event.data.size) {
+        chunks.push(event.data)
+        total += event.data.size
+      }
     }
     recorder.onstop = () => {
       resolve(new Blob(chunks, { type: recorder.mimeType || mime || 'video/webm' }))
@@ -307,7 +432,19 @@ export function startCameraCapture(key: string, stream: MediaStream): CameraCapt
     recorder.onerror = () => reject(new Error('Camera recorder failed'))
   })
   recorder.start(250)
-  return { key, recorder, done }
+  return { key, recorder, done, bytes: () => total }
+}
+
+/** Bytes this origin may still store, or null if the browser will not say. */
+export async function storageBytesLeft(): Promise<number | null> {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.storage?.estimate) return null
+    const { usage, quota } = await navigator.storage.estimate()
+    if (!quota) return null
+    return Math.max(0, quota - (usage || 0))
+  } catch {
+    return null
+  }
 }
 
 export function newCameraClipId() {

@@ -1,5 +1,7 @@
 /** Dual (or more) local audio inputs for the production room. */
 
+import { mediaErrorMessage } from '@/lib/podcast/camera'
+
 export function audioInputConstraints(deviceId: string | undefined, raw: boolean): MediaTrackConstraints {
   const audio: MediaTrackConstraints = {
     deviceId: deviceId ? { exact: deviceId } : undefined,
@@ -16,9 +18,17 @@ export function audioInputConstraints(deviceId: string | undefined, raw: boolean
 
 export async function openInputStream(deviceId: string | undefined, raw: boolean): Promise<MediaStream> {
   if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error('This browser cannot open a microphone')
+    throw new Error(
+      typeof window !== 'undefined' && !window.isSecureContext
+        ? 'Microphone needs a secure context (localhost or HTTPS)'
+        : 'This browser cannot open a microphone',
+    )
   }
-  return navigator.mediaDevices.getUserMedia({ audio: audioInputConstraints(deviceId, raw) })
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio: audioInputConstraints(deviceId, raw) })
+  } catch (err) {
+    throw new Error(mediaErrorMessage(err, 'microphone'))
+  }
 }
 
 /** Open unique devices one at a time so Chrome is less likely to kill the first stream. */

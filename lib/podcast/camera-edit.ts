@@ -8,11 +8,15 @@ import {
   clipKeyframes,
   evalKeyframes,
   newCameraClipId,
+  newProgramCutId,
   normalizeCameraClip,
   normalizeKeyframes,
+  normalizeProgramCuts,
   type CameraClip,
   type CameraFilter,
   type PictureKeyframe,
+  type ProgramCut,
+  type ProgramScene,
   type StingerStyle,
 } from '@/lib/podcast/camera'
 
@@ -311,5 +315,112 @@ export function setStingerStyle(clips: CameraClip[], clipId: string, style: Stin
   return withCameraClips(
     clips,
     clips.map((c) => (c.id === clipId && cameraKind(c) === 'stinger' ? { ...c, stingerStyle: style } : c)),
+  )
+}
+
+export function removeCameraClip(clips: CameraClip[], clipId: string): CameraClip[] {
+  return withCameraClips(
+    clips,
+    clips.filter((c) => c.id !== clipId),
+  )
+}
+
+/** Shallow patch for label / sublabel / overlayFit etc. — goes through normalize. */
+export function patchCameraClip(clips: CameraClip[], clipId: string, patch: Partial<CameraClip>): CameraClip[] {
+  return withCameraClips(
+    clips,
+    clips.map((c) => (c.id === clipId ? { ...c, ...patch, id: c.id } : c)),
+  )
+}
+
+/** Set a graphic (title / stinger) clip length; camera and B-roll stay bounded by their file. */
+export function setGraphicDuration(clips: CameraClip[], clipId: string, seconds: number): CameraClip[] {
+  return withCameraClips(
+    clips,
+    clips.map((c) => {
+      if (c.id !== clipId) return c
+      const kind = cameraKind(c)
+      if (kind !== 'title' && kind !== 'stinger') return c
+      const duration = Math.max(0.2, Math.min(600, seconds))
+      return {
+        ...c,
+        duration,
+        sourceDuration: duration,
+        fadeIn: Math.min(c.fadeIn || 0, duration / 2),
+        fadeOut: Math.min(c.fadeOut || 0, duration / 2),
+      }
+    }),
+  )
+}
+
+/* ---------------------------------------------------------------------------------------------
+ * Program scene cuts (Host / Guest / PIP). One list on the session clock, like an OBS Studio-mode
+ * switch log. Picture export and the Program monitor both read it via programStateAt().
+ * ------------------------------------------------------------------------------------------- */
+
+/** A cut to the scene already on air does nothing — drop it so the list stays readable. */
+export function dropRedundantCuts(cuts: ProgramCut[], fallback: ProgramScene = 'host'): ProgramCut[] {
+  const out: ProgramCut[] = []
+  let current = fallback
+  for (const cut of normalizeProgramCuts(cuts)) {
+    if (cut.scene === current) continue
+    out.push(cut)
+    current = cut.scene
+  }
+  return out
+}
+
+/** Add (or replace within one frame) a scene cut at `at`. */
+export function addProgramCut(
+  cuts: ProgramCut[],
+  at: number,
+  scene: ProgramScene,
+  fade = 0,
+  fallback: ProgramScene = 'host',
+): ProgramCut[] {
+  const t = Math.max(0, at)
+  const kept = cuts.filter((c) => Math.abs(c.at - t) >= 1 / 60)
+  return dropRedundantCuts([...kept, { id: newProgramCutId(), at: t, scene, fade }], fallback)
+}
+
+export function removeProgramCut(cuts: ProgramCut[], cutId: string, fallback: ProgramScene = 'host') {
+  return dropRedundantCuts(
+    cuts.filter((c) => c.id !== cutId),
+    fallback,
+  )
+}
+
+export function moveProgramCut(cuts: ProgramCut[], cutId: string, at: number, fallback: ProgramScene = 'host') {
+  return dropRedundantCuts(
+    cuts.map((c) => (c.id === cutId ? { ...c, at: Math.max(0, at) } : c)),
+    fallback,
+  )
+}
+
+export function setProgramCutFade(cuts: ProgramCut[], cutId: string, fade: number) {
+  return normalizeProgramCuts(cuts.map((c) => (c.id === cutId ? { ...c, fade: Math.max(0, fade) } : c)))
+}
+
+export function setProgramCutScene(
+  cuts: ProgramCut[],
+  cutId: string,
+  scene: ProgramScene,
+  fallback: ProgramScene = 'host',
+) {
+  return dropRedundantCuts(
+    cuts.map((c) => (c.id === cutId ? { ...c, scene } : c)),
+    fallback,
+  )
+}
+
+/** Ripple-delete on the picture clock also pulls later scene cuts. */
+export function rippleProgramCuts(cuts: ProgramCut[], start: number, end: number, fallback: ProgramScene = 'host') {
+  const a = Math.min(start, end)
+  const b = Math.max(start, end)
+  const gap = b - a
+  if (gap < MIN_CLIP) return cuts
+  return dropRedundantCuts(
+    cuts.filter((c) => c.at < a || c.at >= b).map((c) => (c.at >= b ? { ...c, at: Math.max(0, c.at - gap) } : c)),
+    fallback,
   )
 }
