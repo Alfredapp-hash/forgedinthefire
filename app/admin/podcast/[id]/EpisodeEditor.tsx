@@ -20,14 +20,17 @@ import {
   XCircle,
 } from 'lucide-react'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
+import { CleanupPanel, type PostSnapshot } from '@/components/podcast/post/CleanupPanel'
 import { measureAudioDuration, uploadPodcastMedia } from '@/lib/podcast/media-upload'
 import { LEGACY_COVER_URLS, PODCAST } from '@/lib/podcast-meta'
 import {
   loudnessTarget,
   releaseBlockers,
   releaseChecks,
+  type EpisodeSafetyFields,
   type ReleaseCheck,
 } from '@/lib/studio/release'
+import { cleanWords, realignWords, transcriptKind } from '@/lib/studio/transcript'
 import { measureHostedLoudness, measureImage, normalizeHostedAudio } from '@/lib/studio/release-audio'
 import type {
   ContentTopic,
@@ -196,7 +199,19 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [episode?.audio_url])
 
-  async function uploadAudio(file: File, duration?: number, label = 'Audio uploaded') {
+  /**
+   * Host a new audio file and PATCH the episode. `extra` rides along in the same PATCH.
+   * `sameContent` (loudness normalize, clean-up render) keeps word timings and the
+   * protected-words review; any other replacement clears them, because a different edit
+   * may not contain the bleeps and the captions would drift.
+   */
+  async function uploadAudio(
+    file: File,
+    duration?: number,
+    label = 'Audio uploaded',
+    extra: Record<string, unknown> = {},
+    sameContent = false,
+  ) {
     setUploading('Uploading audio…')
     setError(null)
     loudnessRef.current = null
@@ -210,12 +225,27 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         measure(localUrl, false),
       ])
       const seconds = duration ?? (await measureAudioDuration(localUrl)) ?? (await measureAudioDuration(asset.url))
+      const current = episodeRef.current as (PodcastEpisode & EpisodeSafetyFields) | null
+      const reset: Record<string, unknown> = {}
+      let note = ''
+      if (!sameContent && current) {
+        if (Array.isArray(current.transcript_words) && current.transcript_words.length) {
+          reset.transcript_words = null
+          note += ' · timed captions cleared (re-run Transcribe)'
+        }
+        if (current.protected_words_reviewed_at) {
+          reset.protected_words_reviewed = false
+          note += ' · protected-words review needs redoing'
+        }
+      }
       const saved = await save({
         audio_url: asset.url,
         audio_mime: asset.mime_type || file.type || 'audio/mpeg',
         file_size: asset.size_bytes || file.size,
         duration_seconds: seconds ? Math.round(seconds) : null,
-      }, label)
+        ...reset,
+        ...extra,
+      }, label + note)
       if (saved && loud) void persistLoudness(loud)
       return saved
     } catch (err) {
@@ -256,7 +286,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
     try {
       const result = await normalizeHostedAudio(current.audio_url, current.slug || current.title, setNormalizing)
       setNormalizing('Uploading levelled MP3…')
-      const saved = await uploadAudio(result.file, result.duration, `Loudness set to ${result.loudness.lufs.toFixed(1)} LUFS and re-hosted`)
+      const saved = await uploadAudio(result.file, result.duration, `Loudness set to ${result.loudness.lufs.toFixed(1)} LUFS and re-hosted`, {}, true)
       if (saved) {
         const value = { lufs: result.loudness.lufs, peakDb: result.loudness.peakDb, channels: result.loudness.channels }
         setLoudness(value)
@@ -267,6 +297,32 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
     } finally {
       setNormalizing(null)
     }
+  }
+
+  /** One-click revert of the last Clean-up & safety render. */
+  async function revertCleanup() {
+    const current = episodeRef.current as (PodcastEpisode & EpisodeSafetyFields) | null
+    if (!current?.audio_url_previous) return
+    if (!window.confirm('Go back to the audio from before the last clean-up? Bleeps and voice disguise from that clean-up will be undone.')) return
+    const snap = (current.post_edit_snapshot || null) as PostSnapshot | null
+    const patch: Record<string, unknown> = {
+      audio_url: current.audio_url_previous,
+      audio_url_previous: null,
+      post_edit_snapshot: null,
+    }
+    if (snap) {
+      patch.audio_mime = snap.audio_mime
+      patch.file_size = snap.file_size
+      patch.duration_seconds = snap.duration_seconds
+      patch.transcript = snap.transcript ?? ''
+      patch.transcript_words = snap.transcript_words
+      patch.chapters = snap.chapters
+    }
+    loudnessRef.current = null
+    setLoudness(null)
+    setLoudnessState('idle')
+    const saved = await save(patch, 'Reverted to the previous audio')
+    if (saved?.audio_url) void measure(saved.audio_url)
   }
 
   function checksFor(ep: PodcastEpisode | null, loud: Loudness | null): ReleaseCheck[] {
@@ -435,6 +491,11 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         return <JumpButton to="field-transcript" />
       case 'chapters':
         return <JumpButton to="chapters" />
+      case 'guest_consent':
+      case 'guest_final_cut':
+        return <JumpButton to="guest-signoffs" label="Record sign-off" />
+      case 'protected_words':
+        return <JumpButton to="protect" label="Review names" />
       default:
         return null
     }
@@ -638,6 +699,16 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         </div>
       </section>
 
+      {/* ── Clean-up & safety: transcription, bleeps, voice disguise, tidy-up — all in the browser ── */}
+      <CleanupPanel
+        episode={episode as PodcastEpisode & EpisodeSafetyFields}
+        disabled={busy}
+        save={save}
+        publishAudio={async (file, duration, extra, label) => Boolean(await uploadAudio(file, duration, label, extra, true))}
+        revert={revertCleanup}
+        onError={(msg) => { setOk(null); setError(msg) }}
+      />
+
       {/* ── Details ── */}
       <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 grid md:grid-cols-2 gap-3" key={`details-${episode.id}`}>
         <div className="md:col-span-2">
@@ -705,7 +776,22 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         </div>
         <div className="md:col-span-2">
           <Field label="Transcript (paste WebVTT or SRT for timed captions, or plain text)" id="field-transcript">
-            <textarea defaultValue={episode.transcript || ''} rows={6} onBlur={(e) => e.target.value !== (episode.transcript || '') && void save({ transcript: e.target.value })} className={`${input} font-mono text-xs`} />
+            <textarea
+              key={`transcript-${episode.updated_at}`}
+              defaultValue={episode.transcript || ''}
+              rows={6}
+              onBlur={(e) => {
+                const value = e.target.value
+                if (value === (episode.transcript || '')) return
+                const words = cleanWords((episode as PodcastEpisode & EpisodeSafetyFields).transcript_words)
+                // Plain-text edits of a browser transcript keep their timings; a pasted VTT/SRT takes over captions.
+                if (words.length && !value.trim()) void save({ transcript: value, transcript_words: null })
+                else if (words.length && transcriptKind(value) === 'text') {
+                  void save({ transcript: value, transcript_words: realignWords(words, value) })
+                } else void save({ transcript: value })
+              }}
+              className={`${input} font-mono text-xs`}
+            />
           </Field>
         </div>
         <div className="md:col-span-2">
@@ -870,7 +956,7 @@ function FileButton({ label, accept, onFile, disabled, icon }: { label: string; 
   )
 }
 
-function JumpButton({ to }: { to: string }) {
+function JumpButton({ to, label = 'Go to field' }: { to: string; label?: string }) {
   return (
     <button
       type="button"
@@ -882,7 +968,7 @@ function JumpButton({ to }: { to: string }) {
       }}
       className="whitespace-nowrap rounded-lg border border-[#27313B] px-3 py-1.5 text-xs text-[#B8C4CF]"
     >
-      Go to field
+      {label}
     </button>
   )
 }

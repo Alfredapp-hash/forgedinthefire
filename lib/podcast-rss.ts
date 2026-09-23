@@ -12,7 +12,8 @@ import {
   type ShowMeta,
 } from '@/lib/podcast'
 import { PODCAST_GUID_NAMESPACE } from '@/lib/podcast-meta'
-import { audioExtension, normalizeAudioMime, transcriptKind } from '@/lib/studio/release'
+import { audioExtension, normalizeAudioMime } from '@/lib/studio/release'
+import { episodeHasTimedTranscript } from '@/lib/studio/transcript'
 import type { PodcastEpisode } from '@/lib/studio/types'
 
 /** RFC 4122 UUIDv5 (SHA-1). */
@@ -137,8 +138,7 @@ export function buildItem(ep: PodcastEpisode, opts: FeedOptions) {
   const transcript = (ep.transcript || '').trim()
   if (transcript) {
     const base = `${meta.site}/podcast/${ep.slug}`
-    const kind = transcriptKind(transcript)
-    if (kind === 'vtt' || kind === 'srt') {
+    if (episodeHasTimedTranscript(ep)) {
       lines.push(`      <podcast:transcript url="${escapeXml(withToken(`${base}/transcript.vtt`, token))}" type="text/vtt" rel="captions" />`)
       lines.push(`      <podcast:transcript url="${escapeXml(withToken(`${base}/transcript.srt`, token))}" type="application/x-subrip" rel="captions" />`)
     } else {
