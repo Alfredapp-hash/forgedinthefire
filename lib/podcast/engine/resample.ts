@@ -96,7 +96,7 @@ export function resampleSinc(
   opts: { zeroCrossings?: number } = {},
 ): Float32Array {
   if (fromRate === toRate) return input
-  const t = buildTable(fromRate, toRate, opts.zeroCrossings ?? 16)
+  const t = buildTable(fromRate, toRate, opts.zeroCrossings ?? 10)
   const outLen = resampledLength(input.length, fromRate, toRate)
   const out = new Float32Array(outLen)
   const { taps, half, coeffs, exact, L, M, phases } = t

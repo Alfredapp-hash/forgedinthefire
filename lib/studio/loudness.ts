@@ -188,23 +188,35 @@ function tpRows() {
 /** Max |interpolated| value strictly between samples n and n+1 (3 oversampled points). */
 export function interSamplePeak(data: Float32Array, n: number): number {
   const rows = tpRows()
+  const r1 = rows[0]
+  const r2 = rows[1]
+  const r3 = rows[2]
   const len = data.length
   const first = n - TP_HALF + 1
-  let peak = 0
-  for (const row of rows) {
-    let acc = 0
-    if (first >= 0 && first + TP_TAPS <= len) {
-      for (let k = 0; k < TP_TAPS; k++) acc += data[first + k] * row[k]
-    } else {
-      for (let k = 0; k < TP_TAPS; k++) {
-        const j = first + k
-        if (j >= 0 && j < len) acc += data[j] * row[k]
-      }
+  let a1 = 0
+  let a2 = 0
+  let a3 = 0
+  if (first >= 0 && first + TP_TAPS <= len) {
+    for (let k = 0; k < TP_TAPS; k++) {
+      const x = data[first + k]
+      a1 += x * r1[k]
+      a2 += x * r2[k]
+      a3 += x * r3[k]
     }
-    const a = acc < 0 ? -acc : acc
-    if (a > peak) peak = a
+  } else {
+    for (let k = 0; k < TP_TAPS; k++) {
+      const j = first + k
+      if (j < 0 || j >= len) continue
+      const x = data[j]
+      a1 += x * r1[k]
+      a2 += x * r2[k]
+      a3 += x * r3[k]
+    }
   }
-  return peak
+  if (a1 < 0) a1 = -a1
+  if (a2 < 0) a2 = -a2
+  if (a3 < 0) a3 = -a3
+  return a1 > a2 ? (a1 > a3 ? a1 : a3) : a2 > a3 ? a2 : a3
 }
 
 /**
@@ -266,23 +278,32 @@ export function applyTruePeakLimiter({ sampleRate, channels }: ChannelData, opts
   const release = Math.exp(-1 / (sampleRate * ((opts.releaseMs ?? 100) / 1000)))
   const gateLevel = (ceiling / gain) * 0.5
 
+  // Inter-sample segment s (between s and s+1) is shared by samples s and s+1: cache it.
+  const segIdx = channels.map(() => -1)
+  const segVal = channels.map(() => 0)
+  const segment = (c: number, s: number) => {
+    if (segIdx[c] === s) return segVal[c]
+    const ch = channels[c]
+    const a = ch[s] < 0 ? -ch[s] : ch[s]
+    const b = ch[s + 1] < 0 ? -ch[s + 1] : ch[s + 1]
+    const v = a >= gateLevel || b >= gateLevel ? interSamplePeak(ch, s) : 0
+    segIdx[c] = s
+    segVal[c] = v
+    return v
+  }
   const need = (i: number) => {
     let p = 0
-    for (const ch of channels) {
-      const x = ch[i]
+    for (let c = 0; c < channels.length; c++) {
+      const x = channels[c][i]
       const a = x < 0 ? -x : x
       if (a > p) p = a
-      const prev = i > 0 ? (ch[i - 1] < 0 ? -ch[i - 1] : ch[i - 1]) : 0
-      const next = i + 1 < n ? (ch[i + 1] < 0 ? -ch[i + 1] : ch[i + 1]) : 0
-      if (a >= gateLevel || prev >= gateLevel || next >= gateLevel) {
-        if (i > 0) {
-          const v = interSamplePeak(ch, i - 1)
-          if (v > p) p = v
-        }
-        if (i + 1 < n) {
-          const v = interSamplePeak(ch, i)
-          if (v > p) p = v
-        }
+      if (i > 0) {
+        const v = segment(c, i - 1)
+        if (v > p) p = v
+      }
+      if (i + 1 < n) {
+        const v = segment(c, i)
+        if (v > p) p = v
       }
     }
     const out = p * gain
