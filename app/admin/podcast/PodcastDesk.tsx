@@ -26,9 +26,10 @@ import type {
 import { DISTRIBUTION_LABELS, EPISODE_PIPELINE } from '@/lib/studio/types'
 import { PODCAST } from '@/lib/podcast-meta'
 import { RecordingStudio } from './RecordingStudio'
+import { LiveControlRoom } from '@/components/podcast/live-control-room'
 import { setAdminPath } from '@/lib/fbot/path-signal'
 
-type DeskTab = 'studio' | 'episodes' | 'show' | 'distribution' | 'analytics' | 'private' | 'embeds'
+type DeskTab = 'studio' | 'live' | 'episodes' | 'show' | 'distribution' | 'analytics' | 'private' | 'embeds'
 
 type AnalyticsPayload = {
   days: number
@@ -55,7 +56,7 @@ const PIPELINE_COLS: EpisodeStatus[] = [
   'published',
 ]
 
-const DESK_TABS: DeskTab[] = ['studio', 'episodes', 'show', 'distribution', 'analytics', 'private', 'embeds']
+const DESK_TABS: DeskTab[] = ['studio', 'live', 'episodes', 'show', 'distribution', 'analytics', 'private', 'embeds']
 
 export function PodcastDesk() {
   const [tab, setTab] = useState<DeskTab>('studio')
@@ -287,6 +288,7 @@ export function PodcastDesk() {
 
   const tabs: { id: DeskTab; label: string; icon: typeof Mic2 }[] = [
     { id: 'studio', label: 'Production room', icon: AudioLines },
+    { id: 'live', label: 'Live show', icon: Radio },
     { id: 'episodes', label: 'Episodes', icon: Mic2 },
     { id: 'show', label: 'Show', icon: Settings2 },
     { id: 'distribution', label: 'Distribution', icon: Globe2 },
@@ -351,6 +353,8 @@ export function PodcastDesk() {
           onEpisodesChange={setEpisodes}
         />
       )}
+
+      {tab === 'live' && <LiveControlRoom episodes={episodes} />}
 
       {tab === 'episodes' && (
         <>

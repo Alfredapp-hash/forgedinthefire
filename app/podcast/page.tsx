@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { formatDuration, getPublishedEpisodes, PODCAST } from '@/lib/podcast'
 import { BreadcrumbStructuredData } from '@/components/structured-data'
 import { Rss } from 'lucide-react'
+import { LiveBanner } from '@/components/podcast/live-banner'
 
 export const dynamic = 'force-dynamic'
 
@@ -74,6 +75,7 @@ export default async function PodcastIndexPage() {
 
       <section className="pb-24">
         <div className="container-wide section-padding max-w-3xl mx-auto space-y-6">
+          <LiveBanner />
           {episodes.length === 0 ? (
             <div className="rounded-2xl border border-[#27313B] bg-[#151B22] p-10 text-center">
               <p className="text-[#F6FAFC] font-medium mb-2">Episodes are being prepared.</p>
