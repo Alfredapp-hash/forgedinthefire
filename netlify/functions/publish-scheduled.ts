@@ -9,12 +9,13 @@ function env(name: string) {
 }
 
 /**
- * Hourly scheduler that hits the Next.js cron route to publish due blog posts
- * and podcast episodes. Requires CRON_SECRET in Netlify env (same value the
- * App Router route expects as Bearer token).
+ * Scheduler that hits the Next.js cron route to publish due blog posts and
+ * podcast episodes. Runs every 15 minutes so a scheduled release goes out
+ * close to its time. Requires CRON_SECRET in Netlify env (same value the
+ * App Router route expects as a Bearer token) — without it nothing publishes.
  */
-export default async () => {
-  const site = env('URL') || env('DEPLOY_PRIME_URL') || 'https://forgedinthefireohio.org'
+const publishScheduled = async () => {
+  const site = env('URL') || 'https://forgedinthefireohio.org'
   const secret = env('CRON_SECRET')
   if (!secret) {
     console.error('CRON_SECRET is not set — refusing to call publish-scheduled')
@@ -23,6 +24,7 @@ export default async () => {
   const target = `${site.replace(/\/$/, '')}/api/cron/publish-scheduled`
 
   const res = await fetch(target, {
+    method: 'POST',
     headers: { Authorization: `Bearer ${secret}` },
   })
   const body = await res.text()
@@ -37,6 +39,8 @@ export default async () => {
   })
 }
 
+export default publishScheduled
+
 export const config = {
-  schedule: '@hourly',
+  schedule: '*/15 * * * *',
 }

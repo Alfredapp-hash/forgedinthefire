@@ -24,7 +24,7 @@ import type {
   EpisodeStatus,
 } from '@/lib/studio/types'
 import { DISTRIBUTION_LABELS, EPISODE_PIPELINE } from '@/lib/studio/types'
-import { PODCAST } from '@/lib/podcast-meta'
+import { APPLE_CATEGORIES, PODCAST } from '@/lib/podcast-meta'
 import { RecordingStudio } from './RecordingStudio'
 import { setAdminPath } from '@/lib/fbot/path-signal'
 
@@ -33,6 +33,8 @@ type DeskTab = 'studio' | 'episodes' | 'show' | 'distribution' | 'analytics' | '
 type AnalyticsPayload = {
   days: number
   total: number
+  downloads?: number
+  plays?: number
   by_day: { date: string; count: number }[]
   by_app: { name: string; count: number }[]
   by_country: { name: string; count: number }[]
@@ -442,14 +444,14 @@ export function PodcastDesk() {
             [
               ['title', 'Show title'],
               ['author', 'Author'],
-              ['email', 'Owner email'],
-              ['category', 'Category'],
-              ['subcategory', 'Subcategory'],
-              ['language', 'Language'],
-              ['cover_url', 'Cover URL'],
+              ['email', 'Owner email (Apple / Spotify verify here)'],
+              ['language', 'Language (e.g. en-us)'],
+              ['cover_url', 'Cover URL (square JPG/PNG, 3000×3000)'],
               ['website_url', 'Website'],
               ['copyright', 'Copyright'],
               ['owner_name', 'Owner name'],
+              ['funding_url', 'Donate link (podcast:funding)'],
+              ['podcast_guid', 'podcast:guid override (leave blank)'],
             ] as const
           ).map(([key, label]) => (
             <label key={key} className="block">
@@ -464,6 +466,29 @@ export function PodcastDesk() {
               />
             </label>
           ))}
+          <label className="block">
+            <span className="block text-[11px] uppercase tracking-[0.16em] text-[#A9B8C6] mb-1">Apple category</span>
+            <select
+              value={show.category}
+              onChange={(e) => void saveShow({ category: e.target.value, subcategory: null })}
+              className="w-full rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
+            >
+              {!(show.category in APPLE_CATEGORIES) && <option value={show.category}>{show.category} (not an Apple category)</option>}
+              {Object.keys(APPLE_CATEGORIES).map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            <span className="block text-[11px] uppercase tracking-[0.16em] text-[#A9B8C6] mb-1">Subcategory</span>
+            <select
+              value={show.subcategory || ''}
+              onChange={(e) => void saveShow({ subcategory: e.target.value || null })}
+              disabled={!(APPLE_CATEGORIES[show.category] || []).length}
+              className="w-full rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC] disabled:opacity-50"
+            >
+              <option value="">None</option>
+              {(APPLE_CATEGORIES[show.category] || []).map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
           <label className="block md:col-span-2">
             <span className="block text-[11px] uppercase tracking-[0.16em] text-[#A9B8C6] mb-1">Description</span>
             <textarea
@@ -482,6 +507,14 @@ export function PodcastDesk() {
               onChange={(e) => void saveShow({ explicit: e.target.checked })}
             />
             Mark show explicit
+          </label>
+          <label className="flex items-center gap-2 text-sm text-[#B8C4CF]">
+            <input
+              type="checkbox"
+              checked={show.locked ?? true}
+              onChange={(e) => void saveShow({ locked: e.target.checked })}
+            />
+            Lock feed (podcast:locked — stops other hosts importing the show)
           </label>
           <label className="block">
             <span className="block text-[11px] uppercase tracking-[0.16em] text-[#A9B8C6] mb-1">iTunes type</span>
@@ -523,6 +556,14 @@ export function PodcastDesk() {
               </li>
               <li>
                 <strong className="text-[#F6FAFC]">Spotify:</strong> podcasters.spotify.com → Add your podcast → RSS → claim with the email on the feed.
+              </li>
+              <li>
+                <strong className="text-[#F6FAFC]">YouTube Music:</strong> studio.youtube.com → Content → Podcasts → New podcast → Submit RSS feed.
+              </li>
+              <li>
+                <strong className="text-[#F6FAFC]">Before submitting:</strong>{' '}
+                <a href={`https://podba.se/validate/?url=${encodeURIComponent(PODCAST.feed)}`} target="_blank" rel="noopener noreferrer" className="text-[#53D6FF] underline">validate the feed</a>{' '}
+                and add the show to <a href="https://podcastindex.org/add" target="_blank" rel="noopener noreferrer" className="text-[#53D6FF] underline">Podcast Index</a> (feeds Podcasting 2.0 apps).
               </li>
               <li>
                 <strong className="text-[#F6FAFC]">Amazon Music:</strong> podcasters.amazon.com → Add podcast via RSS → complete Amazon Music for Podcasters listing.
@@ -576,7 +617,7 @@ export function PodcastDesk() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="grid md:grid-cols-3 gap-3 flex-1">
-              <Stat label="Events (30d)" value={String(analytics?.total ?? 0)} />
+              <Stat label="Downloads · plays (30d)" value={`${analytics?.downloads ?? analytics?.total ?? 0} · ${analytics?.plays ?? 0}`} />
               <Stat label="Top app" value={analytics?.by_app[0]?.name || '—'} />
               <Stat label="Top country" value={analytics?.by_country[0]?.name || '—'} />
             </div>

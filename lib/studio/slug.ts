@@ -9,7 +9,7 @@ export function slugify(value: string) {
 }
 
 export function uniqueSlug(base: string, taken: Set<string>) {
-  let slug = slugify(base)
+  const slug = slugify(base)
   if (!taken.has(slug)) return slug
   let n = 2
   while (taken.has(`${slug}-${n}`)) n += 1

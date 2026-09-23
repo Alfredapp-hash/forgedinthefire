@@ -27,6 +27,8 @@ export type PodcastChapter = {
   start_ms: number
   title: string
   url?: string | null
+  /** Optional chapter artwork (Podcasting 2.0 JSON chapters `img`). */
+  img?: string | null
 }
 
 export type PodcastAdMarker = {
@@ -78,6 +80,10 @@ export type PodcastEpisode = {
   chapters: PodcastChapter[]
   keywords: string[]
   ad_markers: PodcastAdMarker[]
+  /** Integrated loudness of the hosted file (20260923_podcast_release.sql). */
+  loudness_lufs?: number | null
+  loudness_peak_db?: number | null
+  audio_channels?: number | null
   created_by: string | null
   created_at: string
   updated_at: string
@@ -99,6 +105,10 @@ export type PodcastShow = {
   copyright: string | null
   itunes_type: 'episodic' | 'serial'
   owner_name: string | null
+  /** Podcasting 2.0 overrides (20260923_podcast_release.sql). */
+  podcast_guid?: string | null
+  funding_url?: string | null
+  locked?: boolean | null
   is_default: boolean
   created_at: string
   updated_at: string
