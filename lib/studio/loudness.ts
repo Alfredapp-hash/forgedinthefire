@@ -81,10 +81,16 @@ export function integratedLoudness({ sampleRate, channels }: ChannelData): Loudn
 }
 
 /**
- * Apply `gainDb` with a 5 ms look-ahead brickwall limiter at `ceilingDb` (sample peak)
- * and an 80 ms release. Mutates the channels in place.
+ * Apply `gainDb` with a 5 ms look-ahead limiter at `ceilingDb` and an 80 ms release.
+ * Mutates the channels in place. Now true-peak aware (4× oversampled detection, smooth
+ * gain curve); the old sample-peak brickwall is kept as `applyGainWithSamplePeakLimiter`.
  */
-export function applyGainWithLimiter({ sampleRate, channels }: ChannelData, gainDb: number, ceilingDb = -1.5) {
+export function applyGainWithLimiter(data: ChannelData, gainDb: number, ceilingDb = -1.5) {
+  applyTruePeakLimiter(data, { gainDb, ceilingDb, lookaheadMs: 5, releaseMs: 80 })
+}
+
+/** Legacy sample-peak brickwall (kept for callers that relied on its exact behaviour). */
+export function applyGainWithSamplePeakLimiter({ sampleRate, channels }: ChannelData, gainDb: number, ceilingDb = -1.5) {
   const gain = 10 ** (gainDb / 20)
   const ceiling = 10 ** (ceilingDb / 20)
   const n = channels[0]?.length ?? 0
@@ -129,4 +135,206 @@ export function applyGainWithLimiter({ sampleRate, channels }: ChannelData, gain
 /** Directory convention: −16 LUFS for stereo, −19 LUFS for mono. */
 export function targetLufs(channels: number) {
   return channels >= 2 ? -16 : -19
+}
+
+// ---------------------------------------------------------------------------
+// True peak (BS.1770-4 Annex 2 style): 4× oversampling, 12 taps per phase.
+// ---------------------------------------------------------------------------
+
+const TP_PHASES = 4
+const TP_TAPS = 12 // per phase; taps read x[n-5 .. n+6] for a point between n and n+1
+const TP_HALF = 6
+
+function tpKernel(): Float32Array[] {
+  const beta = 6
+  const kaiser0 = (x: number) => {
+    if (x <= -1 || x >= 1) return 0
+    const i0 = (v: number) => {
+      let sum = 1
+      let term = 1
+      const q = (v * v) / 4
+      for (let k = 1; k < 48; k++) {
+        term *= q / (k * k)
+        sum += term
+      }
+      return sum
+    }
+    return i0(beta * Math.sqrt(1 - x * x)) / i0(beta)
+  }
+  const rows: Float32Array[] = []
+  for (let p = 1; p < TP_PHASES; p++) {
+    const frac = p / TP_PHASES
+    const row = new Float32Array(TP_TAPS)
+    let sum = 0
+    for (let k = 0; k < TP_TAPS; k++) {
+      const x = frac + TP_HALF - 1 - k // distance from x[n-5+k]
+      const px = Math.PI * x
+      const h = (x === 0 ? 1 : Math.sin(px) / px) * kaiser0(x / (TP_HALF + 0.5))
+      row[k] = h
+      sum += h
+    }
+    for (let k = 0; k < TP_TAPS; k++) row[k] /= sum
+    rows.push(row)
+  }
+  return rows
+}
+
+let TP_ROWS: Float32Array[] | null = null
+function tpRows() {
+  if (!TP_ROWS) TP_ROWS = tpKernel()
+  return TP_ROWS
+}
+
+/** Max |interpolated| value strictly between samples n and n+1 (3 oversampled points). */
+export function interSamplePeak(data: Float32Array, n: number): number {
+  const rows = tpRows()
+  const len = data.length
+  const first = n - TP_HALF + 1
+  let peak = 0
+  for (const row of rows) {
+    let acc = 0
+    if (first >= 0 && first + TP_TAPS <= len) {
+      for (let k = 0; k < TP_TAPS; k++) acc += data[first + k] * row[k]
+    } else {
+      for (let k = 0; k < TP_TAPS; k++) {
+        const j = first + k
+        if (j >= 0 && j < len) acc += data[j] * row[k]
+      }
+    }
+    const a = acc < 0 ? -acc : acc
+    if (a > peak) peak = a
+  }
+  return peak
+}
+
+/**
+ * 4× oversampled true peak (linear) across channels. Inter-sample points are only
+ * evaluated where a neighbouring sample is within 6 dB of the running maximum, which
+ * keeps hour-long masters fast without missing realistic overs.
+ */
+export function truePeak(channels: Float32Array[]): number {
+  let peak = 0
+  for (const data of channels) {
+    for (let i = 0; i < data.length; i++) {
+      const a = data[i] < 0 ? -data[i] : data[i]
+      if (a > peak) peak = a
+    }
+  }
+  const gate = peak * 0.5
+  let tp = peak
+  for (const data of channels) {
+    const n = data.length
+    for (let i = 0; i + 1 < n; i++) {
+      const a = data[i] < 0 ? -data[i] : data[i]
+      const b = data[i + 1] < 0 ? -data[i + 1] : data[i + 1]
+      if (a < gate && b < gate) continue
+      const v = interSamplePeak(data, i)
+      if (v > tp) tp = v
+    }
+  }
+  return tp
+}
+
+export function truePeakDb(channels: Float32Array[]): number {
+  const tp = truePeak(channels)
+  return tp > 0 ? 20 * Math.log10(tp) : -Infinity
+}
+
+export type TruePeakLimiterOptions = {
+  /** Pre-gain in dB applied before limiting. */
+  gainDb?: number
+  /** True-peak ceiling (dBTP). Default −1. */
+  ceilingDb?: number
+  lookaheadMs?: number
+  releaseMs?: number
+}
+
+/**
+ * Look-ahead true-peak limiter with a smooth gain curve. Required gain per sample is
+ * computed from the 4× oversampled peak around that sample; a forward sliding minimum
+ * over the look-ahead window followed by a moving average of the same length gives a
+ * linear attack ramp that reaches the needed reduction exactly at the peak; release is
+ * a one-pole return to unity. Mutates channels in place. No hard clipping.
+ */
+export function applyTruePeakLimiter({ sampleRate, channels }: ChannelData, opts: TruePeakLimiterOptions = {}) {
+  const gain = 10 ** ((opts.gainDb ?? 0) / 20)
+  // Aim a hair under the ceiling: gain modulation can nudge the reconstructed peak.
+  const ceiling = 10 ** (((opts.ceilingDb ?? -1) - 0.05) / 20)
+  const n = channels[0]?.length ?? 0
+  if (!n) return
+  const L = Math.max(8, Math.round((sampleRate * (opts.lookaheadMs ?? 5)) / 1000))
+  const release = Math.exp(-1 / (sampleRate * ((opts.releaseMs ?? 100) / 1000)))
+  const gateLevel = (ceiling / gain) * 0.5
+
+  const need = (i: number) => {
+    let p = 0
+    for (const ch of channels) {
+      const x = ch[i]
+      const a = x < 0 ? -x : x
+      if (a > p) p = a
+      const prev = i > 0 ? (ch[i - 1] < 0 ? -ch[i - 1] : ch[i - 1]) : 0
+      const next = i + 1 < n ? (ch[i + 1] < 0 ? -ch[i + 1] : ch[i + 1]) : 0
+      if (a >= gateLevel || prev >= gateLevel || next >= gateLevel) {
+        if (i > 0) {
+          const v = interSamplePeak(ch, i - 1)
+          if (v > p) p = v
+        }
+        if (i + 1 < n) {
+          const v = interSamplePeak(ch, i)
+          if (v > p) p = v
+        }
+      }
+    }
+    const out = p * gain
+    return out > ceiling ? ceiling / out : 1
+  }
+
+  // Monotonic deque for the forward window minimum m[k] = min(r[k..k+L]).
+  const cap = L + 2
+  const qIdx = new Int32Array(cap)
+  const qVal = new Float32Array(cap)
+  let head = 0
+  let tail = 0
+  let size = 0
+  // Moving average of m over L+1 samples.
+  const ring = new Float64Array(L + 1).fill(1)
+  let ringPos = 0
+  let ringSum = L + 1
+  let env = 1
+
+  for (let i = 0; i < n + L; i++) {
+    if (i < n) {
+      const v = need(i)
+      while (size && qVal[(tail - 1 + cap) % cap] >= v) {
+        tail = (tail - 1 + cap) % cap
+        size--
+      }
+      qIdx[tail] = i
+      qVal[tail] = v
+      tail = (tail + 1) % cap
+      size++
+    }
+    // k runs from −L so the average window is primed with real minima before output.
+    const k = i - L
+    while (size && qIdx[head] < k) {
+      head = (head + 1) % cap
+      size--
+    }
+    const m = size ? qVal[head] : 1
+    ringSum += m - ring[ringPos]
+    ring[ringPos] = m
+    ringPos = ringPos + 1 === ring.length ? 0 : ringPos + 1
+    if (k < 0) continue
+    // Average of the last L+1 minima; each is ≤ r at any peak inside their window.
+    const g = ringSum / ring.length
+    env = g < env ? g : g + (env - g) * release
+    const total = gain * env
+    for (const ch of channels) ch[k] *= total
+  }
+}
+
+/** Integrated loudness + true peak in one call. */
+export function measureProgram(data: ChannelData): LoudnessResult & { truePeakDb: number } {
+  const r = integratedLoudness(data)
+  return { ...r, truePeakDb: truePeakDb(data.channels) }
 }
