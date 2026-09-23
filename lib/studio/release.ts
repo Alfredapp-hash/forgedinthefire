@@ -16,6 +16,28 @@ export type ReleaseCheck = {
   detail?: string
 }
 
+/**
+ * Survivor-safety fields (20260924000002_podcast_ai_safety.sql). Optional so the checklist
+ * degrades gracefully before the migration runs (the key is simply absent from the row).
+ */
+export type EpisodeSafetyFields = {
+  transcript_words?: unknown
+  audio_url_previous?: string | null
+  post_edit_snapshot?: unknown
+  protected_words_reviewed_at?: string | null
+  protected_words_reviewed_by?: string | null
+  guest_consent_confirmed?: boolean | null
+  guest_consent_confirmed_by?: string | null
+  guest_consent_confirmed_at?: string | null
+  guest_final_cut_approved?: boolean | null
+  guest_final_cut_approved_by?: string | null
+  guest_final_cut_approved_at?: string | null
+  guest_final_cut_audio_url?: string | null
+}
+
+/** Minimal consent shape; matches what lib/podcast/guest-consent.ts is expected to return. */
+export type GuestConsentSummary = { status: string; revoked_at?: string | null }
+
 export type ReleaseContext = {
   show?: Pick<PodcastShow, 'cover_url'> | null
   /** Measured client-side from the hosted file; omit on the server. */
@@ -29,6 +51,12 @@ export type ReleaseContext = {
   siblings?: Pick<PodcastEpisode, 'id' | 'season' | 'episode_number' | 'episode_type'>[]
   /** Server mode: only checks that can be proven from the row. */
   server?: boolean
+  /**
+   * Guest consent records when available (Stream C: getEpisodeConsents(episodeId)).
+   * undefined → fall back to the manual "consent on file" confirmation column.
+   * TODO(guest-consent): pass getEpisodeConsents(ep.id) from the editor and the PATCH route.
+   */
+  guestConsents?: GuestConsentSummary[] | null
 }
 
 /** Formats Apple Podcasts, Spotify, and YouTube Music ingest reliably. */
@@ -68,7 +96,7 @@ export function isSupportedAudio(mime: string | null | undefined, url?: string |
   return (SUPPORTED_AUDIO_MIME as readonly string[]).includes(normalizeAudioMime(mime, url))
 }
 
-export function releaseChecks(ep: PodcastEpisode, ctx: ReleaseContext = {}): ReleaseCheck[] {
+export function releaseChecks(ep: PodcastEpisode & EpisodeSafetyFields, ctx: ReleaseContext = {}): ReleaseCheck[] {
   const checks: ReleaseCheck[] = []
   const add = (c: ReleaseCheck) => checks.push(c)
 
@@ -231,14 +259,18 @@ export function releaseChecks(ep: PodcastEpisode, ctx: ReleaseContext = {}): Rel
       : 'Set the episode number (trailers and bonus episodes can skip it).',
   })
 
+  guestSafetyChecks(ep, ctx).forEach(add)
+
   if (!ctx.server) {
     const t = (ep.transcript || '').trim()
+    const timedWords = Array.isArray(ep.transcript_words) && ep.transcript_words.length > 0
+    const kind = t ? transcriptKind(t) : null
     add({
       id: 'transcript',
-      label: 'Transcript',
+      label: 'Transcript present',
       level: t ? 'ok' : 'warn',
-      detail: t ? transcriptKind(t).toUpperCase() : undefined,
-      fix: 'Optional but recommended: paste a transcript (VTT or SRT gives apps timed captions).',
+      detail: !t ? undefined : kind !== 'text' ? kind!.toUpperCase() : timedWords ? 'timed (browser transcription)' : 'text only',
+      fix: 'Recommended: use “Transcribe” in Clean-up & safety, or paste a transcript (VTT or SRT gives apps timed captions).',
     })
 
     const chapters = ep.chapters || []
@@ -257,6 +289,79 @@ export function releaseChecks(ep: PodcastEpisode, ctx: ReleaseContext = {}): Rel
     })
   }
 
+  return checks
+}
+
+const has = (ep: object, key: string) => key in ep
+
+function when(iso?: string | null) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10)
+}
+
+/**
+ * Guest episodes: consent, the guest's sign-off on the final cut, and a protected-words
+ * review are release blockers. Enforced on the server too once the columns exist.
+ */
+export function guestSafetyChecks(ep: PodcastEpisode & EpisodeSafetyFields, ctx: ReleaseContext = {}): ReleaseCheck[] {
+  const hasGuest = Boolean((ep.guest_name || '').trim())
+  if (!hasGuest) return []
+  const checks: ReleaseCheck[] = []
+  const migrated = has(ep, 'guest_final_cut_approved')
+  if (!migrated) {
+    // Before 20260924000002_podcast_ai_safety.sql there is nowhere to record approvals.
+    if (!ctx.server) {
+      checks.push({
+        id: 'guest_safety_setup',
+        label: 'Guest safety sign-offs',
+        level: 'warn',
+        fix: 'Ask an admin to run the 20260924000002_podcast_ai_safety.sql database update so consent and final-cut approval can be recorded.',
+      })
+    }
+    return checks
+  }
+
+  let consentOk = false
+  let consentDetail: string | undefined
+  if (ctx.guestConsents) {
+    const active = ctx.guestConsents.filter((c) => !c.revoked_at && /^(signed|granted|active|approved)$/i.test(c.status))
+    consentOk = active.length > 0
+    consentDetail = consentOk ? `${active.length} signed` : ctx.guestConsents.some((c) => c.revoked_at) ? 'revoked' : 'not signed'
+  } else {
+    consentOk = Boolean(ep.guest_consent_confirmed)
+    consentDetail = consentOk ? [ep.guest_consent_confirmed_by, when(ep.guest_consent_confirmed_at)].filter(Boolean).join(' · ') : undefined
+  }
+  checks.push({
+    id: 'guest_consent',
+    label: 'Guest consent on file',
+    level: consentOk ? 'ok' : 'block',
+    detail: consentDetail,
+    fix: consentDetail === 'revoked'
+      ? 'The guest withdrew consent. Do not release this episode.'
+      : 'Confirm the guest’s signed release form is on file before this episode can go out.',
+  })
+
+  const approved = Boolean(ep.guest_final_cut_approved)
+  const stale = approved && Boolean(ep.guest_final_cut_audio_url) && ep.guest_final_cut_audio_url !== ep.audio_url
+  checks.push({
+    id: 'guest_final_cut',
+    label: 'Guest approved final cut',
+    level: approved && !stale ? 'ok' : 'block',
+    detail: approved ? [ep.guest_final_cut_approved_by, when(ep.guest_final_cut_approved_at)].filter(Boolean).join(' · ') || undefined : undefined,
+    fix: stale
+      ? 'The audio changed after the guest approved it. Share the new version and record their approval again.'
+      : 'Let the guest hear the finished episode, then record their approval.',
+  })
+
+  const reviewed = Boolean(ep.protected_words_reviewed_at)
+  checks.push({
+    id: 'protected_words',
+    label: 'Protected words reviewed',
+    level: reviewed ? 'ok' : 'block',
+    detail: reviewed ? [ep.protected_words_reviewed_by, when(ep.protected_words_reviewed_at)].filter(Boolean).join(' · ') || undefined : undefined,
+    fix: 'In Clean-up & safety, search the transcript for names, towns, schools and workplaces, and bleep every one that could identify someone.',
+  })
   return checks
 }
 

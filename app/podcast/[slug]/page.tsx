@@ -13,7 +13,7 @@ import {
 } from '@/lib/podcast'
 import { enclosureUrl, showNotesHtml } from '@/lib/podcast-rss'
 import { normalizeAudioMime } from '@/lib/studio/release'
-import { parseCues, stripVoiceTags } from '@/lib/studio/transcript'
+import { episodeCues, stripVoiceTags } from '@/lib/studio/transcript'
 import { BreadcrumbStructuredData } from '@/components/structured-data'
 import { EpisodePlayer, type PlayerTranscript } from './EpisodePlayer'
 
@@ -79,7 +79,7 @@ export default async function PodcastEpisodePage({ params }: Props) {
     img: isSafeHttpUrl(c.img) ? c.img : null,
   }))
   const text = (episode.transcript || '').trim()
-  const cues = text ? parseCues(text) : []
+  const cues = text ? episodeCues(episode) : []
   const transcript: PlayerTranscript = !text
     ? null
     : cues.length

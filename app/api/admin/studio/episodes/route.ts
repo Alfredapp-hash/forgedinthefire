@@ -4,6 +4,7 @@ import { slugify, uniqueSlug } from '@/lib/studio/slug'
 import { PODCAST, isSafeHttpUrl, probeRemoteSize } from '@/lib/podcast'
 import { normalizeAudioMime, releaseBlockers, releaseChecks } from '@/lib/studio/release'
 import type { PodcastChapter, PodcastEpisode } from '@/lib/studio/types'
+import { cleanWords } from '@/lib/studio/transcript'
 
 const PRE_RELEASE = new Set(['draft', 'recording', 'editing', 'review'])
 const STATUSES = new Set(['draft', 'recording', 'editing', 'review', 'scheduled', 'published', 'archived'])
@@ -41,7 +42,14 @@ export async function GET(request: Request) {
     if (topicId) query = query.eq('topic_id', topicId)
     const { data, error } = await query
     if (error) throw error
-    return NextResponse.json(data ?? [])
+    // Word timings and revert snapshots are large; the list view never needs them.
+    const rows = (data ?? []).map((row: Record<string, unknown>) => {
+      const { transcript_words: _w, post_edit_snapshot: _s, ...rest } = row
+      void _w
+      void _s
+      return rest
+    })
+    return NextResponse.json(rows)
   } catch (err) {
     return studioError(err)
   }
@@ -107,9 +115,12 @@ export async function POST(request: Request) {
   }
 }
 
+/** Stream D columns (20260924000002_podcast_ai_safety.sql). */
+const SAFETY_MIGRATION = '20260924000002_podcast_ai_safety.sql'
+
 export async function PATCH(request: Request) {
   try {
-    const { supabase } = await withStudioAdmin()
+    const { supabase, user } = await withStudioAdmin()
     const body = await request.json() as Record<string, unknown>
     const id = String(body.id || '')
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
@@ -165,6 +176,49 @@ export async function PATCH(request: Request) {
       .eq('id', id)
       .single()
     if (currentError) throw currentError
+
+    // ── Post-production & survivor-safety fields: shape-checked, stamped server-side ──
+    const now = new Date().toISOString()
+    const safety: Record<string, unknown> = {}
+    if (body.transcript_words !== undefined) {
+      safety.transcript_words = body.transcript_words === null ? null : cleanWords(body.transcript_words)
+    }
+    if (body.audio_url_previous !== undefined) {
+      if (body.audio_url_previous !== null && !isSafeHttpUrl(body.audio_url_previous)) {
+        return NextResponse.json({ error: 'audio_url_previous must be an http(s) URL' }, { status: 400 })
+      }
+      safety.audio_url_previous = body.audio_url_previous
+    }
+    if (body.post_edit_snapshot !== undefined) {
+      const snap = body.post_edit_snapshot
+      safety.post_edit_snapshot = snap && typeof snap === 'object' && !Array.isArray(snap) ? snap : null
+    }
+    if (body.protected_words_reviewed !== undefined) {
+      const yes = body.protected_words_reviewed === true
+      safety.protected_words_reviewed_at = yes ? now : null
+      safety.protected_words_reviewed_by = yes ? user.email ?? null : null
+    }
+    if (body.guest_consent_confirmed !== undefined) {
+      const yes = body.guest_consent_confirmed === true
+      safety.guest_consent_confirmed = yes
+      safety.guest_consent_confirmed_at = yes ? now : null
+      safety.guest_consent_confirmed_by = yes ? user.email ?? null : null
+    }
+    if (body.guest_final_cut_approved !== undefined) {
+      const yes = body.guest_final_cut_approved === true
+      safety.guest_final_cut_approved = yes
+      safety.guest_final_cut_approved_at = yes ? now : null
+      safety.guest_final_cut_approved_by = yes ? user.email ?? null : null
+      safety.guest_final_cut_audio_url = yes ? (patch.audio_url ?? current.audio_url ?? null) : null
+    }
+    const missing = Object.keys(safety).filter((key) => !(key in current))
+    if (missing.length) {
+      return NextResponse.json(
+        { error: `The database needs the ${SAFETY_MIGRATION} update before these can be saved (${missing.join(', ')}).` },
+        { status: 400 },
+      )
+    }
+    Object.assign(patch, safety)
 
     // New audio invalidates the stored loudness (only when the column exists — pre-migration safe).
     if (patch.audio_url !== undefined && patch.audio_url !== current.audio_url && 'loudness_lufs' in current) {
