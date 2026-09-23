@@ -13,7 +13,12 @@ export async function middleware(request: NextRequest) {
   if (pathname.startsWith('/studio/')) {
     const requestHeaders = new Headers(request.headers)
     requestHeaders.set('x-fitf-pathname', pathname)
-    return NextResponse.next({ request: { headers: requestHeaders } })
+    const res = NextResponse.next({ request: { headers: requestHeaders } })
+    // Invite tokens live in this path: never send it as a Referer, never index or cache it.
+    res.headers.set('Referrer-Policy', 'no-referrer')
+    res.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive')
+    res.headers.set('Cache-Control', 'no-store, private, max-age=0')
+    return res
   }
   
   // Check if Supabase env vars are available

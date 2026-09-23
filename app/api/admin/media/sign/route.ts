@@ -1,58 +1,64 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/admin/auth'
-import { createAdminClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
+import { MEDIA_MAX_BYTES, baseMediaMime, mediaExtension, mediaObjectPath } from '@/lib/admin/media-policy'
+
+export const dynamic = 'force-dynamic'
 
 /**
  * Signed direct-to-storage upload for large podcast audio (bypasses ~6MB function body limit).
  * Client: PUT file to `signedUrl`, then POST /api/admin/media/complete with path metadata.
+ * The object key is server-generated (no user path segments); the signed URL is single-object
+ * and single-use (upsert off), and /complete re-checks size and type before registering it.
  */
 export async function POST(request: Request) {
   try {
     const user = await requireAdmin()
-    const body = (await request.json()) as {
+    const body = (await request.json().catch(() => ({}))) as {
       filename?: string
       mime_type?: string
       size_bytes?: number
     }
-    const filename = String(body.filename || '').trim()
-    const mime = String(body.mime_type || 'application/octet-stream')
+    const filename = String(body.filename || '').trim().slice(0, 200)
+    const mime = baseMediaMime(body.mime_type || 'application/octet-stream')
     if (!filename) {
       return NextResponse.json({ error: 'filename required' }, { status: 400 })
     }
-    if (!/^(image|audio|video)\//.test(mime) && mime !== 'application/pdf') {
-      return NextResponse.json({ error: 'Unsupported mime type' }, { status: 400 })
+    const ext = mediaExtension(mime, filename)
+    if (!ext) {
+      return NextResponse.json({ error: 'Unsupported file type' }, { status: 400 })
     }
-    // Soft guard — warn above 200MB
-    if (body.size_bytes && body.size_bytes > 200 * 1024 * 1024) {
-      return NextResponse.json({ error: 'File too large (max 200MB)' }, { status: 400 })
+    const size = Number(body.size_bytes || 0)
+    if (!Number.isFinite(size) || size < 0 || size > MEDIA_MAX_BYTES) {
+      return NextResponse.json({ error: 'File too large (max 200MB)' }, { status: 413 })
     }
 
-    const admin = await createAdminClient()
-    const ext = filename.split('.').pop() ?? 'bin'
-    const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+    const admin = createServiceClient()
+    const path = mediaObjectPath(ext)
 
     const { data, error } = await admin.storage.from('media').createSignedUploadUrl(path)
     if (error || !data) {
-      return NextResponse.json(
-        { error: error?.message || 'Could not create signed upload URL' },
-        { status: 502 },
-      )
+      console.error('[media-sign]', error?.message)
+      return NextResponse.json({ error: 'Could not create signed upload URL' }, { status: 502 })
     }
 
     const { data: urlData } = admin.storage.from('media').getPublicUrl(path)
 
-    return NextResponse.json({
-      path,
-      token: data.token,
-      signedUrl: data.signedUrl,
-      publicUrl: urlData.publicUrl,
-      mime_type: mime,
-      filename,
-      size_bytes: body.size_bytes ?? null,
-      uploaded_by: user.id,
-    })
+    return NextResponse.json(
+      {
+        path,
+        token: data.token,
+        signedUrl: data.signedUrl,
+        publicUrl: urlData.publicUrl,
+        mime_type: mime,
+        filename,
+        size_bytes: size || null,
+        uploaded_by: user.id,
+      },
+      { headers: { 'Cache-Control': 'no-store' } },
+    )
   } catch (err) {
-    if (err instanceof Error && err.message.includes('Admin')) {
+    if (err instanceof Error && /admin|authenticated|privileges/i.test(err.message)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
     return NextResponse.json({ error: 'Sign failed' }, { status: 500 })

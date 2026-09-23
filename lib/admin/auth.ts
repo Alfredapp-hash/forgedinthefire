@@ -1,6 +1,11 @@
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/server'
 
+/** Same normalization as middleware.ts so the two admin checks can never disagree. */
+export function normalizeAdminEmail(email: string | null | undefined): string {
+  return (email || '').trim().toLowerCase()
+}
+
 /**
  * Check if the current authenticated user is an admin
  * Uses the admin_users table to verify privileges
@@ -32,12 +37,12 @@ export async function verifyAdminAccess(): Promise<{
     }
   }
   
-  // Check if user exists in admin_users table
+  // Check if user exists in admin_users table (normalized like middleware.ts)
   const { data: adminUser, error: adminError } = await supabase
     .from('admin_users')
     .select('role')
-    .eq('email', user.email)
-    .single()
+    .eq('email', normalizeAdminEmail(user.email))
+    .maybeSingle()
   
   if (adminError || !adminUser) {
     return {
@@ -79,8 +84,8 @@ export async function isAdminEmail(email: string): Promise<boolean> {
   const { data, error } = await adminClient
     .from('admin_users')
     .select('role')
-    .eq('email', email.toLowerCase().trim())
-    .single()
+    .eq('email', normalizeAdminEmail(email))
+    .maybeSingle()
   
   if (error || !data) {
     return false

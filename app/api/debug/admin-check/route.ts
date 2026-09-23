@@ -1,60 +1,32 @@
-import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
+import { normalizeAdminEmail, verifyAdminAccess } from '@/lib/admin/auth'
 
+export const dynamic = 'force-dynamic'
+
+/**
+ * Self-check only: tells the signed-in user whether THEIR account is an admin.
+ * It never lists other admin accounts (that used to leak every admin email to
+ * any signed-in user).
+ */
 export async function GET() {
-  const debug: any = { 
-    timestamp: new Date().toISOString(),
-    env: {
-      hasUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-      hasAnonKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    }
-  }
-  
   try {
-    const supabase = await createClient()
-    debug.hasClient = !!supabase
-    
-    if (!supabase) {
-      return NextResponse.json({ error: 'No supabase client', debug }, { status: 503 })
-    }
-    
-    const { data: { user }, error: userError } = await supabase.auth.getUser()
-    debug.hasUser = !!user
-    debug.userError = userError?.message
-    
+    const { isAdmin, user, error } = await verifyAdminAccess()
     if (!user) {
-      return NextResponse.json({ error: 'Not authenticated', debug }, { status: 401 })
+      return NextResponse.json(
+        { authenticated: false, isAdmin: false, error: error || 'Not authenticated' },
+        { status: 401, headers: { 'Cache-Control': 'no-store' } },
+      )
     }
-    
-    debug.userEmail = user.email
-    
-    const { data: adminUser, error: adminError } = await supabase
-      .from('admin_users')
-      .select('*')
-      .eq('email', user.email)
-      .single()
-    
-    debug.adminUser = adminUser
-    debug.adminError = adminError?.message
-    debug.isAdmin = adminUser?.role === 'admin' || adminUser?.role === 'owner'
-    
-    // Also get all admin users to verify table
-    const { data: allAdmins, error: allAdminsError } = await supabase
-      .from('admin_users')
-      .select('email, role')
-    
-    debug.allAdmins = allAdmins
-    debug.allAdminsError = allAdminsError?.message
-    
-    return NextResponse.json({
-      authenticated: !!user,
-      isAdmin: debug.isAdmin,
-      user: user.email,
-      adminUser,
-      debug
-    })
-  } catch (error: any) {
-    debug.catchError = error.message
-    return NextResponse.json({ error: 'Exception', debug }, { status: 500 })
+    return NextResponse.json(
+      {
+        authenticated: true,
+        isAdmin,
+        user: normalizeAdminEmail(user.email),
+        ...(isAdmin ? {} : { hint: 'This account is not in admin_users. Ask an owner to add it.' }),
+      },
+      { headers: { 'Cache-Control': 'no-store' } },
+    )
+  } catch {
+    return NextResponse.json({ error: 'Check failed' }, { status: 500, headers: { 'Cache-Control': 'no-store' } })
   }
 }

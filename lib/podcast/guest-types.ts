@@ -19,6 +19,12 @@ export type GuestInviteRow = {
   created_by: string | null
   created_at: string
   updated_at: string
+  /** sha256 of the active guest device session (20260923 migration). Never sent to clients. */
+  guest_session_hash?: string | null
+  /** When the guest accepted the recording notice in the booth. */
+  consent_at?: string | null
+  /** Guest chose audio only on the consent step. */
+  audio_only?: boolean | null
 }
 
 export type GuestInvitePublic = {
@@ -60,6 +66,22 @@ export const GUEST_SIGNAL_KINDS = [
 export type GuestSignalKind = (typeof GUEST_SIGNAL_KINDS)[number]
 
 export const GUEST_SIGNAL_KIND_SET = new Set<string>(GUEST_SIGNAL_KINDS)
+
+/** Kinds the guest booth may send. Host-only controls (record, talkback, cue, tally) are not here. */
+export const GUEST_SENDABLE_KINDS = new Set<string>(['offer', 'ice', 'hangup', 'camera', 'mute', 'reconnect'])
+/** Kinds the admin may send. The guest is always the offerer. */
+export const ADMIN_SENDABLE_KINDS = new Set<string>([
+  'answer',
+  'ice',
+  'hangup',
+  'record',
+  'talkback',
+  'cue',
+  'tally',
+  'camera',
+  'mute',
+  'reconnect',
+])
 
 export type GuestSignal = {
   id: number

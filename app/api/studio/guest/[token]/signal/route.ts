@@ -1,82 +1,89 @@
-import { NextResponse } from 'next/server'
-import { denyGuest, loadInviteByToken, sessionPayload, touchInvite } from '@/lib/podcast/guest-access'
-import { GUEST_SIGNAL_KIND_SET, type GuestSignal } from '@/lib/podcast/guest-types'
+import {
+  bodyErrorResponse,
+  checkGuestSession,
+  guestFail,
+  guestJson,
+  limitGuest,
+  openGuestRoute,
+  readJsonBody,
+  sessionPayload,
+  touchInvite,
+  touchSeen,
+} from '@/lib/podcast/guest-access'
+import { parseSignal, SIGNAL_BODY_MAX } from '@/lib/podcast/guest-signal-schema'
+import type { GuestSignal } from '@/lib/podcast/guest-types'
 
 export const dynamic = 'force-dynamic'
 
-const ROLES = new Set(['admin', 'guest'])
-
-export async function GET(
-  request: Request,
-  context: { params: Promise<{ token: string }> },
-) {
+/**
+ * Guest-side signaling. The token only ever speaks as the guest: it reads host
+ * signals for its own invite and writes guest signals. `role` in the query/body
+ * is ignored (it used to let a token holder impersonate the host).
+ */
+export async function GET(request: Request, context: { params: Promise<{ token: string }> }) {
   try {
     const { token } = await context.params
-    const url = new URL(request.url)
-    const after = Number(url.searchParams.get('after') || 0)
-    const role = url.searchParams.get('role') || ''
-    if (!ROLES.has(role)) return NextResponse.json({ error: 'role required' }, { status: 400 })
-    const { supabase, row, episodeTitle, live } = await loadInviteByToken(token)
-    const deny = denyGuest(row, live)
-    if (deny || !row) return NextResponse.json({ error: deny || 'Invite not found' }, { status: 404 })
+    const open = await openGuestRoute(request, token)
+    if (open.response) return open.response
+    const { supabase, episodeTitle } = open
+    const sessionError = checkGuestSession(open.row, request)
+    if (sessionError) return guestJson({ error: sessionError }, { status: 409 })
 
-    if (role === 'guest') {
-      await touchInvite(supabase, row.id, { last_seen_at: new Date().toISOString() })
-    }
+    const rawAfter = Number(new URL(request.url).searchParams.get('after') || 0)
+    const after = Number.isSafeInteger(rawAfter) && rawAfter > 0 ? rawAfter : 0
+    const row = await touchSeen(supabase, open.row)
 
     const { data, error } = await supabase
       .from('podcast_guest_signals')
       .select('id, from_role, kind, payload, created_at')
       .eq('invite_id', row.id)
-      .gt('id', Number.isFinite(after) ? after : 0)
-      .neq('from_role', role)
+      .eq('from_role', 'admin')
+      .gt('id', after)
       .order('id', { ascending: true })
       .limit(40)
     if (error) throw error
-    return NextResponse.json({
+    return guestJson({
       signals: (data || []) as GuestSignal[],
       session: sessionPayload(row, episodeTitle),
     })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Signal poll failed'
-    return NextResponse.json({ error: message.slice(0, 180) }, { status: 500 })
+    return guestFail('signal-poll', err, 'Connection check failed')
   }
 }
 
-export async function POST(
-  request: Request,
-  context: { params: Promise<{ token: string }> },
-) {
+export async function POST(request: Request, context: { params: Promise<{ token: string }> }) {
   try {
     const { token } = await context.params
-    const { supabase, row, live } = await loadInviteByToken(token)
-    const deny = denyGuest(row, live)
-    if (deny || !row) return NextResponse.json({ error: deny || 'Invite not found' }, { status: 404 })
-    const body = (await request.json()) as {
-      role?: string
-      kind?: string
-      payload?: Record<string, unknown>
+    const open = await openGuestRoute(request, token)
+    if (open.response) return open.response
+    const { supabase, row } = open
+    const sessionError = checkGuestSession(row, request)
+    if (sessionError) return guestJson({ error: sessionError }, { status: 409 })
+    const limited = await limitGuest(supabase, request, 'signal', row.id)
+    if (limited) return limited
+
+    let body: { kind?: unknown; payload?: unknown }
+    try {
+      body = (await readJsonBody(request, SIGNAL_BODY_MAX)) as typeof body
+    } catch (err) {
+      return bodyErrorResponse(err) || guestFail('signal', err)
     }
-    if (!ROLES.has(String(body.role))) return NextResponse.json({ error: 'role required' }, { status: 400 })
-    if (!GUEST_SIGNAL_KIND_SET.has(String(body.kind))) return NextResponse.json({ error: 'Unknown signal' }, { status: 400 })
+    const signal = parseSignal('guest', body.kind, body.payload)
+    if (!signal) return guestJson({ error: 'Unknown signal' }, { status: 400 })
+
     const { error } = await supabase.from('podcast_guest_signals').insert({
       invite_id: row.id,
-      from_role: body.role,
-      kind: body.kind,
-      payload: body.payload && typeof body.payload === 'object' ? body.payload : {},
+      from_role: 'guest',
+      kind: signal.kind,
+      payload: signal.payload,
     })
     if (error) throw error
 
-    if (body.kind === 'record' && body.role === 'admin') {
-      const on = Boolean(body.payload?.on)
-      await touchInvite(supabase, row.id, { connection_state: on ? 'recording' : 'connected' })
-    }
-    if (body.kind === 'hangup') {
+    if (signal.kind === 'hangup') {
       await touchInvite(supabase, row.id, { connection_state: 'left' })
     }
-    return NextResponse.json({ ok: true })
+    return guestJson({ ok: true })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Signal failed'
-    return NextResponse.json({ error: message.slice(0, 180) }, { status: 500 })
+    return guestFail('signal', err, 'Signal failed')
   }
 }
