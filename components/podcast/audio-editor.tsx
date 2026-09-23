@@ -255,6 +255,15 @@ type SaveFilePicker = (opts: {
   types?: { description: string; accept: Record<string, string[]> }[]
 }) => Promise<{ name: string; createWritable: () => Promise<PictureWritable> }>
 
+/** Stable callback identity that always runs the latest closure (event handlers only). */
+function useStableHandler<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {
+  const ref = useRef(fn)
+  useLayoutEffect(() => {
+    ref.current = fn
+  })
+  return useCallback((...args: A) => ref.current(...args), [])
+}
+
 /** IndexedDB key for a session set aside by "Start fresh (keep backup)". */
 function backupKey(episodeId: string) {
   return `${episodeId}::backup`
@@ -1811,6 +1820,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setOk(null)
     liveStore.resetPeaks()
     stopMix()
+    let openedJournals: (TakeJournal | null)[] = []
+    let capturing = false
 
     try {
       idleStopRef.current.forEach((fn) => fn())
@@ -1861,6 +1872,24 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       } catch {
         /* ignore */
       }
+      // Opened before the cue mix starts so IndexedDB latency never shifts the punch trim.
+      const laneName = (job: (typeof jobs)[number]) => job.sharedNames.join(' + ') || 'a voice'
+      // Crash-safe journal per lane (Stream B). Opening never blocks recording.
+      const journals = await Promise.all(
+        jobs.map((job) => {
+          const stream = streams.get(job.key)
+          const rate = stream?.getAudioTracks()[0]?.getSettings().sampleRate || 48000
+          return openTakeJournal({
+            episodeId: episodeId || 'scratch',
+            personId: job.lane.personId,
+            label: `${laneName(job)} · take`,
+            sampleRate: rate,
+            channels: 1,
+            startSec: punch,
+          }).catch(() => null as TakeJournal | null)
+        }),
+      )
+      openedJournals = journals
 
       if (countInBeats > 0) {
         setRecTally('count-in')
@@ -1887,22 +1916,6 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
 
       const recTrim = Math.max(0, prerollSec)
-      const laneName = (job: (typeof jobs)[number]) => job.sharedNames.join(' + ') || 'a voice'
-      // Crash-safe journal per lane (Stream B). Opening never blocks recording.
-      const journals = await Promise.all(
-        jobs.map((job) => {
-          const stream = streams.get(job.key)
-          const rate = stream?.getAudioTracks()[0]?.getSettings().sampleRate || 48000
-          return openTakeJournal({
-            episodeId: episodeId || 'scratch',
-            personId: job.lane.personId,
-            label: `${laneName(job)} · take`,
-            sampleRate: rate,
-            channels: 1,
-            startSec: punch,
-          }).catch(() => null as TakeJournal | null)
-        }),
-      )
       // One lane failing to start must not sink the others: keep what started, say what failed.
       const started = await Promise.allSettled(
         jobs.map(async (job, i) => {
@@ -1932,6 +1945,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       if (failedLanes.length) {
         setError(`Not recording ${failedLanes.join('; ')}. The other lane${captures.length === 1 ? ' is' : 's are'} recording.`)
       }
+      capturing = true
       capturesRef.current = captures.map((c) => c.capture)
       recorderRef.current = captures.map((c) => c.capture)
       const camJobs = liveCameraJobs()
@@ -2161,6 +2175,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         }${punchKind}`,
       )
     } catch (err) {
+      // Nothing was captured — drop the empty journals so they never show as "unfinished".
+      if (!capturing) openedJournals.forEach((j) => void j?.abort().catch(() => {}))
       finishRecCleanup()
       stopCameraRecorders()
       cameraCapturesRef.current = []
@@ -2838,7 +2854,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       const master = await renderEpisodeMaster({ selection })
       if (!master) throw new Error('Nothing audible to export')
       const mixed = master.buffer
-      if (Number.isFinite(master.lufs)) setLoudness({ lufs: master.lufs, peakDb: master.peakDb })
+      if (Number.isFinite(master.lufs) && !selection) {
+        setLoudness({ lufs: master.lufs, peakDb: master.peakDb })
+        setLoudnessFor(exportedTracks)
+      }
       const blob = kind === 'wav' ? encodeWav(mixed) : await encodeMp3(mixed)
       const ext = kind === 'wav' ? 'wav' : 'mp3'
       const file = new File(
@@ -2883,6 +2902,29 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const rmsDb = meter ? dbFromLinear(meter.rms) : null
   const recHint = REC_MODE_META.find((m) => m.id === recMode)?.hint
   const boardDuration = Math.max(30, boardExtent, sessionLen) + 4
+  // Stable handlers so the memoized timeline lanes skip re-renders from unrelated editor state.
+  const onTimelineSelect = useStableHandler((id: string, clipId: string | null) => {
+    editFocusRef.current = 'audio'
+    setSelectedId(id)
+    setSelectedClipId(clipId)
+  })
+  const onTimelineEditStart = useStableHandler(() => pushHistory())
+  const onTimelineMoveClip = useStableHandler((id: string, clipId: string, offset: number) => {
+    const track = tracks.find((t) => t.id === id)
+    const clip = track ? clipsOf(track).find((c) => c.id === clipId) : null
+    setTracks((prev) => mapTrack(prev, id, (t) => moveClip(t, clipId, offset)))
+    if (track && clip && personAvLinked(people.find((p) => p.id === track.personId))) {
+      setCameraClips((prev) => nudgeCamerasWithAudio(prev, clip, track.personId, clip.offset, offset, true))
+    }
+  })
+  const onTimelineTrimClip = useStableHandler((id: string, clipId: string, edge: 'in' | 'out', time: number) => {
+    setTracks((prev) => mapTrack(prev, id, (t) => trimClip(t, clipId, edge, time)))
+  })
+  const onTimelineRange = useStableHandler((start: number, end: number, trackId: string) => {
+    setSelectedId(trackId)
+    setRange((prev) => ({ ...prev, start, end }))
+  })
+
   const timelineBoard = {
     people,
     tracks,
@@ -2893,28 +2935,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     durationSec: boardDuration,
     scrollLeft: timelineScroll,
     onScrollLeft: setTimelineScroll,
-    onSelect: (id: string, clipId: string | null) => {
-      editFocusRef.current = 'audio'
-      setSelectedId(id)
-      setSelectedClipId(clipId)
-    },
+    onSelect: onTimelineSelect,
     onPlayhead: setHead,
-    onEditStart: pushHistory,
-    onMoveClip: (id: string, clipId: string, offset: number) => {
-      const track = tracks.find((t) => t.id === id)
-      const clip = track ? clipsOf(track).find((c) => c.id === clipId) : null
-      setTracks((prev) => mapTrack(prev, id, (t) => moveClip(t, clipId, offset)))
-      if (track && clip && personAvLinked(people.find((p) => p.id === track.personId))) {
-        setCameraClips((prev) => nudgeCamerasWithAudio(prev, clip, track.personId, clip.offset, offset, true))
-      }
-    },
-    onTrimClip: (id: string, clipId: string, edge: 'in' | 'out', time: number) => {
-      setTracks((prev) => mapTrack(prev, id, (t) => trimClip(t, clipId, edge, time)))
-    },
-    onRange: (start: number, end: number, trackId: string) => {
-      setSelectedId(trackId)
-      setRange((prev) => ({ ...prev, start, end }))
-    },
+    onEditStart: onTimelineEditStart,
+    onMoveClip: onTimelineMoveClip,
+    onTrimClip: onTimelineTrimClip,
+    onRange: onTimelineRange,
   }
 
   return (
