@@ -47,6 +47,10 @@ export type GuestInviteAdmin = GuestInvitePublic & {
   lastSeenAt: string | null
   revoked: boolean
   expired: boolean
+  /** Short code the guest sees after leaving; quote it when they ask for removal. */
+  referenceCode?: string
+  /** Guest accepted the consent screen at (v1 column). Full choices: GET /api/admin/podcast/invites/[id]/consent. */
+  consentAt?: string | null
 }
 
 export const GUEST_SIGNAL_KINDS = [
@@ -61,6 +65,7 @@ export const GUEST_SIGNAL_KINDS = [
   'camera',
   'mute',
   'reconnect',
+  'pause',
 ] as const
 
 export type GuestSignalKind = (typeof GUEST_SIGNAL_KINDS)[number]
@@ -68,7 +73,7 @@ export type GuestSignalKind = (typeof GUEST_SIGNAL_KINDS)[number]
 export const GUEST_SIGNAL_KIND_SET = new Set<string>(GUEST_SIGNAL_KINDS)
 
 /** Kinds the guest booth may send. Host-only controls (record, talkback, cue, tally) are not here. */
-export const GUEST_SENDABLE_KINDS = new Set<string>(['offer', 'ice', 'hangup', 'camera', 'mute', 'reconnect'])
+export const GUEST_SENDABLE_KINDS = new Set<string>(['offer', 'ice', 'hangup', 'camera', 'mute', 'reconnect', 'pause'])
 /** Kinds the admin may send. The guest is always the offerer. */
 export const ADMIN_SENDABLE_KINDS = new Set<string>([
   'answer',
@@ -81,7 +86,27 @@ export const ADMIN_SENDABLE_KINDS = new Set<string>([
   'camera',
   'mute',
   'reconnect',
+  'pause',
 ])
+
+/**
+ * Control kinds that may also travel on the RTCDataChannel once the peer is up.
+ * offer/answer/ice always go through the HTTP signal table.
+ */
+export const GUEST_CONTROL_KINDS = new Set<string>([
+  'hangup',
+  'record',
+  'talkback',
+  'cue',
+  'tally',
+  'camera',
+  'mute',
+  'reconnect',
+  'pause',
+])
+
+/** Control kinds written to the signal table even when the data channel is open (safety/recording critical). */
+export const GUEST_DURABLE_KINDS = new Set<string>(['hangup', 'record', 'mute', 'camera', 'pause'])
 
 export type GuestSignal = {
   id: number

@@ -1,4 +1,5 @@
 import type { GuestInviteAdmin, GuestInvitePublic, GuestSignal } from '@/lib/podcast/guest-types'
+import type { ConsentChoices } from '@/lib/podcast/guest/consent-text'
 
 const SESSION_KEY = 'fitf-guest-session'
 const sessions = new Map<string, string>()
@@ -82,6 +83,10 @@ export async function postGuestSession(
     consent?: boolean
     /** Join only: guest chose audio only. */
     audioOnly?: boolean
+    /** Join only (consent v2): version of the consent text the guest read. */
+    consentVersion?: string
+    /** Join only (consent v2): voice/face/name/final-cut choices. */
+    choices?: Partial<ConsentChoices>
   },
 ) {
   const data = await readJson<GuestInvitePublic & { guestSession?: string | null; signalCursor?: number }>(
@@ -198,4 +203,91 @@ export async function finalizeGuestTake(
       referrerPolicy: 'no-referrer',
     }),
   )
+}
+
+/* ---------- progressive (chunked) guest backups ---------- */
+
+export type GuestChunkStart = {
+  takeId: string
+  ext: string
+  mime: string
+  chunkMaxBytes: number
+  takeMaxBytes: number
+  timesliceMs: number
+}
+
+async function postChunks<T>(token: string, body: Record<string, unknown>) {
+  return readJson<T>(
+    await fetch(`/api/studio/guest/${token}/take/chunks`, {
+      method: 'POST',
+      headers: guestHeaders(token, true),
+      body: JSON.stringify(body),
+      referrerPolicy: 'no-referrer',
+      cache: 'no-store',
+    }),
+  )
+}
+
+export function startGuestChunkedTake(
+  token: string,
+  body: { kind: 'audio' | 'camera'; mime: string; sessionSec?: number | null; hostAt?: number | null },
+) {
+  return postChunks<GuestChunkStart>(token, { action: 'start', ...body })
+}
+
+export function signGuestChunks(token: string, takeId: string, from: number, count: number) {
+  return postChunks<{ urls: { index: number; signedUrl: string; path: string }[] }>(token, {
+    action: 'sign',
+    takeId,
+    from,
+    count,
+  })
+}
+
+export function finishGuestChunkedTake(
+  token: string,
+  body: {
+    takeId: string
+    chunks: number
+    durationSec?: number | null
+    startedAtSessionSec?: number | null
+    guestStartHostMs?: number | null
+    clockRttMs?: number | null
+  },
+) {
+  return postChunks<{ takeReady: boolean; cameraReady: boolean; missing: number[] }>(token, {
+    action: 'finish',
+    ...body,
+  })
+}
+
+/* ---------- consent / withdrawal ---------- */
+
+export async function withdrawGuestRecording(token: string, reason?: string) {
+  return readJson<{ ok: true; referenceCode: string; withdrawnAt: string }>(
+    await fetch(`/api/studio/guest/${token}/withdraw`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: reason || '' }),
+      referrerPolicy: 'no-referrer',
+    }),
+  )
+}
+
+export type AdminConsentRecord = {
+  id: string
+  inviteId: string | null
+  episodeId: string
+  referenceCode: string | null
+  consentVersion: string
+  consentTextHash: string
+  choices: ConsentChoices
+  acceptedAt: string
+  withdrawnAt: string | null
+  withdrawReason: string | null
+}
+
+export async function fetchInviteConsent(inviteId: string) {
+  const res = await fetch(`/api/admin/podcast/invites/${inviteId}/consent`, { cache: 'no-store' })
+  return readJson<{ available: boolean; referenceCode: string; consents: AdminConsentRecord[] }>(res)
 }

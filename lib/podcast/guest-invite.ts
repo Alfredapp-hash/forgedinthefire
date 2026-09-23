@@ -1,5 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'crypto'
 import type { GuestInviteAdmin, GuestInvitePublic, GuestInviteRow } from '@/lib/podcast/guest-types'
+import { guestReferenceCode } from '@/lib/podcast/guest/consent-text'
+export { chunkedTakeRef, parseChunkedTakeRef } from '@/lib/podcast/upload/guest-take-manifest'
 
 export type {
   GuestConnectionState,
@@ -64,7 +66,7 @@ export function guestTakeRef(path: string) {
 export function parseGuestTakeRef(ref: string | null | undefined) {
   if (!ref || !ref.startsWith(TAKE_REF_PREFIX)) return null
   const path = ref.slice(TAKE_REF_PREFIX.length)
-  if (!/^guest-takes\/[0-9a-f-]{36}\/(camera-)?\d{10,16}\.(webm|m4a|mp4|ogg)$/.test(path)) return null
+  if (!/^guest-takes\/[0-9a-f-]{36}\/(camera-)?\d{10,16}\.(webm|m4a|mp4|ogg|wav)$/.test(path)) return null
   return path
 }
 
@@ -105,6 +107,8 @@ export function adminInvite(
     lastSeenAt: row.last_seen_at,
     revoked,
     expired,
+    referenceCode: guestReferenceCode(row.id),
+    consentAt: row.consent_at ?? null,
     rawToken,
     url: rawToken && origin ? `${origin.replace(/\/$/, '')}/studio/join/${rawToken}` : undefined,
   }

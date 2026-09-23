@@ -43,10 +43,15 @@ export type GuestHeadphoneMix = {
   running?: () => boolean
 }
 
-/** Mix talkback + cue in the booth. Talkback ducks cue so the host still cuts through. */
-export function createGuestHeadphoneMix(): GuestHeadphoneMix {
-  const ctx = new AudioContext()
-  void ctx.resume()
+/**
+ * Mix talkback + cue in the booth. Talkback ducks cue so the host still cuts through.
+ * Pass the booth's shared AudioContext (unlocked in the Join tap) so iOS/Safari
+ * never needs a second gesture; a shared context is not closed by stop().
+ */
+export function createGuestHeadphoneMix(shared?: AudioContext | null): GuestHeadphoneMix {
+  const ctx = shared && shared.state !== 'closed' ? shared : new AudioContext()
+  const ownsContext = ctx !== shared
+  if (ownsContext) void ctx.resume()
   const talkGain = ctx.createGain()
   const cueUser = ctx.createGain()
   const cueDuck = ctx.createGain()
@@ -123,7 +128,13 @@ export function createGuestHeadphoneMix(): GuestHeadphoneMix {
       cancelAnimationFrame(raf)
       talkSrc?.disconnect()
       cueSrc?.disconnect()
-      void ctx.close()
+      try {
+        talkGain.disconnect()
+        cueDuck.disconnect()
+      } catch {
+        /* ignore */
+      }
+      if (ownsContext) void ctx.close()
     },
   }
 }
