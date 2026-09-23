@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { formatClock } from '@/lib/podcast/audio'
 import { formatDrift, type AvDrift } from '@/lib/podcast/av-sync'
 import {
@@ -19,7 +19,8 @@ import { TimelinePlayhead, useTrackDpr } from '@/components/podcast/session-time
 
 type Props = {
   clips: CameraClip[]
-  playhead: number
+  /** Omit inside a LiveStoreContext provider — the hairline follows the live store. */
+  playhead?: number
   pxPerSec: number
   durationSec: number
   scrollLeft?: number
@@ -56,7 +57,7 @@ type Props = {
   cuts?: ProgramCut[]
 }
 
-export function CameraLane({
+export const CameraLane = memo(function CameraLane({
   clips,
   playhead,
   pxPerSec,
@@ -428,7 +429,7 @@ export function CameraLane({
       )}
     </div>
   )
-}
+})
 
 const toolBtn =
   'inline-flex items-center px-2 py-0.5 rounded border border-[#27313B] text-[10px] uppercase tracking-wider text-[#B8C4CF] disabled:opacity-40'
@@ -817,7 +818,8 @@ const SCENE_LABEL: Record<ProgramScene, string> = {
 type CutLaneProps = {
   cuts: ProgramCut[]
   startScene: ProgramScene
-  playhead: number
+  /** Omit inside a LiveStoreContext provider. */
+  playhead?: number
   pxPerSec: number
   durationSec: number
   scrollLeft?: number
@@ -838,7 +840,7 @@ type CutLaneProps = {
  * Program lane — which scene is on air over time (OBS Studio-mode switch log on the NLE clock).
  * Drag a tick to retime a cut; the export and Program monitor follow this lane.
  */
-export function ProgramCutLane({
+export const ProgramCutLane = memo(function ProgramCutLane({
   cuts,
   startScene,
   playhead,
@@ -1020,4 +1022,4 @@ export function ProgramCutLane({
       )}
     </div>
   )
-}
+})

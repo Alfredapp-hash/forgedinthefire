@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import { formatClock } from '@/lib/podcast/audio'
 import { clipsOf, isVoiceRole, sessionDuration, type SessionPerson, type StudioTrack, type TrackClip } from '@/lib/podcast/multitrack'
 import {
@@ -11,11 +11,13 @@ import {
   snapSpan,
   trackDisplayRatio,
 } from '@/lib/podcast/peaks'
+import { useLiveValue } from '@/components/podcast/studio/live-store'
 
 export type SessionTimelineProps = {
   people: SessionPerson[]
   tracks: StudioTrack[]
-  playhead: number
+  /** Omit inside a LiveStoreContext provider — the playhead then follows the live store (≤15 Hz). */
+  playhead?: number
   pxPerSec: number
   selectedId: string | null
   selectedClipId: string | null
@@ -51,9 +53,11 @@ export function useTrackDpr(): number {
   return useSyncExternalStore(subscribeDpr, () => trackDisplayRatio(), () => 1)
 }
 
-export function TimelinePlayhead({ sec, pxPerSec }: { sec: number; pxPerSec: number }) {
+/** Playhead hairline. Inside a LiveStoreContext it follows the live store; otherwise `sec`. */
+export function TimelinePlayhead({ sec, pxPerSec }: { sec?: number; pxPerSec: number }) {
   const dpr = useTrackDpr()
-  const hair = snapHairline(sec * pxPerSec, dpr)
+  const live = useLiveValue((s) => s.playhead, sec ?? 0)
+  const hair = snapHairline(live * pxPerSec, dpr)
   return (
     <div
       className="absolute top-0 bottom-0 z-30 pointer-events-none bg-[#8DEBFF]"
@@ -62,7 +66,13 @@ export function TimelinePlayhead({ sec, pxPerSec }: { sec: number; pxPerSec: num
   )
 }
 
-export function SessionTimeline({
+/** Playhead readout that follows the live store (falls back to `sec`). */
+export function LivePlayheadClock({ sec }: { sec?: number }) {
+  const live = useLiveValue((s) => s.playhead, sec ?? 0)
+  return <>{formatClock(live)}</>
+}
+
+export const SessionTimeline = memo(function SessionTimeline({
   people,
   tracks,
   playhead,
@@ -89,7 +99,7 @@ export function SessionTimeline({
     if (a.personId === b.personId) return a.take - b.take
     return 0
   })
-  const duration = durationSec ?? Math.max(30, playhead + 8, sessionDuration(tracks)) + 4
+  const duration = durationSec ?? Math.max(30, (playhead ?? 0) + 8, sessionDuration(tracks)) + 4
   const width = Math.max(480, Math.round(duration * pxPerSec))
   const boardRef = useRef<HTMLDivElement>(null)
   const drag = useRef<
@@ -401,14 +411,14 @@ export function SessionTimeline({
       <div className="px-3 py-2 flex items-center justify-between gap-2">
         <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Session timeline</p>
         <p className="text-[11px] font-mono text-[#A9B8C6]">
-          {formatClock(playhead)}
+          <LivePlayheadClock sec={playhead} />
           {hasRange ? ` · sel ${formatClock(selStart)}–${formatClock(selEnd)}` : ''}
         </p>
       </div>
       {board}
     </div>
   )
-}
+})
 
 function Clip({
   track,

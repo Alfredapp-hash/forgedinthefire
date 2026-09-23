@@ -16,7 +16,11 @@ type LiveStreams = { host?: MediaStream | null; guest?: MediaStream | null }
 
 type Props = {
   clips: CameraClip[]
-  playhead: number
+  playhead?: number
+  /** Unthrottled playhead sampler for the paint loop (live store). Wins over `playhead`. */
+  getPlayhead?: () => number
+  /** Per-frame scene sampler (e.g. Program lane at the live playhead). Wins over scene/fromScene/mix. */
+  viewAt?: (t: number) => { scene: PictureScene; fromScene?: PictureScene; mix?: number }
   /** Timeline is playing — camera files play instead of seeking every frame. */
   playing?: boolean
   mode?: PictureMode
@@ -210,7 +214,8 @@ export function ProgramMonitor(props: Props) {
 
     const tick = () => {
       const p = propsRef.current
-      const t = p.playhead
+      const t = p.getPlayhead ? p.getPlayhead() : p.playhead ?? 0
+      const view = p.viewAt ? p.viewAt(t) : null
       const layers = programLayers(p.clips)
       const hasBaseAtHead = camerasAtTime(
         p.clips.filter((c) => cameraLayer(c) === 'base'),
@@ -240,9 +245,9 @@ export function ProgramMonitor(props: Props) {
       })
       paintProgramFrame(ctx, {
         mode: p.mode,
-        scene: p.scene || sceneFromPictureMode(p.mode || 'a-roll'),
-        fromScene: p.fromScene,
-        mix: p.mix,
+        scene: view?.scene || p.scene || sceneFromPictureMode(p.mode || 'a-roll'),
+        fromScene: view ? view.fromScene : p.fromScene,
+        mix: view ? view.mix : p.mix,
         host,
         guest,
         overlays,
