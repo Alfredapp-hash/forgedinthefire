@@ -107,8 +107,31 @@ import type { PodcastChapter } from '@/lib/studio/types'
 import { applyFollowTalker } from '@/lib/podcast/auto-mix'
 import { gainForTargetLufs, measureLoudness, PODCAST_LUFS } from '@/lib/podcast/lufs'
 import { slugFile, zipStore } from '@/lib/podcast/zip'
+import { renderMaster } from '@/lib/podcast/master'
 import { renderSfx, SFX_META, type SfxId } from '@/lib/podcast/sfx'
 import { SfxPad } from '@/components/podcast/sfx-pad'
+import { setStudioGuard, useLeaveGuard } from '@/components/podcast/studio/leave-guard'
+import { InfoTip, StepNav, usePersistentFlag, type StudioStep } from '@/components/podcast/studio/step-nav'
+import { ShortcutsOverlay } from '@/components/podcast/studio/shortcuts-overlay'
+import { JournalRecoveryBanner } from '@/components/podcast/studio/recovery-banner'
+import { RemoteAudioKeepAlive } from '@/components/podcast/studio/remote-audio-keepalive'
+import { useWakeLock } from '@/components/podcast/studio/use-wake-lock'
+import { watchInputs } from '@/components/podcast/studio/track-watchdog'
+import { createLiveStore, LiveStoreContext } from '@/components/podcast/studio/live-store'
+import {
+  LiveClock,
+  LiveMeters,
+  LiveOverviewHead,
+  LiveProgram,
+  LiveStatusLine,
+} from '@/components/podcast/studio/live-readouts'
+import {
+  deleteTake,
+  openTakeJournal,
+  requestPersistentStorage,
+  type TakeJournal,
+  type UnfinishedTake,
+} from '@/lib/podcast/take-journal'
 import { SessionTimeline } from '@/components/podcast/session-timeline'
 import { GuestInvitePanel } from '@/components/podcast/guest-invite-panel'
 import type { GuestTallyPhase } from '@/lib/podcast/guest-types'
@@ -199,7 +222,8 @@ type Props = {
   episodeId?: string | null
   audioUrl?: string | null
   title: string
-  onExported: (file: File, durationSeconds: number) => Promise<void>
+  /** Resolve `false` when the host declined (e.g. the person cancelled replacing live audio). */
+  onExported: (file: File, durationSeconds: number) => Promise<void | false>
   onPublished?: () => Promise<void>
   onMarkChapter?: (seconds: number) => void
   chapters?: PodcastChapter[]
@@ -298,6 +322,26 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [clipHolds, setClipHolds] = useState<Record<string, boolean>>({})
   const [matchLufs, setMatchLufs] = useState(true)
   const [loudness, setLoudness] = useState<{ lufs: number; peakDb: number } | null>(null)
+  /** Tracks the loudness readout was measured on — any edit makes it stale. */
+  const [loudnessFor, setLoudnessFor] = useState<StudioTrack[] | null>(null)
+  const [measuring, setMeasuring] = useState(false)
+  const [exportSelectionOnly, setExportSelectionOnly] = useState(false)
+  /** Tracks as of the last load / restore / saved mix; unsaved = edits since then. */
+  const [savedTracks, setSavedTracks] = useState<StudioTrack[] | null>(null)
+  const baselinePendingRef = useRef(true)
+  const [step, setStep] = useState<StudioStep>('setup')
+  const [advanced, setAdvanced] = usePersistentFlag('fitf.studio.advanced', false)
+  const [shortcutsOn, setShortcutsOn] = usePersistentFlag('fitf.studio.shortcuts', true)
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  const closeShortcuts = useCallback(() => setShowShortcuts(false), [])
+  /** Survivor-safety: guest silenced in the recording and every local monitor. */
+  const [safePaused, setSafePaused] = useState(false)
+  const safePausedRef = useRef(false)
+  /** Loud banner when an input dies mid-session. */
+  const [inputLost, setInputLost] = useState<string | null>(null)
+  const [rearmTick, setRearmTick] = useState(0)
+  /** Polite screen-reader announcement for record start / stop. */
+  const [recAnnounce, setRecAnnounce] = useState('')
   const [recClock, setRecClock] = useState(0)
   const [personDraft, setPersonDraft] = useState('')
   const [playhead, setPlayhead] = useState(0)
@@ -358,6 +402,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const hasAudio = tracks.some((t) => Boolean(t.buffer))
   const sessionLen = Math.max(sessionDuration(tracks), pictureEnd(cameraClips))
   const ready = hasAudio
+  const selStart = Math.min(range.start, range.end)
+  const selEnd = Math.max(range.start, range.end)
+  /** A real drag selection — not the default whole-session range. */
+  const hasSelection = selEnd - selStart >= 0.05 && !(selStart <= 0.01 && selEnd >= sessionLen - 0.05)
+  const exportSelection = exportSelectionOnly && hasSelection ? { start: selStart, end: selEnd } : null
+  const unsaved = hasAudio && savedTracks !== null && tracks !== savedTracks
+  const loudnessStale = Boolean(loudness) && loudnessFor !== tracks
   const anyArmed = tracks.some((t) => t.armed)
   const personIdsArmed = new Set(tracks.filter((t) => t.armed).map((t) => t.personId)).size
   const armedDeviceCount = new Set(
@@ -365,6 +416,18 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       .filter((t) => t.armed)
       .map((t) => people.find((p) => p.id === t.personId)?.inputDeviceId || micId || ''),
   ).size
+
+  useEffect(() => {
+    if (!baselinePendingRef.current) return
+    baselinePendingRef.current = false
+    setSavedTracks(tracks)
+  }, [tracks])
+
+  function markMixSaved(exported: StudioTrack[]) {
+    setSavedTracks(exported)
+    // Synchronous so a navigation right after saving (publish review) is not blocked.
+    setStudioGuard({ recording: recordingRef.current, unsaved: false })
+  }
 
   const setHead = useCallback((sec: number) => {
     const next = Math.max(0, sec)
@@ -480,23 +543,30 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     [],
   )
 
-  const rebuildMasterPreview = useCallback(async () => {
+  /**
+   * Full-session loudness is a whole mixdown — expensive on long episodes. It runs only when the
+   * person asks ("Measure loudness") or after a save, never after every edit.
+   */
+  async function measureMasterNow() {
     if (recordingRef.current) return
     if (!tracks.some((t) => t.buffer)) {
       setMeter(null)
       setLoudness(null)
       return
     }
+    setMeasuring(true)
     try {
-      const mixed = mixdownTracks(await tracksWithInserts(tracks))
-      const shaped = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
-      setMeter(peakMeter(shaped))
-      const loud = measureLoudness(shaped)
-      setLoudness(Number.isFinite(loud.lufs) ? { lufs: loud.lufs, peakDb: loud.peakDb } : null)
+      const master = await renderEpisodeMaster({ matchLufs: false })
+      if (!master) return
+      setMeter(peakMeter(master.buffer))
+      setLoudness(Number.isFinite(master.lufs) ? { lufs: master.lufs, peakDb: master.peakDb } : null)
+      setLoudnessFor(tracks)
     } catch {
       /* preview meter is optional */
+    } finally {
+      setMeasuring(false)
     }
-  }, [tracks, masterGain, masterFadeIn, masterFadeOut])
+  }
 
   useEffect(() => {
     if (!episodeId) {
@@ -532,6 +602,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         const buffer = await decodeUrl(sourceUrl)
         const blobUrl = bufferToUrl(buffer)
         let vocalId: string | null = null
+        baselinePendingRef.current = true
         setTracks((prev) => {
           const vocal = prev.find((t) => t.role === 'vocal') || prev[0]
           if (!vocal) return prev
@@ -612,12 +683,6 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       return { start, end, total }
     })
   }, [sessionLen])
-
-  useEffect(() => {
-    if (recordingRef.current) return
-    const t = window.setTimeout(() => void rebuildMasterPreview(), 1200)
-    return () => window.clearTimeout(t)
-  }, [rebuildMasterPreview])
 
   useEffect(() => {
     return () => {
@@ -2132,8 +2197,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     pushHistory()
     setBusy(mode === 'keep' ? 'Bouncing mix (keeping takes)…' : 'Replacing session with master…')
     try {
-      let mixed = mixdownTracks(await tracksWithInserts(tracks))
-      mixed = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
+      const rendered = await renderEpisodeMaster({ matchLufs: false })
+      if (!rendered) throw new Error('Nothing audible to merge')
+      let mixed = rendered.buffer
       for (const id of ids) mixed = await applyEffect(mixed, id)
       const master = createEmptyTrack({
         name: 'Master mix',
@@ -2162,14 +2228,30 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
   }
 
-  /** Episode audio for a picture export: same gain, fades, loudness and limiter as the RSS mix. */
-  async function mixForPicture() {
+  /**
+   * Every export path (hosted mix, WAV/MP3, stems mix, video audio, bounce) renders through
+   * lib/podcast/master.ts so gain, fades, loudness and the true-peak limiter live in one place.
+   * Always the FULL session unless `selection` is passed explicitly.
+   */
+  async function renderEpisodeMaster(opts: { selection?: { start: number; end: number } | null; matchLufs?: boolean } = {}) {
     const prepared = await tracksWithInserts(tracks)
     if (!prepared.some((t) => t.buffer)) return null
-    let mixed = mixdownTracks(prepared)
-    mixed = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
-    if (matchLufs) mixed = applyGainAndFades(mixed, gainForTargetLufs(measureLoudness(mixed).lufs, PODCAST_LUFS), 0, 0)
-    return applyEffect(mixed, 'limit')
+    const result = await renderMaster(prepared, {
+      startSec: opts.selection?.start,
+      endSec: opts.selection?.end,
+      matchLufs: opts.matchLufs ?? matchLufs,
+      gainDb: masterGain > 0 ? 20 * Math.log10(masterGain) : -120,
+      fadeInSec: masterFadeIn,
+      fadeOutSec: masterFadeOut,
+    })
+    // Stream B's renderMaster reports loudness; measure here only if it did not.
+    const loud = Number.isFinite(result.lufs) ? { lufs: result.lufs, peakDb: result.truePeakDb } : measureLoudness(result.buffer)
+    return { buffer: result.buffer, lufs: loud.lufs, peakDb: loud.peakDb }
+  }
+
+  /** Episode audio for a picture export: same master as the RSS mix. */
+  async function mixForPicture() {
+    return (await renderEpisodeMaster())?.buffer ?? null
   }
 
   function downloadBlob(blob: Blob, name: string) {
@@ -2312,10 +2394,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     try {
       const prepared = await tracksWithInserts(tracks)
       const files: { name: string; data: Uint8Array }[] = []
-      let mixed = mixdownTracks(prepared)
-      mixed = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
-      if (matchLufs) mixed = applyGainAndFades(mixed, gainForTargetLufs(measureLoudness(mixed).lufs, PODCAST_LUFS), 0, 0)
-      const mixBytes = new Uint8Array(await (await encodeMp3(mixed)).arrayBuffer())
+      const master = await renderEpisodeMaster()
+      if (!master) return
+      const mixBytes = new Uint8Array(await (await encodeMp3(master.buffer)).arrayBuffer())
       files.push({ name: `${slugFile(title)}-mix.mp3`, data: mixBytes })
       for (const track of prepared) {
         if (!track.buffer) continue
@@ -2345,26 +2426,28 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       setError('Nothing to export — record or import onto a track first')
       return
     }
+    // Full session by default. A drag selection only narrows the export when the person ticks
+    // "Export selection only" — a stray 2-second drag must never replace the episode.
+    const selection = exportSelection ? { start: exportSelection.start, end: exportSelection.end } : null
+    if (exportSelectionOnly && !selection) {
+      setError('Drag a range on the timeline first, or untick “Export selection only”')
+      return
+    }
+    if (selection) {
+      const ok = window.confirm(
+        `Save ONLY the selected ${formatClock(selection.end - selection.start)} (${formatClock(selection.start)}–${formatClock(selection.end)}) as this episode's audio? The rest of the session is left out.`,
+      )
+      if (!ok) return
+    }
     setBusy(thenPublish ? 'Mixing, saving & preparing publish…' : kind === 'wav' ? 'Mixing WAV…' : 'Mixing MP3…')
     setError(null)
     setOk(null)
+    const exportedTracks = tracks
     try {
-      const prepared = await tracksWithInserts(tracks)
-      const mixedRaw =
-        range.end > range.start + 0.05 && range.end < sessionLen - 0.05
-          ? mixdownTracks(prepared, {
-              startSec: range.start,
-              endSec: range.end,
-            })
-          : mixdownTracks(prepared)
-      let mixed = applyGainAndFades(mixedRaw, masterGain, masterFadeIn, masterFadeOut)
-      if (matchLufs) {
-        const loud = measureLoudness(mixed)
-        mixed = applyGainAndFades(mixed, gainForTargetLufs(loud.lufs, PODCAST_LUFS), 0, 0)
-      }
-      mixed = await applyEffect(mixed, 'limit')
-      const after = measureLoudness(mixed)
-      if (Number.isFinite(after.lufs)) setLoudness({ lufs: after.lufs, peakDb: after.peakDb })
+      const master = await renderEpisodeMaster({ selection })
+      if (!master) throw new Error('Nothing audible to export')
+      const mixed = master.buffer
+      if (Number.isFinite(master.lufs)) setLoudness({ lufs: master.lufs, peakDb: master.peakDb })
       const blob = kind === 'wav' ? encodeWav(mixed) : await encodeMp3(mixed)
       const ext = kind === 'wav' ? 'wav' : 'mp3'
       const file = new File(
@@ -2372,8 +2455,17 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         `${title.replace(/[^\w]+/g, '-').slice(0, 48) || 'episode'}-mix.${ext}`,
         { type: blob.type },
       )
-      await onExported(file, mixed.duration)
-      setOk(thenPublish ? 'Mix saved to site host' : `Saved ${ext.toUpperCase()} mix to episode`)
+      const saved = await onExported(file, mixed.duration)
+      if (saved === false) {
+        setOk('Mix not saved — the episode audio is unchanged')
+        return
+      }
+      markMixSaved(exportedTracks)
+      setOk(
+        thenPublish
+          ? `Mix saved (${formatClock(mixed.duration)}) — opening the publishing review`
+          : `Saved ${ext.toUpperCase()} mix (${formatClock(mixed.duration)}) to the episode`,
+      )
       if (thenPublish && onPublished) await onPublished()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Export failed')
@@ -2397,6 +2489,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     Object.keys(cameraStreams).length > 0 ||
     Boolean(guestLiveVideo)
   const durationLabel = formatClock(sessionDuration(tracks))
+  const exportLabel = exportSelection
+    ? `Save selection only (${formatClock(exportSelection.end - exportSelection.start)})`
+    : `Save full episode (${durationLabel})`
   const peakDb = meter ? dbFromLinear(meter.peak) : null
   const rmsDb = meter ? dbFromLinear(meter.rms) : null
   const recHint = REC_MODE_META.find((m) => m.id === recMode)?.hint
@@ -3921,22 +4016,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2 pt-1 border-t border-[#27313B]">
+        <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-[#4A5968]">
           <button
             type="button"
             className={primary}
             disabled={!hasAudio || Boolean(busy)}
             onClick={() => void exportAudio('mp3')}
           >
-            {busy?.includes('MP3') ? busy : 'Save mix MP3 (hosted)'}
-          </button>
-          <button
-            type="button"
-            className={btn}
-            disabled={!hasAudio || Boolean(busy)}
-            onClick={() => void exportAudio('wav')}
-          >
-            {busy?.includes('WAV') ? busy : 'Save mix WAV'}
+            {busy?.includes('MP3') ? busy : exportLabel}
           </button>
           {onPublished && (
             <button
@@ -3945,21 +4032,53 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               disabled={!hasAudio || Boolean(busy)}
               onClick={() => void exportAudio('mp3', true)}
             >
-              Save mix + publish to site / RSS
+              Save mix &amp; review for publishing
             </button>
           )}
-          <label className="inline-flex items-center gap-1.5 text-xs text-[#A9B8C6]">
-            <input type="checkbox" checked={matchLufs} onChange={(e) => setMatchLufs(e.target.checked)} />
-            Match {PODCAST_LUFS} LUFS
-          </label>
           <button
             type="button"
             className={btn}
             disabled={!hasAudio || Boolean(busy)}
-            onClick={() => void downloadStems()}
+            onClick={() => void exportAudio('wav')}
           >
-            {busy?.includes('stems') ? busy : 'Download stems zip'}
+            {busy?.includes('WAV') ? busy : 'Save as WAV instead'}
           </button>
+          <label className="inline-flex min-h-[36px] items-center gap-1.5 text-xs text-[#D5DEE6]">
+            <input type="checkbox" checked={matchLufs} onChange={(e) => setMatchLufs(e.target.checked)} />
+            Even out loudness ({PODCAST_LUFS} LUFS)
+          </label>
+          <label className="inline-flex min-h-[36px] items-center gap-1.5 text-xs text-[#D5DEE6]">
+            <input
+              type="checkbox"
+              checked={exportSelectionOnly}
+              onChange={(e) => setExportSelectionOnly(e.target.checked)}
+            />
+            Export selection only
+            {exportSelectionOnly && !hasSelection ? ' (drag a range first)' : ''}
+          </label>
+          <button
+            type="button"
+            className={btn}
+            disabled={!hasAudio || Boolean(busy) || measuring || recording}
+            onClick={() => void measureMasterNow()}
+          >
+            {measuring ? 'Measuring…' : loudness && !loudnessStale ? `Loudness ${loudness.lufs.toFixed(1)} LUFS` : 'Measure loudness'}
+          </button>
+          {advanced && (
+            <button
+              type="button"
+              className={btn}
+              disabled={!hasAudio || Boolean(busy)}
+              onClick={() => void downloadStems()}
+            >
+              {busy?.includes('stems') ? busy : 'Download stems zip'}
+            </button>
+          )}
+          {unsaved && !busy && (
+            <p className="basis-full text-xs text-[#FFD9A8]" role="note">
+              Edits since the last saved mix — they are backed up on this computer but not in the episode yet.
+            </p>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[#1A232C] bg-[#080C10] px-3 py-2">

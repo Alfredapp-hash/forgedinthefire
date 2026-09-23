@@ -55,6 +55,8 @@ export function useLeaveGuard({ recording, unsaved }: StudioGuardState) {
   useEffect(() => {
     if (!active) return
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      // Read the module state at event time: a save that just finished clears it synchronously.
+      if (!leaveMessage()) return
       event.preventDefault()
       // Legacy browsers need returnValue set.
       event.returnValue = ''
