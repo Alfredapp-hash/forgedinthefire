@@ -1,54 +1,44 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
-import {
-  cameraKind,
-  cameraLayer,
-  camerasAtTime,
-  cameraSourceTime,
-  clipOpacity,
-  clipTranslate,
-  type CameraClip,
-} from '@/lib/podcast/camera'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { cameraLayer, camerasAtTime, type CameraClip } from '@/lib/podcast/camera'
 import {
   paintProgramFrame,
+  programLayers,
   sceneFromPictureMode,
+  timedLayersFromVideos,
   type PictureMode,
   type PictureScene,
   type TimedPaint,
 } from '@/lib/podcast/picture'
 
+type LiveStreams = { host?: MediaStream | null; guest?: MediaStream | null }
+
 type Props = {
   clips: CameraClip[]
   playhead: number
+  /** Timeline is playing — camera files play instead of seeking every frame. */
+  playing?: boolean
   mode?: PictureMode
   scene?: PictureScene
   fromScene?: PictureScene
   mix?: number
-  /** While Record is rolling, this is the punched camera (OBS Program). */
+  /** @deprecated single live camera — use `liveStreams`. */
   liveStream?: MediaStream | null
+  /** @deprecated use `liveStreams`. */
   livePersonId?: string | null
+  /** Live Host / Guest cameras (OBS sources). Shown while recording, or when paused with no picture at the playhead. */
+  liveStreams?: LiveStreams
   recording?: boolean
 }
 
-const VIEW_W = 320
-const VIEW_H = 180
+const VIEW_W = 640
+const VIEW_H = 360
 
-function asTimed(clip: CameraClip, source: CanvasImageSource | null, sessionTime: number): TimedPaint {
-  const { x, y } = clipTranslate(clip, sessionTime)
-  return {
-    clip,
-    source: source as TimedPaint['source'],
-    opacity: clipOpacity(clip, sessionTime),
-    x,
-    y,
-  }
-}
-
-const SCENES: { id: PictureScene; label: string }[] = [
-  { id: 'host', label: 'Host' },
-  { id: 'guest', label: 'Guest' },
-  { id: 'pip', label: 'PIP' },
+const SCENES: { id: PictureScene; label: string; key: string }[] = [
+  { id: 'host', label: 'Host', key: '⌥1' },
+  { id: 'guest', label: 'Guest', key: '⌥2' },
+  { id: 'pip', label: 'PIP', key: '⌥3' },
 ]
 
 export function ProgramSwitcher({
@@ -59,6 +49,8 @@ export function ProgramSwitcher({
   onPvw,
   onCut,
   onFade,
+  recording,
+  cutCount,
 }: {
   pvw: PictureScene
   pgm: PictureScene
@@ -67,23 +59,30 @@ export function ProgramSwitcher({
   onPvw: (scene: PictureScene) => void
   onCut: () => void
   onFade: () => void
+  /** Cuts land on the record clock while rolling. */
+  recording?: boolean
+  /** Scene cuts on the timeline, for the hint line. */
+  cutCount?: number
 }) {
   return (
     <div className="space-y-1">
-      <p className="text-[10px] uppercase tracking-wider text-[#7C8B97]">Preview scene</p>
-      <div className="flex flex-wrap gap-1">
+      <p className="text-[10px] uppercase tracking-wider text-[#7C8B97]">Scene</p>
+      <div className="flex flex-wrap gap-1" role="group" aria-label="Program scene">
         {SCENES.map((s) => (
           <button
             key={s.id}
             type="button"
+            aria-pressed={pgm === s.id}
             className={`inline-flex items-center justify-center h-6 px-1.5 rounded border text-[10px] uppercase tracking-wider ${
               pgm === s.id
-                ? 'border-[#53D6FF]/60 text-[#8DEBFF]'
+                ? 'border-[#FF5B73]/70 text-[#FFB3C0]'
                 : pvw === s.id
-                  ? 'border-[#8DEBFF]/40 text-[#B8C4CF]'
+                  ? 'border-[#7CFFB2]/50 text-[#B8FFD6]'
                   : 'border-[#27313B] text-[#B8C4CF]'
             }`}
-            title={`${s.label} Program layout — click to take. Fade first to dissolve.`}
+            title={`${s.label} (${s.key}) — ${
+              recording ? 'cuts Program now, on the record clock' : 'cuts Program at the playhead'
+            }. Arm Fade first to dissolve.`}
             onClick={() => onPvw(s.id)}
           >
             {s.label}
@@ -105,30 +104,77 @@ export function ProgramSwitcher({
           className={`inline-flex items-center justify-center h-6 px-1.5 rounded border text-[10px] uppercase tracking-wider ${
             fading || fadeArmed ? 'border-[#53D6FF]/60 text-[#8DEBFF]' : 'border-[#27313B] text-[#B8C4CF]'
           }`}
+          aria-pressed={Boolean(fadeArmed)}
           title="Fade to Program (~0.45s). If Program already matches Preview, the next scene click dissolves."
           onClick={onFade}
         >
           Fade
         </button>
       </div>
+      <p className="max-w-[9rem] text-[9px] leading-tight text-[#7C8B97]">
+        {recording
+          ? 'Switching is recorded on the take.'
+          : cutCount
+            ? `${cutCount} scene cut${cutCount === 1 ? '' : 's'} on the timeline`
+            : 'Cuts go on the Program lane.'}
+      </p>
     </div>
   )
 }
 
-export function ProgramMonitor({
-  clips,
-  playhead,
-  mode = 'a-roll',
-  scene,
-  fromScene,
-  mix = 1,
-  liveStream,
-  livePersonId,
-  recording,
-}: Props) {
+function useLiveVideo(stream: MediaStream | null | undefined) {
+  const ref = useRef<HTMLVideoElement | null>(null)
+  useEffect(() => {
+    if (!stream) {
+      ref.current = null
+      return
+    }
+    const el = document.createElement('video')
+    el.muted = true
+    el.playsInline = true
+    el.autoplay = true
+    el.srcObject = stream
+    void el.play().catch(() => {})
+    ref.current = el
+    return () => {
+      el.pause()
+      el.srcObject = null
+      if (ref.current === el) ref.current = null
+    }
+  }, [stream])
+  return ref
+}
+
+const LIVE_CLIP: Omit<CameraClip, 'id' | 'personId'> = {
+  url: '',
+  mime: 'video/live',
+  offset: 0,
+  duration: Number.MAX_SAFE_INTEGER,
+  trimStart: 0,
+  sourceStart: 0,
+  sourceDuration: Number.MAX_SAFE_INTEGER,
+  bytes: 0,
+  kind: 'camera',
+  layer: 'base',
+}
+
+export function ProgramMonitor(props: Props) {
+  const { clips, recording, liveStream, livePersonId, liveStreams } = props
+  const [large, setLarge] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videosRef = useRef<Map<string, HTMLVideoElement>>(new Map())
-  const liveRef = useRef<HTMLVideoElement | null>(null)
+  const propsRef = useRef(props)
+  const [showingLive, setShowingLive] = useState(false)
+  const showingLiveRef = useRef(false)
+
+  useLayoutEffect(() => {
+    propsRef.current = props
+  })
+
+  const hostStream = liveStreams?.host ?? (liveStream && livePersonId !== 'guest' ? liveStream : null)
+  const guestStream = liveStreams?.guest ?? (liveStream && livePersonId === 'guest' ? liveStream : null)
+  const hostLive = useLiveVideo(hostStream)
+  const guestLive = useLiveVideo(guestStream)
 
   useEffect(() => {
     const urls = new Set(clips.map((c) => c.url).filter(Boolean))
@@ -153,86 +199,50 @@ export function ProgramMonitor({
   }, [clips])
 
   useEffect(() => {
-    if (!liveStream) {
-      if (liveRef.current) {
-        liveRef.current.srcObject = null
-        liveRef.current = null
-      }
-      return
-    }
-    const el = liveRef.current || document.createElement('video')
-    el.muted = true
-    el.playsInline = true
-    el.srcObject = liveStream
-    void el.play().catch(() => {})
-    liveRef.current = el
-    return () => {
-      el.srcObject = null
-      if (liveRef.current === el) liveRef.current = null
-    }
-  }, [liveStream])
-
-  useEffect(() => {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d', { alpha: false })
     if (!canvas || !ctx) return
     let raf = 0
-    let alive = true
+    const hostClip: CameraClip = { ...LIVE_CLIP, id: 'live-host', personId: 'host' }
+    const guestClip: CameraClip = { ...LIVE_CLIP, id: 'live-guest', personId: 'guest' }
+    const liveLayer = (clip: CameraClip, el: HTMLVideoElement | null): TimedPaint[] =>
+      el && el.readyState >= 2 ? [{ clip, source: el, opacity: 1, x: 0, y: 0 }] : []
 
     const tick = () => {
-      if (!alive) return
-      const host: TimedPaint[] = []
-      const guest: TimedPaint[] = []
-      const overlays: TimedPaint[] = []
-      for (const clip of camerasAtTime(clips, playhead)) {
-        const opacity = clipOpacity(clip, playhead)
-        if (opacity <= 0) continue
-        const video = clip.url ? videosRef.current.get(clip.url) || null : null
-        if (video && cameraKind(clip) !== 'title') {
-          const want = cameraSourceTime(clip, playhead)
-          if (Math.abs(video.currentTime - want) > 0.08) {
-            try {
-              video.currentTime = Math.max(0, want)
-            } catch {
-              /* seek can fail mid-load */
-            }
-          }
-        }
-        const layer = asTimed(clip, cameraKind(clip) === 'title' ? null : video, playhead)
-        if (cameraLayer(clip) === 'overlay' || cameraKind(clip) !== 'camera') overlays.push(layer)
-        else if (clip.personId === 'guest') guest.push(layer)
-        else host.push(layer)
+      const p = propsRef.current
+      const t = p.playhead
+      const layers = programLayers(p.clips)
+      const hasBaseAtHead = camerasAtTime(
+        p.clips.filter((c) => cameraLayer(c) === 'base'),
+        t,
+      ).length > 0
+      const anyLive = Boolean(hostLive.current || guestLive.current)
+      const live = anyLive && (Boolean(p.recording) || (!p.playing && !hasBaseAtHead))
+      if (live !== showingLiveRef.current) {
+        showingLiveRef.current = live
+        setShowingLive(live)
       }
-      if (recording && liveRef.current && liveRef.current.readyState >= 1) {
-        const liveClip: CameraClip = {
-          id: 'live-program',
-          personId: livePersonId || 'host',
-          url: '',
-          mime: 'video/live',
-          offset: playhead,
-          duration: 1,
-          trimStart: 0,
-          sourceStart: 0,
-          sourceDuration: 1,
-          bytes: 0,
-          kind: 'camera',
-          layer: 'base',
-        }
-        const liveLayer = {
-          clip: liveClip,
-          source: liveRef.current as unknown as TimedPaint['source'],
-          opacity: 1,
-          x: 0,
-          y: 0,
-        }
-        if (livePersonId === 'guest') guest.splice(0, guest.length, liveLayer)
-        else host.splice(0, host.length, liveLayer)
-      }
+      const playing = Boolean(p.playing) && !p.recording
+      // Live cameras replace that person's files; files are only steered when they are painted.
+      const hostLiveLayer = live ? liveLayer(hostClip, hostLive.current) : []
+      const guestLiveLayer = live ? liveLayer(guestClip, guestLive.current) : []
+      const host = hostLiveLayer.length
+        ? hostLiveLayer
+        : timedLayersFromVideos(layers.host, videosRef.current, t, playing)
+      const guest = guestLiveLayer.length
+        ? guestLiveLayer
+        : timedLayersFromVideos(layers.guest, videosRef.current, t, playing)
+      const overlays = timedLayersFromVideos(layers.overlays, videosRef.current, t, playing)
+      // Pause any file that is not on screen so it stops decoding.
+      const onScreen = new Set([...host, ...guest, ...overlays].map((l) => l.source))
+      videosRef.current.forEach((el) => {
+        if (!onScreen.has(el) && !el.paused) el.pause()
+      })
       paintProgramFrame(ctx, {
-        mode,
-        scene: scene || sceneFromPictureMode(mode),
-        fromScene,
-        mix,
+        mode: p.mode,
+        scene: p.scene || sceneFromPictureMode(p.mode || 'a-roll'),
+        fromScene: p.fromScene,
+        mix: p.mix,
         host,
         guest,
         overlays,
@@ -242,38 +252,59 @@ export function ProgramMonitor({
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
-    return () => {
-      alive = false
-      cancelAnimationFrame(raf)
-    }
-  }, [clips, fromScene, livePersonId, mix, mode, playhead, recording, scene])
+    return () => cancelAnimationFrame(raf)
+  }, [hostLive, guestLive])
 
   useEffect(() => {
+    const map = videosRef.current
     return () => {
-      videosRef.current.forEach((el) => {
+      map.forEach((el) => {
         el.pause()
         el.removeAttribute('src')
         el.load()
       })
-      videosRef.current.clear()
+      map.clear()
     }
   }, [])
 
-  const hasPicture = clips.some((c) => !c.muted) || Boolean(recording && liveStream)
+  const hasPicture = clips.some((c) => !c.muted) || Boolean(hostStream || guestStream)
+  const scene = props.scene || sceneFromPictureMode(props.mode || 'a-roll')
+  const fading = props.fromScene && props.fromScene !== scene && (props.mix ?? 1) < 0.999
 
   return (
     <div className="space-y-1">
-      <p className="text-[10px] uppercase tracking-wider text-[#8DEBFF]">Program</p>
-      <div className="relative overflow-hidden rounded-lg border border-[#53D6FF]/40 bg-[#05070A] h-[90px] w-[160px]">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[10px] uppercase tracking-wider text-[#8DEBFF]">Program</p>
+        <button
+          type="button"
+          className="text-[9px] uppercase tracking-wider text-[#7C8B97] hover:text-[#B8C4CF]"
+          onClick={() => setLarge((v) => !v)}
+          aria-label={large ? 'Shrink Program monitor' : 'Enlarge Program monitor'}
+        >
+          {large ? 'Small' : 'Large'}
+        </button>
+      </div>
+      <div
+        className={`relative overflow-hidden rounded-lg border bg-[#05070A] ${
+          recording ? 'border-[#FF5B73]/70' : 'border-[#53D6FF]/40'
+        } ${large ? 'h-[180px] w-[320px]' : 'h-[90px] w-[160px]'}`}
+      >
         <canvas ref={canvasRef} width={VIEW_W} height={VIEW_H} className="h-full w-full" />
         {!hasPicture && (
-          <p className="absolute inset-0 flex items-center justify-center px-2 text-center text-[10px] uppercase tracking-wider text-[#7C8B97]">
-            No punched picture
+          <p className="absolute inset-0 flex items-center justify-center px-2 text-center text-[10px] leading-tight text-[#7C8B97]">
+            No picture yet. Turn on Cam for Host or Guest, or add a lower third.
           </p>
         )}
         <span className="absolute left-1 top-1 rounded bg-[#05070A]/80 px-1 text-[9px] uppercase tracking-wider text-[#8DEBFF]">
-          PGM {scene === 'guest' ? 'Guest' : scene === 'pip' || mode === 'pip' ? 'PIP' : 'Host'}
+          PGM {scene === 'guest' ? 'Guest' : scene === 'pip' ? 'PIP' : 'Host'}
+          {fading ? ' · fade' : ''}
         </span>
+        {showingLive && (
+          <span className="absolute right-1 top-1 inline-flex items-center gap-1 rounded bg-[#05070A]/80 px-1 text-[9px] uppercase tracking-wider text-[#FF8FA3]">
+            <span className={`h-1.5 w-1.5 rounded-full ${recording ? 'bg-[#FF5B73]' : 'bg-[#7C8B97]'}`} />
+            {recording ? 'Live · rec' : 'Live'}
+          </span>
+        )}
       </div>
     </div>
   )

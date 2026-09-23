@@ -16,7 +16,6 @@ import {
   clipTranslate,
   cssCameraFilter,
   isGraphicClip,
-  newCameraClipId,
   newStingerClip,
   newTitleClip,
   normalizeCameraClip,
@@ -608,22 +607,22 @@ type EncodePlan = {
 
 async function pickEncodePlan(
   format: VideoExportFormat,
-  audio: { numberOfChannels: number; sampleRate: number },
+  audio: { numberOfChannels: number; sampleRate: number } | null,
   streaming: boolean,
 ): Promise<EncodePlan | null> {
   const mb = await import('mediabunny')
   const videoOpts = { width: WIDTH, height: HEIGHT, frameRate: FPS, quality: mb.QUALITY_HIGH } as const
-  const audioOpts = { numberOfChannels: audio.numberOfChannels, sampleRate: audio.sampleRate } as const
+  const audioOpts = { numberOfChannels: audio?.numberOfChannels || 2, sampleRate: audio?.sampleRate || 48000 } as const
 
   const webm = async (): Promise<EncodePlan | null> => {
     const video = await mb.getFirstEncodableVideoCodec(['vp8', 'vp9', 'av1'], videoOpts)
-    const opus = await mb.canEncodeAudio('opus', audioOpts)
+    const opus = audio ? await mb.canEncodeAudio('opus', audioOpts) : true
     if (!video || !opus) return null
     return { format: new mb.WebMOutputFormat(), video, audio: 'opus', mime: 'video/webm', ext: 'webm', quality: mb.QUALITY_HIGH }
   }
   const mp4 = async (): Promise<EncodePlan | null> => {
     const video = await mb.getFirstEncodableVideoCodec(['avc', 'hevc', 'vp9', 'av1'], videoOpts)
-    const audioCodec = await mb.getFirstEncodableAudioCodec(['aac', 'opus'], audioOpts)
+    const audioCodec = audio ? await mb.getFirstEncodableAudioCodec(['aac', 'opus'], audioOpts) : 'aac'
     if (!video || !audioCodec) return null
     return {
       // In-memory fast start moves `moov` to the front for web playback; streamed files keep it at the end.
@@ -645,7 +644,8 @@ type RenderJob = {
   overlays: CameraClip[]
   needGuest: boolean
   sceneAt: SceneAt
-  audio: AudioBuffer
+  /** null = picture-only file (no audio track). */
+  audio: AudioBuffer | null
   format: VideoExportFormat
   writable?: PictureWritable
   signal?: AbortSignal
@@ -664,7 +664,7 @@ async function renderFastPicture(job: RenderJob): Promise<PictureRenderResult> {
   if (!ctx) throw new Error('Could not open a 2D canvas')
 
   const all = [...job.host, ...job.guest, ...job.overlays]
-  const duration = Math.max(pictureSpan(job.audio.duration, all), FRAME)
+  const duration = Math.max(pictureSpan(job.audio?.duration || 0, all), FRAME)
   const frames = Math.max(1, Math.round(duration * FPS))
 
   const hostPainter = await openClipSetPainter(job.host)
@@ -679,18 +679,22 @@ async function renderFastPicture(job: RenderJob): Promise<PictureRenderResult> {
     latencyMode: 'quality',
     keyFrameInterval: 2,
   })
-  const audioSource = new mb.AudioBufferSource({
-    codec: plan.audio,
-    quality: plan.quality,
-  })
+  const audioSource = job.audio
+    ? new mb.AudioBufferSource({
+        codec: plan.audio,
+        quality: plan.quality,
+      })
+    : null
   output.addVideoTrack(videoSource, { frameRate: FPS })
-  output.addAudioTrack(audioSource)
+  if (audioSource) output.addAudioTrack(audioSource)
 
   let finished = false
   try {
     await output.start()
-    await audioSource.add(job.audio)
-    audioSource.close()
+    if (audioSource && job.audio) {
+      await audioSource.add(job.audio)
+      audioSource.close()
+    }
     for (let i = 0; i < frames; i++) {
       throwIfAborted(job.signal)
       const t = i * FRAME
@@ -810,16 +814,18 @@ async function renderRealtimePicture(job: RenderJob): Promise<PictureRenderResul
     els.set(clip.url, await loadVideo(clip.url, cameraSourceTime(clip, clip.offset)))
   }
 
-  const duration = pictureSpan(job.audio.duration, all)
+  const duration = pictureSpan(job.audio?.duration || 0, all)
 
   const audioCtx = new AudioContext()
   const dest = audioCtx.createMediaStreamDestination()
   const source = audioCtx.createBufferSource()
-  source.buffer = job.audio
-  source.connect(dest)
+  if (job.audio) {
+    source.buffer = job.audio
+    source.connect(dest)
+  }
 
   const frames = canvas.captureStream(FPS)
-  dest.stream.getAudioTracks().forEach((track) => frames.addTrack(track))
+  if (job.audio) dest.stream.getAudioTracks().forEach((track) => frames.addTrack(track))
   const wantMp4 = job.format === 'mp4'
   const candidates = wantMp4
     ? ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm']
@@ -950,7 +956,8 @@ export async function renderProgramVideo(opts: {
   cuts?: ProgramCut[]
   /** Scene before the first cut. Default 'host'. */
   startScene?: PictureScene
-  audio: AudioBuffer
+  /** Mixed episode audio; null writes a picture-only file. */
+  audio: AudioBuffer | null
   format?: VideoExportFormat
   signal?: AbortSignal
   writable?: PictureWritable
@@ -1147,7 +1154,7 @@ export function createProgramCompositor(opts: {
         sublabel: o?.sublabel,
         duration: o?.seconds ?? (o?.label ? 0.7 : 0.4),
       })
-      overlays = [...overlays, { ...clip, id: newCameraClipId() }]
+      overlays = [...overlays, clip]
     },
     stop() {
       window.clearInterval(timer)

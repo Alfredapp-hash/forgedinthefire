@@ -37,6 +37,8 @@ export type SessionTimelineProps = {
   rulerOnly?: boolean
   scrollLeft?: number
   onScrollLeft?: (left: number) => void
+  /** Called once when a clip drag (move / trim) actually starts — one undo step per drag. */
+  onEditStart?: () => void
 }
 
 function subscribeDpr(onStoreChange: () => void) {
@@ -80,6 +82,7 @@ export function SessionTimeline({
   rulerOnly = false,
   scrollLeft,
   onScrollLeft,
+  onEditStart,
 }: SessionTimelineProps) {
   const scopedPeople = personId ? people.filter((p) => p.id === personId) : people
   const scopedTracks = (personId ? tracks.filter((t) => t.personId === personId) : tracks).slice().sort((a, b) => {
@@ -91,7 +94,7 @@ export function SessionTimeline({
   const boardRef = useRef<HTMLDivElement>(null)
   const drag = useRef<
     | { kind: 'move'; trackId: string; clipId: string; startX: number; startOffset: number; moved: boolean }
-    | { kind: 'trim'; trackId: string; clipId: string; edge: 'in' | 'out' }
+    | { kind: 'trim'; trackId: string; clipId: string; edge: 'in' | 'out'; started?: boolean }
     | { kind: 'range'; trackId: string; anchor: number }
     | { kind: 'seek' }
     | null
@@ -152,10 +155,18 @@ export function SessionTimeline({
     if (!d) return
     const t = timeFromClientX(event.clientX)
     if (d.kind === 'move') {
-      if (Math.abs(event.clientX - d.startX) > 3) d.moved = true
+      if (!d.moved && Math.abs(event.clientX - d.startX) <= 3) return
+      if (!d.moved) {
+        d.moved = true
+        onEditStart?.()
+      }
       const delta = (event.clientX - d.startX) / pxPerSec
       onMoveClip(d.trackId, d.clipId, Math.max(0, d.startOffset + delta))
     } else if (d.kind === 'trim') {
+      if (!d.started) {
+        d.started = true
+        onEditStart?.()
+      }
       onTrimClip(d.trackId, d.clipId, d.edge, t)
     } else if (d.kind === 'range') {
       onRange(Math.min(d.anchor, t), Math.max(d.anchor, t), d.trackId)
