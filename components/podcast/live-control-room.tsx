@@ -1503,6 +1503,7 @@ export function LiveControlRoom({ episodes = [] }: Props) {
             onRemoteStream={setGuestStream}
             onGuestName={setGuestName}
             onTakeUrl={noop}
+            safePause={safe}
           />
         ) : (
           <p className="text-sm text-[#A9B8C6]">

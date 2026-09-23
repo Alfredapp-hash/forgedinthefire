@@ -982,10 +982,14 @@ export function GuestInvitePanel({
             aria-pressed={pauseOn}
             disabled={busy || !guestInBooth || safePause}
             onClick={() => setHostPause((v) => !v)}
-            title={safePause ? 'Safe slate is on in the live room' : 'Guest sees a calm pause screen and their mic is off'}
+            title={
+              safePause
+                ? 'Safe pause is on for the whole session — turn it off from the main Safe pause / safe slate control'
+                : 'Guest sees a calm pause screen and their mic is off'
+            }
             className={`${BTN} ${pauseOn ? 'bg-[#FFB86B] text-[#1A1206] font-medium' : 'border border-[#FFB86B]/50 text-[#FFD9A8]'} disabled:opacity-40`}
           >
-            <Coffee size={14} /> {safePause ? 'Safe slate on' : pauseOn ? 'End safe pause' : 'Safe pause'}
+            <Coffee size={14} /> {safePause ? 'Safe pause on' : pauseOn ? 'End safe pause' : 'Safe pause'}
           </button>
           <button
             type="button"

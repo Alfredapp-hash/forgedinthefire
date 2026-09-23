@@ -170,6 +170,7 @@ export function createHostFallbackSendMix(): HostFallbackSendMix {
   let talkOn = false
   let cueOn = false
   let raf = 0
+  let stopped = false
 
   const tick = () => {
     const peak = talkOn ? peakFromAnalyser(analyser, data) : 0

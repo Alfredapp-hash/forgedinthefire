@@ -70,8 +70,10 @@ import {
 import {
   REC_MODE_META,
   attachInputMeter,
+  createSessionContext,
   playCountIn,
   punchInTime,
+  punchTrimSec,
   sharedPunchInTime,
   sleep,
   startLiveMix,
@@ -91,6 +93,7 @@ import {
   startLaneCapture,
   stopLaneCapture,
   stopStreams,
+  type CaptureProcessing,
   type LaneCapture,
 } from '@/lib/podcast/capture'
 import {
@@ -139,6 +142,8 @@ import {
 } from '@/lib/podcast/take-journal'
 import { SessionTimeline } from '@/components/podcast/session-timeline'
 import { GuestInvitePanel } from '@/components/podcast/guest-invite-panel'
+import { fetchGuestTakeBlob } from '@/lib/podcast/upload/guest-take-client'
+import { alignToReference } from '@/lib/podcast/engine/align'
 import type { GuestTallyPhase } from '@/lib/podcast/guest-types'
 import { CameraClipReview, CameraLane, ProgramCutLane } from '@/components/podcast/camera-lane'
 import { CameraPreview } from '@/components/podcast/camera-preview'
@@ -333,8 +338,15 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [cueToGuest, setCueToGuest] = useState(false)
   const [guestCueStream, setGuestCueStream] = useState<MediaStream | null>(null)
   const [replaceArmed, setReplaceArmed] = useState(false)
-  const [rawInput, setRawInput] = useState(false)
+  /**
+   * Browser clean-up (echo cancel / noise suppression / auto level) while recording. null = auto:
+   * off (true mic signal, clean-up after the take) when the mix plays in headphones, on otherwise
+   * so speaker bleed is cancelled. An explicit tick overrides.
+   */
+  const [liveCleanupChoice, setLiveCleanupChoice] = useState<boolean | null>(null)
   const [autoMuteQuiet, setAutoMuteQuiet] = useState(true)
+  const liveCleanup = liveCleanupChoice ?? !cueEnabled
+  const micProcessing: CaptureProcessing = liveCleanup ? 'browser' : 'raw'
   const [voiceIsolate, setVoiceIsolate] = useState(true)
   const [micId, setMicId] = useState('')
   const [mics, setMics] = useState<MediaDeviceInfo[]>([])
@@ -419,6 +431,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const recUnwatchRef = useRef<() => void>(() => {})
   /** Take journals whose audio is laid on the timeline, finished once the session autosave lands. */
   const pendingJournalsRef = useRef<TakeJournal[]>([])
+  /** Shared AudioContext of the take being recorded (cue + count-in + all lane captures). */
+  const sessionCtxRef = useRef<AudioContext | null>(null)
+  const unmountedRef = useRef(false)
+  /** Punch-in of the last take recorded while the remote guest was on the call. */
+  const guestPunchRef = useRef<number | null>(null)
+  /** Clock anchor sent to the guest booth with record-on: session `sec` plays at epoch ms `at`. */
+  const [guestRecClock, setGuestRecClock] = useState<{ sec: number; at: number } | null>(null)
   /** Recovered journal takes to delete once the session autosave holds them. */
   const restoredJournalIdsRef = useRef<string[]>([])
   /** Last opened input stream per device key (idle + record) — Safe pause targets the guest's. */
@@ -768,7 +787,15 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       const restored = restoredJournalIdsRef.current.splice(0)
       void saveSession(episodeId, people, tracks, cameraClips, { programCuts, startScene })
         .then(() => {
-          journals.forEach((j) => void j.finish().catch(() => {}))
+          // The session store now holds these takes: close each journal, then drop its copy so
+          // completed journals never pile up in browser storage.
+          journals.forEach((j) =>
+            void j
+              .finish()
+              .catch(() => {})
+              .then(() => deleteTake(j.id))
+              .catch(() => {}),
+          )
           restored.forEach((id) => void deleteTake(id).catch(() => {}))
         })
         .catch((err) => {
@@ -826,6 +853,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   }, [sessionLen])
 
   useEffect(() => {
+    unmountedRef.current = false
     return () => {
       // Read the latest committed session — the closure's first-render values are stale.
       const last = latestRef.current
@@ -856,6 +884,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         if (c.recorder.state !== 'inactive') c.recorder.stop()
       })
       cueRef.current?.stop()
+      // Leaving mid-take: stop the captures so their journals flush. They stay unfinished and the
+      // recovery banner offers them next time (the take never reached the session autosave).
+      unmountedRef.current = true
+      capturesRef.current.forEach(stopLaneCapture)
       stopMeterRef.current.forEach((fn) => fn())
       idleStopRef.current.forEach((fn) => fn())
       abortRef.current?.abort()
@@ -924,7 +956,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     if (keys.length === 0 && !remoteGuest) keys.push(micId || '')
     void (async () => {
       try {
-        const streams = keys.length ? await openInputStreams(keys, rawInput) : new Map<string, MediaStream>()
+        const streams = keys.length ? await openInputStreams(keys, micProcessing) : new Map<string, MediaStream>()
         if (cancelled || recordingRef.current) {
           stopStreams(streams.values())
           return
@@ -964,7 +996,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       liveStore.resetPeaks()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- device signature, not people/tracks identity
-  }, [recording, anyArmed, rawInput, micId, remoteGuest, armedDeviceSig, rearmTick])
+  }, [recording, anyArmed, micProcessing, micId, remoteGuest, armedDeviceSig, rearmTick])
 
   useEffect(() => {
     if (!recording && (recTally === 'count-in' || recTally === 'rec')) {
@@ -1683,23 +1715,33 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
   }
 
+  /** Where a guest backup goes when its manifest has no host clock: the last punch-in with the guest. */
+  function guestFallbackStart() {
+    return guestPunchRef.current ?? playheadRef.current
+  }
+
+  function missingChunksNote(missing: number[] | undefined) {
+    if (!missing?.length) return ''
+    const n = missing.length
+    return ` · ${n} upload piece${n === 1 ? '' : 's'} (about ${n * 10} s) never arrived — expect a gap or glitch there; ask the guest to keep the booth tab open until “Backup saved”.`
+  }
+
   async function applyGuestCamera(url: string) {
     setBusy('Loading guest camera backup…')
     try {
-      const sourceUrl = `/api/admin/media/file?url=${encodeURIComponent(url)}`
-      const res = await fetch(sourceUrl)
-      if (!res.ok) throw new Error('Could not load guest camera backup')
-      const blob = await res.blob()
+      const { blob, manifest } = await fetchGuestTakeBlob(url)
       if (blob.size < 64) throw new Error('Guest camera backup was empty')
       const objectUrl = URL.createObjectURL(blob)
       const fullDur = await measureVideoDuration(objectUrl)
       const full = Math.max(0.1, Number.isFinite(fullDur) && fullDur > 0 ? fullDur : 0.1)
+      const placed = manifest?.startedAtSessionSec
+      const offset = Math.max(0, typeof placed === 'number' && Number.isFinite(placed) ? placed : guestFallbackStart())
       const clip: CameraClip = {
         id: newCameraClipId(),
         personId: 'guest',
         url: objectUrl,
-        mime: blob.type || 'video/webm',
-        offset: playheadRef.current,
+        mime: blob.type || manifest?.mime || 'video/webm',
+        offset,
         duration: full,
         trimStart: 0,
         sourceStart: 0,
@@ -1708,7 +1750,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       }
       setCameraClips((prev) => [...prev, clip])
       setSelectedCamClipId(clip.id)
-      setOk('Guest camera backup laid on the Guest camera lane — not in the RSS mix')
+      const note = missingChunksNote(manifest?.missing)
+      if (note) setError(`Guest camera backup laid at ${formatClock(offset)}${note}`)
+      else setOk(`Guest camera backup laid at ${formatClock(offset)} on the Guest camera lane — not in the RSS mix`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load guest camera')
     } finally {
@@ -1716,15 +1760,99 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
   }
 
+  /**
+   * Fine-align a guest backup against the live (WebRTC) guest take it duplicates, within ±200 ms.
+   * Returns the corrected start, or the clock placement when there is nothing to compare against.
+   */
+  function alignGuestBackup(buffer: AudioBuffer, startSec: number, excludeId: string) {
+    const end = startSec + buffer.duration
+    for (const t of tracks) {
+      if (t.id === excludeId || t.personId !== 'guest' || !t.buffer) continue
+      const clip = clipsOf(t).find((c) => c.offset < end && c.offset + c.duration > startSec && !c.muted)
+      if (!clip) continue
+      const ref = t.buffer
+      const from = Math.floor(clip.sourceStart * ref.sampleRate)
+      const to = Math.min(ref.length, Math.ceil((clip.sourceStart + clip.duration) * ref.sampleRate))
+      const hit = alignToReference(
+        { data: ref.getChannelData(0).subarray(from, to), sampleRate: ref.sampleRate, startSec: clip.offset },
+        { data: buffer.getChannelData(0), sampleRate: buffer.sampleRate, startSec },
+        { maxLagSec: 0.2 },
+      )
+      if (hit) return { startSec: Math.max(0, startSec + hit.shiftSec), shiftSec: hit.shiftSec }
+    }
+    return { startSec, shiftSec: 0 }
+  }
+
   async function applyGuestTake(url: string) {
-    const guest = emptyTakeForPerson(tracks, 'guest') || tracks.find((t) => t.personId === 'guest')
-    if (!guest) return
+    const guestPerson = people.find((p) => p.id === 'guest')
+    const empty = emptyTakeForPerson(tracks, 'guest')
+    if (!guestPerson && !empty) {
+      setError('Add a Guest person first, then add their uploaded recording')
+      return
+    }
     setBusy('Loading guest take…')
     try {
+      const { blob, manifest } = await fetchGuestTakeBlob(url)
+      if (blob.size < 64) throw new Error('The guest’s uploaded recording was empty')
+      const buffer = await bufferFromBlob(blob)
+      const placed = manifest?.startedAtSessionSec
+      const clockStart = Math.max(
+        0,
+        typeof placed === 'number' && Number.isFinite(placed) ? placed : guestFallbackStart(),
+      )
+      // Never overwrite the live guest take: it is the alignment reference and the fallback.
+      const { startSec, shiftSec } = alignGuestBackup(buffer, clockStart, empty?.id ?? '')
       pushHistory()
-      const sourceUrl = `/api/admin/media/file?url=${encodeURIComponent(url)}`
-      const buffer = await decodeUrl(sourceUrl)
-      assignBufferToTrack(guest.id, buffer, `Remote guest take laid on ${guest.name}`)
+      const fileUrl = bufferToUrl(buffer)
+      let made: StudioTrack | null = null
+      if (!empty) {
+        const person = guestPerson || people[0]
+        const takeNo = nextTakeNumber(tracks, 'guest')
+        made = createEmptyTrack({
+          name: `${person.name} · uploaded take ${takeNo}`,
+          role: roleForPerson(person),
+          personId: 'guest',
+          take: takeNo,
+          color: person.color,
+          offset: startSec,
+          volume: 1,
+          clips: [fullClipForBuffer(buffer, startSec, 0.05, 0.15)],
+        })
+        made.buffer = cloneAudioBuffer(buffer)
+        made.url = fileUrl
+      } else {
+        invalidateInsertCache(empty.id)
+      }
+      const laid = made || empty!
+      setTracks((prev) => {
+        if (made) return withListenTake([...prev, made], made.id)
+        return withListenTake(
+          prev.map((t) =>
+            t.id === laid.id
+              ? {
+                  ...t,
+                  buffer: cloneAudioBuffer(buffer),
+                  url: fileUrl,
+                  offset: startSec,
+                  clips: [fullClipForBuffer(buffer, startSec, t.fadeIn, t.fadeOut)],
+                }
+              : t,
+          ),
+          laid.id,
+        )
+      })
+      setSelectedId(laid.id)
+      const guest = laid
+      const how =
+        Math.abs(shiftSec) >= 0.001
+          ? ` (lined up with the live guest audio, moved ${Math.round(shiftSec * 1000)} ms)`
+          : manifest?.startedAtSessionSec != null
+            ? ''
+            : ' (no recording clock — check it lines up)'
+      const note = missingChunksNote(manifest?.missing)
+      const msg = `Guest’s uploaded recording laid on ${guest.name} at ${formatClock(startSec)}${how}`
+      if (note) setError(`${msg}${note}`)
+      else setOk(msg)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load guest take')
     } finally {
@@ -1824,6 +1952,18 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     stopMix()
     let openedJournals: (TakeJournal | null)[] = []
     let capturing = false
+    // One AudioContext for count-in, cue and every lane capture so their frame clocks compare
+    // (sample-accurate punch). Made inside the click so it may start. If it cannot be made, each
+    // part falls back to its own context and the trim falls back to preroll + device latency.
+    closeSessionContext()
+    let sessionCtx: AudioContext | null = null
+    try {
+      sessionCtx = createSessionContext()
+      void sessionCtx.resume().catch(() => {})
+    } catch {
+      sessionCtx = null
+    }
+    sessionCtxRef.current = sessionCtx
 
     try {
       idleStopRef.current.forEach((fn) => fn())
@@ -1835,7 +1975,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       const uniqueDevices = jobs.map((j) => j.key)
       const localKeys = uniqueDevices.filter((key) => key !== REMOTE_GUEST_KEY)
       const streams = localKeys.length
-        ? await openInputStreams(localKeys, rawInput)
+        ? await openInputStreams(localKeys, micProcessing)
         : new Map<string, MediaStream>()
       if (uniqueDevices.includes(REMOTE_GUEST_KEY)) {
         const remote = remoteGuestRef.current
@@ -1876,18 +2016,24 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       }
       // Opened before the cue mix starts so IndexedDB latency never shifts the punch trim.
       const laneName = (job: (typeof jobs)[number]) => job.sharedNames.join(' + ') || 'a voice'
-      // Crash-safe journal per lane (Stream B). Opening never blocks recording.
+      // Crash-safe journal per lane: PCM (worklet) or encoded chunks (MediaRecorder) are appended
+      // while recording, finished + dropped once the session autosave holds the take, and offered
+      // back by the recovery banner after a crash. Opening never blocks recording.
       const journals = await Promise.all(
         jobs.map((job) => {
           const stream = streams.get(job.key)
-          const rate = stream?.getAudioTracks()[0]?.getSettings().sampleRate || 48000
+          // Worklet frames arrive at the capture context's rate (the shared one when we have it).
+          const rate = sessionCtx?.sampleRate || stream?.getAudioTracks()[0]?.getSettings().sampleRate || 48000
           return openTakeJournal({
             episodeId: episodeId || 'scratch',
             personId: job.lane.personId,
             label: `${laneName(job)} · take`,
             sampleRate: rate,
             channels: 1,
-            startSec: punch,
+            // The journal starts with the capture, i.e. at the cue start (preroll included).
+            startSec: cueStart,
+            onError: (err) =>
+              setRecWarn(err instanceof Error ? err.message : 'The crash-safe copy of this take stopped saving'),
           }).catch(() => null as TakeJournal | null)
         }),
       )
@@ -1896,11 +2042,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       if (countInBeats > 0) {
         setRecTally('count-in')
         setOk('Count-in…')
-        await playCountIn(countInBeats, bpm, ac.signal)
+        await playCountIn(countInBeats, bpm, ac.signal, sessionCtx ?? undefined)
       }
 
       setRecTally('rec')
 
+      let cueHandle: CueHandle | null = null
       if (cueEnabled || cueToGuestRef.current) {
         const prepared = await tracksWithInserts(tracks)
         const cue = startLiveMix(prepared, {
@@ -1908,8 +2055,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           excludeIds,
           gain: cueGain,
           monitor: cueEnabled,
+          context: sessionCtx ?? undefined,
         })
         cueRef.current = cue
+        cueHandle = cue
         publishGuestCue(cue)
         if (cue) await cue.ctx.resume()
       }
@@ -1917,7 +2066,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       const prerollSec = punch - cueStart
       if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
 
-      const recTrim = Math.max(0, prerollSec)
+      // Camera files: MediaRecorder on their own clock — trim the preroll only.
+      const camTrim = Math.max(0, prerollSec)
       // One lane failing to start must not sink the others: keep what started, say what failed.
       const started = await Promise.allSettled(
         jobs.map(async (job, i) => {
@@ -1925,9 +2075,11 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           if (!stream) {
             throw new Error(`No microphone stream for ${laneName(job)}`)
           }
-          // TODO(merge: Stream B): pass `{ journal: journals[i] }` through startLaneCapture →
-          // startWorkletCapture so PCM frames are journaled while recording.
-          return { job, journal: journals[i], capture: await startLaneCapture(job.lane.id, stream) }
+          const capture = await startLaneCapture(job.lane.id, stream, {
+            context: sessionCtx ?? undefined,
+            journal: journals[i] ?? undefined,
+          })
+          return { job, journal: journals[i], capture }
         }),
       )
       const captures: { job: (typeof jobs)[number]; journal: TakeJournal | null; capture: LaneCapture }[] = []
@@ -1948,6 +2100,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         setError(`Not recording ${failedLanes.join('; ')}. The other lane${captures.length === 1 ? ' is' : 's are'} recording.`)
       }
       capturing = true
+      // Session time now (captures just started) ↔ wall clock, for the guest's backup recorder.
+      setGuestRecClock({ sec: cueHandle ? cueHandle.sessionTime() : cueStart, at: Date.now() })
+      if (remoteGuestRef.current) guestPunchRef.current = punch
       capturesRef.current = captures.map((c) => c.capture)
       recorderRef.current = captures.map((c) => c.capture)
       const camJobs = liveCameraJobs()
@@ -1974,14 +2129,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         const camBlobs = camSettled.map((r) => (r.status === 'fulfilled' ? r.value : new Blob()))
         const lostLanes = audioSettled.flatMap((r, i) => (r.status === 'rejected' ? [laneName(captures[i].job)] : []))
         if (ac.signal.aborted) {
-          captures.forEach((c) => void c.journal?.abort().catch(() => {}))
+          // Cancelled take: drop its journals. Unmounted mid-take: keep them for recovery.
+          if (!unmountedRef.current) captures.forEach((c) => void c.journal?.abort().catch(() => {}))
           return
         }
         if (lostLanes.length) {
           setError(`The ${lostLanes.join(' and ')} recording failed. Other lanes were kept.`)
         }
-        // Journals are finished only after the session autosave has the take (see autosave effect).
-        pendingJournalsRef.current.push(...captures.map((c) => c.journal).filter((j): j is TakeJournal => Boolean(j)))
+        // A lane whose recorder failed keeps its journal unfinished so the recovery banner offers it.
+        const laidJournals: TakeJournal[] = []
+        const dropJournal = (j: TakeJournal | null) => void j?.abort().catch(() => {})
         const shared = jobs.some((j) => j.sharedNames.length > 1)
         setBusy(
           jobs.length > 1
@@ -1995,18 +2152,37 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           const decoded: { lane: StudioTrack; buffer: AudioBuffer; sharedNames: string[] }[] = []
           for (let i = 0; i < captures.length; i++) {
             const blob = blobs[i]
-            if (!blob || blob.size < 64) continue
-            let buffer = await bufferFromBlob(blob)
-            if (recTrim > 0.04) {
-              if (buffer.duration <= recTrim + 0.08) continue
-              buffer = sliceBuffer(buffer, recTrim, buffer.duration)
+            if (audioSettled[i].status === 'rejected') continue
+            if (!blob || blob.size < 64) {
+              dropJournal(captures[i].journal)
+              continue
             }
+            const { capture, job } = captures[i]
+            let buffer = capture.buffer?.() || (await bufferFromBlob(blob))
+            // Preroll + cue/capture frame offset (shared context) + round-trip device latency.
+            // A remote guest already arrives delayed by the network; host device latency does not apply.
+            const trim = punchTrimSec({
+              prerollSec,
+              capture,
+              cue: cueHandle,
+              compensateLatency: job.key !== REMOTE_GUEST_KEY,
+            })
+            if (trim > 0.001) {
+              if (buffer.duration <= trim + 0.08) {
+                dropJournal(captures[i].journal)
+                continue
+              }
+              buffer = sliceBuffer(buffer, trim, buffer.duration)
+            }
+            if (captures[i].journal) laidJournals.push(captures[i].journal!)
             decoded.push({
               lane: captures[i].job.lane,
               buffer,
               sharedNames: captures[i].job.sharedNames,
             })
           }
+          // Journals are finished (and dropped) only after the session autosave holds the take.
+          const queueJournals = () => pendingJournalsRef.current.push(...laidJournals)
           if (decoded.length === 0 && camCaptures.length === 0) {
             setError('Recording was empty — keep rolling through the preroll')
             return
@@ -2089,6 +2265,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             }
             return next
           })
+          queueJournals()
           setSelectedId(decoded[0]?.lane.id || jobs[0].lane.id)
           setApplied([])
           const laidCams: CameraClip[] = []
@@ -2098,7 +2275,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             const url = URL.createObjectURL(blob)
             const fullDur = await measureVideoDuration(url)
             const fallback = Math.max(0.1, (performance.now() - recStartedAtRef.current) / 1000)
-            const rawDur = Number.isFinite(fullDur) && fullDur > 0 ? fullDur : fallback + recTrim
+            const rawDur = Number.isFinite(fullDur) && fullDur > 0 ? fullDur : fallback + camTrim
             const personId = camCaptures[i].key
             laidCams.push({
               id: newCameraClipId(),
@@ -2106,9 +2283,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               url,
               mime: blob.type || 'video/webm',
               offset: punch,
-              duration: Math.max(0.1, rawDur - recTrim),
-              trimStart: recTrim,
-              sourceStart: recTrim,
+              duration: Math.max(0.1, rawDur - camTrim),
+              trimStart: camTrim,
+              sourceStart: camTrim,
               sourceDuration: rawDur,
               syncGroup: punchSync[personId] || newSyncGroupId(),
               bytes: blob.size,
@@ -2195,13 +2372,23 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   }
 
   function finishRecCleanup() {
+    setGuestRecClock(null)
     recUnwatchRef.current()
     recUnwatchRef.current = () => {}
     cueRef.current?.stop()
     cueRef.current = null
+    // Captures and cue on the shared context are torn down by now (their `done` has resolved,
+    // or the take was cancelled), so the session context can go.
+    closeSessionContext()
     publishGuestCue(mixRef.current)
     stopMeterRef.current.forEach((fn) => fn())
     stopMeterRef.current = []
+  }
+
+  function closeSessionContext() {
+    const ctx = sessionCtxRef.current
+    sessionCtxRef.current = null
+    if (ctx && ctx.state !== 'closed') void ctx.close().catch(() => {})
   }
 
   async function onUploadPick(file: File | null) {
@@ -3406,7 +3593,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         <div hidden={!(step === 'setup' || step === 'record')} className="space-y-2">
           <GuestInvitePanel
             episodeId={episodeId}
-            recording={recording}
+            // Record-on reaches the booth once the local capture runs, with a clock anchor so the
+            // guest backup can be placed on the session timeline (manifest.startedAtSessionSec).
+            recording={recording && guestRecClock != null}
+            recordStartSessionSec={guestRecClock?.sec ?? null}
+            recordStartedAt={guestRecClock?.at ?? null}
+            safePause={safePaused}
             recTally={recTally}
             hostStream={hostTalkStream}
             cueStream={guestCueStream}
@@ -3483,12 +3675,20 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               <input type="checkbox" checked={voiceIsolate} onChange={(e) => setVoiceIsolate(e.target.checked)} />
               Reduce background noise
             </label>
-            {advanced && (
-              <label className="inline-flex min-h-[36px] items-center gap-1.5">
-                <input type="checkbox" checked={rawInput} onChange={(e) => setRawInput(e.target.checked)} />
-                Raw input (no browser auto-level)
-              </label>
-            )}
+            <label className="inline-flex min-h-[36px] items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={liveCleanup}
+                onChange={(e) => setLiveCleanupChoice(e.target.checked)}
+              />
+              Clean-up while recording (use if no headphones)
+              <InfoTip label="About clean-up while recording">
+                Off: the microphone is recorded exactly as it sounds, and noise clean-up happens after the take,
+                where you can undo it. That sounds best when everyone wears headphones. On: the browser removes echo
+                and background noise and evens out the level as you record — use it when the mix plays on speakers.
+                {liveCleanupChoice === null ? ' (Set automatically from the headphones option above.)' : ''}
+              </InfoTip>
+            </label>
             {mics.length > 0 && (
               <label className="inline-flex items-center gap-2">
                 Default microphone
