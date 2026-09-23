@@ -15,6 +15,8 @@ import {
   Users,
   Mail,
   Mic2,
+  HeartHandshake,
+  Target,
 } from 'lucide-react'
 import { loadSEOAuditReport, getSEOSummaryFromAuditReport, getMockSEOSummary } from '@/src/lib/seo/audit-report-server'
 
@@ -87,6 +89,8 @@ export default async function AdminPage() {
     { count: subCount },
     { count: newSubs },
     { count: careerDraft },
+    liveCampaignsRes,
+    pendingGiftsRes,
   ] = await Promise.all([
     supabase.from('content').select('*', { count: 'exact', head: true }),
     supabase.from('content').select('*', { count: 'exact', head: true }).eq('status', 'published'),
@@ -94,7 +98,12 @@ export default async function AdminPage() {
     supabase.from('newsletter_subscribers').select('*', { count: 'exact', head: true }).eq('status', 'active'),
     supabase.from('newsletter_subscribers').select('*', { count: 'exact', head: true }).gte('created_at', weekAgo),
     supabase.from('job_positions').select('*', { count: 'exact', head: true }).eq('active', false),
+    supabase.from('fundraising_campaigns').select('*', { count: 'exact', head: true }).eq('status', 'live'),
+    supabase.from('fundraising_gifts').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
   ])
+
+  const liveCampaignCount = liveCampaignsRes.error ? 0 : (liveCampaignsRes.count ?? 0)
+  const pendingGiftCount = pendingGiftsRes.error ? 0 : (pendingGiftsRes.count ?? 0)
 
   const seoLoaded = await loadSEOAuditReport()
   const seoSummary = seoLoaded ? getSEOSummaryFromAuditReport(seoLoaded.report) : getMockSEOSummary()
@@ -103,6 +112,7 @@ export default async function AdminPage() {
   const attention: { label: string; href: string }[] = []
   if ((draftCount ?? 0) > 0) attention.push({ label: `${draftCount} draft blog posts`, href: '/admin/blog' })
   if ((careerDraft ?? 0) > 0) attention.push({ label: `${careerDraft} inactive career listings`, href: '/admin/careers' })
+  if (pendingGiftCount > 0) attention.push({ label: `${pendingGiftCount} gifts waiting for confirmation`, href: '/admin/campaigns' })
   if (seoSummary.redCount > 0) attention.push({ label: `${seoSummary.redCount} SEO red issues`, href: '/admin/seo' })
 
   return (
@@ -129,6 +139,10 @@ export default async function AdminPage() {
         <StatCard label="Drafts" value={draftCount ?? 0} sub="Awaiting publication" href="/admin/blog" accent={GOLD} alert={(draftCount ?? 0) > 0} />
         <StatCard label="Subscribers" value={subCount ?? 0} sub={`+${newSubs ?? 0} this week`} href="/admin/subscribers" accent="#53D6FF" />
       </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <StatCard label="Live campaigns" value={liveCampaignCount} sub="Public fundraising pages" href="/admin/campaigns" accent={GOLD} />
+        <StatCard label="Gifts to confirm" value={pendingGiftCount} sub="Self-reported after Zeffy" href="/admin/campaigns" accent={TEAL} alert={pendingGiftCount > 0} />
+      </div>
 
       <SEOHealthBar
         green={seoSummary.greenCount}
@@ -148,6 +162,8 @@ export default async function AdminPage() {
           <Link href="/admin/podcast" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Podcast</Link>
           <Link href="/admin/seo" className="px-4 py-2 rounded-xl border-2 border-[#8DEBFF] text-[#8DEBFF] text-sm font-bold hover:bg-[#53D6FF]/5">SEO Center</Link>
           <Link href="/admin/social" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Social Publisher</Link>
+          <Link href="/admin/campaigns" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Campaigns</Link>
+          <Link href="/admin/ads" className="px-4 py-2 rounded-xl border-2 border-[#53D6FF] text-[#53D6FF] text-sm font-bold hover:bg-[#53D6FF]/5">Ad analytics</Link>
           <Link href="/admin/newsletters" className="px-4 py-2 rounded-xl border-2 border-[#27313B] text-[#A9B8C6] text-sm font-bold hover:bg-[#1A232C]/5">Newsletters</Link>
         </div>
       </div>
@@ -160,6 +176,8 @@ export default async function AdminPage() {
             { label: 'Blog', description: 'Block editor, media library, autosave, and publishing checklist.', href: '/admin/blog', icon: FileText, accent: TEAL },
             { label: 'Podcast Console', description: 'Enterprise episode pipeline, RSS, private feeds, and analytics.', href: '/admin/podcast', icon: Mic2, accent: '#53D6FF' },
             { label: 'Social Publisher', description: 'Promote posts to Facebook, Instagram, TikTok, and LinkedIn.', href: '/admin/social', icon: Megaphone, accent: '#53D6FF' },
+            { label: 'Campaigns', description: 'Fundraising goals, matching, donor wall, and advocate pages.', href: '/admin/campaigns', icon: HeartHandshake, accent: GOLD },
+            { label: 'Ad analytics', description: 'Paid spend, ROAS, peer nonprofit ads, and a printable report.', href: '/admin/ads', icon: Target, accent: GOLD },
             { label: 'Analytics', description: 'Subscriber growth and GA4 traffic summary.', href: '/admin/analytics', icon: BarChart3, accent: GOLD },
             { label: 'Admin Users', description: 'Invite team members to the admin portal.', href: '/admin/users', icon: Users, accent: '#A9B8C6' },
           ].map((t) => (
