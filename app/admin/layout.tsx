@@ -21,6 +21,7 @@ import {
   BarChart3,
   Megaphone,
   UserCog,
+  ShieldCheck,
 } from 'lucide-react'
 
 const navItems = [
@@ -34,6 +35,7 @@ const navItems = [
   { label: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
   { label: 'SEO Center', href: '/admin/seo', icon: Search },
   { label: 'Users', href: '/admin/users', icon: UserCog },
+  { label: 'Security', href: '/admin/security', icon: ShieldCheck },
   { label: 'Settings', href: '/admin/settings', icon: Settings },
 ]
 
