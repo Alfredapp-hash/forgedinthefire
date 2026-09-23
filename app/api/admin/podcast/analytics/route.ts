@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { studioError, withStudioAdmin } from '@/lib/studio/api'
+import { guessApp } from '@/lib/podcast'
 
 export async function GET(request: Request) {
   try {
@@ -11,7 +12,7 @@ export async function GET(request: Request) {
 
     let eventsQuery = supabase
       .from('podcast_analytics_events')
-      .select('id, episode_id, event_type, app_name, country, occurred_at')
+      .select('id, episode_id, event_type, listener_hash, app_name, country, occurred_at')
       .gte('occurred_at', since)
       .order('occurred_at', { ascending: false })
       .limit(5000)
@@ -23,7 +24,12 @@ export async function GET(request: Request) {
     const byDay = new Map<string, number>()
     const byApp = new Map<string, number>()
     const byCountry = new Map<string, number>()
-    const byEpisode = new Map<string, number>()
+    // IAB-style: a download is one unique listener per episode per day (the hash already
+    // folds in the day). Plays from the web player are counted separately.
+    const byEpisode = new Map<string, Set<string>>()
+    const playsByEpisode = new Map<string, number>()
+    let downloads = 0
+    let plays = 0
 
     for (const row of rows) {
       const day = row.occurred_at.slice(0, 10)
@@ -32,8 +38,16 @@ export async function GET(request: Request) {
       byApp.set(app, (byApp.get(app) || 0) + 1)
       const country = row.country || 'Unknown'
       byCountry.set(country, (byCountry.get(country) || 0) + 1)
-      if (row.episode_id) {
-        byEpisode.set(row.episode_id, (byEpisode.get(row.episode_id) || 0) + 1)
+      if (!row.episode_id) continue
+      if (row.event_type === 'download') {
+        const set = byEpisode.get(row.episode_id) ?? new Set<string>()
+        const before = set.size
+        set.add(row.listener_hash || row.id)
+        byEpisode.set(row.episode_id, set)
+        if (set.size > before) downloads += 1
+      } else if (row.event_type === 'play' || row.event_type === 'embed_play') {
+        playsByEpisode.set(row.episode_id, (playsByEpisode.get(row.episode_id) || 0) + 1)
+        plays += 1
       }
     }
 
@@ -49,12 +63,15 @@ export async function GET(request: Request) {
       season: ep.season,
       episode_number: ep.episode_number,
       published_at: ep.published_at,
-      downloads: byEpisode.get(ep.id) || 0,
+      downloads: byEpisode.get(ep.id)?.size || 0,
+      plays: playsByEpisode.get(ep.id) || 0,
     }))
 
     return NextResponse.json({
       days,
       total: rows.length,
+      downloads,
+      plays,
       by_day: [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, count]) => ({ date, count })),
       by_app: [...byApp.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count })),
       by_country: [...byCountry.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count })),
@@ -65,13 +82,11 @@ export async function GET(request: Request) {
   }
 }
 
-/** Seed or record a download/play event (admin or public player). */
+/** Admin-only manual event (e.g. importing counts). Public players use /api/podcast/events. */
 export async function POST(request: Request) {
   try {
+    const { supabase } = await withStudioAdmin()
     const body = await request.json() as Record<string, unknown>
-    const { createClient } = await import('@/lib/supabase/server')
-    const supabase = await createClient()
-    if (!supabase) return NextResponse.json({ error: 'Unavailable' }, { status: 503 })
 
     const ua = String(body.user_agent || request.headers.get('user-agent') || '')
     const appName = guessApp(ua)
@@ -97,14 +112,3 @@ export async function POST(request: Request) {
   }
 }
 
-function guessApp(ua: string) {
-  const s = ua.toLowerCase()
-  if (s.includes('spotify')) return 'Spotify'
-  if (s.includes('applecoremedia') || s.includes('podcasts')) return 'Apple Podcasts'
-  if (s.includes('overcast')) return 'Overcast'
-  if (s.includes('pocket casts') || s.includes('pocketcasts')) return 'Pocket Casts'
-  if (s.includes('amazon') || s.includes('alexa')) return 'Amazon Music'
-  if (s.includes('youtube')) return 'YouTube'
-  if (s.includes('chrome') || s.includes('firefox') || s.includes('safari')) return 'Web player'
-  return 'Other'
-}

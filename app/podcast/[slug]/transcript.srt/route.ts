@@ -2,7 +2,7 @@ import { transcriptFile } from '../_episode-files'
 
 export const dynamic = 'force-dynamic'
 
-/** WebVTT transcript (from stored VTT or SRT) for podcast:transcript rel="captions". */
+/** SRT transcript (Apple Podcasts accepts VTT or SRT). */
 export async function GET(request: Request, context: { params: Promise<{ slug: string }> }) {
-  return transcriptFile(request, context, 'vtt')
+  return transcriptFile(request, context, 'srt')
 }

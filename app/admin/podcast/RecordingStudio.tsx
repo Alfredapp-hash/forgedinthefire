@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { CheckCircle2, Circle, Mic2, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Mic2, Plus, Trash2, XCircle } from 'lucide-react'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
 import { measureAudioDuration, uploadPodcastMedia } from '@/lib/podcast/media-upload'
 import type {
@@ -14,6 +14,7 @@ import type {
   PodcastEpisode,
 } from '@/lib/studio/types'
 import { EPISODE_PIPELINE } from '@/lib/studio/types'
+import { releaseBlockers, releaseChecks } from '@/lib/studio/release'
 
 type QueueFilter = 'planned' | 'needs_audio' | 'all'
 
@@ -87,23 +88,13 @@ export function RecordingStudio({
     [topics, episode?.topic_id],
   )
 
+  // Quick read-out of the shared release rules; loudness + artwork size are measured on the
+  // episode page's checklist, which is the single place that publishes or schedules.
   const checks = useMemo(() => {
     if (!episode) return []
-    return [
-      { ok: Boolean(episode.title.trim()), label: 'Title' },
-      { ok: Boolean(episode.summary), label: 'Summary' },
-      { ok: Boolean(episode.show_notes), label: 'Show notes / script' },
-      { ok: Boolean(episode.audio_url), label: 'Recorded mix' },
-      { ok: Boolean(episode.file_size && episode.file_size > 0), label: 'Hosted file size' },
-      { ok: Boolean(episode.duration_seconds), label: 'Duration' },
-      { ok: Boolean(episode.cover_url), label: 'Cover art' },
-      { ok: episode.episode_number != null, label: 'Episode number' },
-      { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters' },
-      { ok: Boolean(episode.transcript), label: 'Transcript' },
-      { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)' },
-      { ok: Boolean(episode.topic_id), label: 'Linked studio topic' },
-    ]
-  }, [episode])
+    return releaseChecks(episode, { server: true, show: { cover_url: '/podcast/cover-3000.jpg' }, siblings: episodes })
+  }, [episode, episodes])
+  const blockerCount = releaseBlockers(checks).length
 
   function replaceEpisode(next: PodcastEpisode) {
     const exists = episodes.some((ep) => ep.id === next.id)
@@ -228,37 +219,25 @@ export function RecordingStudio({
     }
   }
 
+  /** Publishing / scheduling always goes through the episode's release checklist. */
+  function openReleaseChecklist(id = episode?.id) {
+    if (!id) return
+    window.location.assign(`/admin/podcast/${id}`)
+  }
+
   async function publish() {
-    if (!episode?.audio_url) {
-      setError('Save a mix before publishing')
-      return
-    }
-    if (!episode.file_size || episode.file_size < 1) {
-      setError('Re-save the mix so Apple RSS has a file size')
-      return
-    }
-    if (!episode.cover_url) {
-      setError('Add square cover art before publishing')
-      return
-    }
-    await saveEpisode(
-      {
-        status: 'published',
-        published_at: new Date().toISOString(),
-        visibility: episode.visibility === 'private' ? episode.visibility : 'public',
-      },
-      'Published to /podcast and RSS',
-    )
+    openReleaseChecklist()
   }
 
   function changeStatus(status: EpisodeStatus) {
     if (!episode) return
-    if (status === 'published' && !episode.audio_url) {
-      setError('Save a mix before publishing')
+    if (status === 'published' || status === 'scheduled') {
+      setOk('Opening the release checklist…')
+      openReleaseChecklist()
       return
     }
-    if (status === 'scheduled' && !episode.scheduled_for) {
-      setError('Set a schedule time before marking this episode scheduled')
+    if ((episode.status === 'published' || episode.status === 'scheduled') &&
+      !window.confirm(`Move this ${episode.status === 'published' ? 'live' : 'scheduled'} episode to “${status}”? It comes off the feed.`)) {
       return
     }
     void saveEpisode({ status })
@@ -476,10 +455,9 @@ export function RecordingStudio({
                 <button
                   type="button"
                   onClick={() => void publish()}
-                  disabled={!episode.audio_url || episode.status === 'published'}
-                  className="px-3 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium disabled:opacity-40"
+                  className="px-3 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium"
                 >
-                  {episode.status === 'published' ? 'Live' : 'Publish now'}
+                  {episode.status === 'published' ? 'Live · details' : episode.status === 'scheduled' ? 'Scheduled · details' : 'Review & publish'}
                 </button>
               </div>
             </div>
@@ -596,16 +574,13 @@ export function RecordingStudio({
                   ))}
                 </select>
               </Field>
-              <Field label="Schedule publish">
+              <Field label="Planned release (schedule it from Review & publish)">
                 <input
                   type="datetime-local"
                   defaultValue={toLocalInput(episode.scheduled_for)}
                   onBlur={(e) => {
                     const iso = e.target.value ? new Date(e.target.value).toISOString() : null
-                    void saveEpisode({
-                      scheduled_for: iso,
-                      status: iso && episode.status === 'draft' ? 'scheduled' : episode.status,
-                    })
+                    if (iso !== episode.scheduled_for) void saveEpisode({ scheduled_for: iso }, 'Planned release time saved')
                   }}
                   className={input}
                 />
@@ -710,17 +685,31 @@ export function RecordingStudio({
           </section>
 
           <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5">
-            <p className="text-sm font-medium text-[#F6FAFC] mb-3">Ready to publish?</p>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+              <p className="text-sm font-medium text-[#F6FAFC]">
+                Ready to publish?{blockerCount ? ` ${blockerCount} to fix` : ''}
+              </p>
+              <button
+                type="button"
+                onClick={() => openReleaseChecklist()}
+                className="px-3 py-1.5 rounded-lg border border-[#53D6FF] text-sm text-[#53D6FF]"
+              >
+                Open release checklist
+              </button>
+            </div>
             <ul className="grid sm:grid-cols-2 gap-2">
               {checks.map((item) => (
-                <li key={item.label} className="flex items-center gap-2 text-sm text-[#B8C4CF]">
-                  {item.ok
+                <li key={item.id} className="flex items-center gap-2 text-sm text-[#B8C4CF]">
+                  {item.level === 'ok'
                     ? <CheckCircle2 size={16} className="text-[#53D6FF]" />
-                    : <Circle size={16} className="text-[#27313B]" />}
+                    : item.level === 'warn'
+                      ? <AlertTriangle size={16} className="text-[#FFB86B]" />
+                      : <XCircle size={16} className="text-red-300" />}
                   {item.label}
                 </li>
               ))}
             </ul>
+            <p className="mt-3 text-xs text-[#A9B8C6]">Loudness and artwork size are measured on the release checklist.</p>
           </section>
         </>
       )}

@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server'
 import { studioError, withStudioAdmin } from '@/lib/studio/api'
+import { isSafeHttpUrl } from '@/lib/podcast'
+
+const STATUSES = new Set(['not_started', 'submitted', 'in_review', 'live', 'blocked'])
 
 export async function GET(request: Request) {
   try {
@@ -24,6 +27,17 @@ export async function PATCH(request: Request) {
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
     for (const key of ['status', 'listing_url', 'notes', 'submitted_at', 'live_at'] as const) {
       if (body[key] !== undefined) patch[key] = body[key] === '' ? null : body[key]
+    }
+    if (patch.status != null && !STATUSES.has(String(patch.status))) {
+      return NextResponse.json({ error: 'Unknown status' }, { status: 400 })
+    }
+    // Listing URLs render as public "Listen on …" buttons — http(s) only.
+    if (patch.listing_url != null) {
+      const url = String(patch.listing_url).trim()
+      if (!isSafeHttpUrl(url)) {
+        return NextResponse.json({ error: 'Listing URL must start with https://' }, { status: 400 })
+      }
+      patch.listing_url = url
     }
     if (patch.status === 'submitted' && !patch.submitted_at) {
       patch.submitted_at = new Date().toISOString()
