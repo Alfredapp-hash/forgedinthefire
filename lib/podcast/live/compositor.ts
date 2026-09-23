@@ -9,10 +9,21 @@
  * Frames are ticked from a Worker timer, not requestAnimationFrame, so the
  * stream keeps running (at a lower priority) if the host switches tabs.
  * The safe slate is always an instant cut — never a fade.
+ *
+ * Face blur (lib/podcast/vision/face-blur.ts) is applied per person *here*, before
+ * the broadcast delay captures the canvas, so Live, On-air and the local recording
+ * are all blurred. While the detector loads, stalls or fails, that person's box is
+ * a silhouette card (fail-safe).
  */
 
 import { PICTURE_HEIGHT, PICTURE_WIDTH } from '@/lib/podcast/picture'
 import type { LiveScene } from '@/lib/podcast/live/types'
+import {
+  createFaceBlurrer,
+  paintPrivacyCard,
+  type FaceBlurrer,
+  type FaceBlurState,
+} from '@/lib/podcast/vision/face-blur'
 
 const FPS = 30
 const FADE_MS = 350
@@ -27,7 +38,24 @@ export type SlateCopy = {
   lowerThird?: string | null
 }
 
-type Source = { el: HTMLVideoElement; stream: MediaStream | null; label: string }
+export type LivePerson = 'host' | 'guest'
+export type VisionState = 'off' | FaceBlurState
+
+type Source = {
+  who: LivePerson
+  el: HTMLVideoElement
+  stream: MediaStream | null
+  label: string
+  blur: boolean
+  blurrer: FaceBlurrer | null
+  /** Bumped on every toggle so a slow load for an old toggle is discarded. */
+  blurGen: number
+  vision: VisionState
+}
+
+function makeSource(who: LivePerson, label: string): Source {
+  return { who, el: makeVideo(), stream: null, label, blur: false, blurrer: null, blurGen: 0, vision: 'off' }
+}
 
 function makeVideo(): HTMLVideoElement {
   const el = document.createElement('video')
@@ -54,8 +82,12 @@ export class LiveCompositor {
   readonly width = PICTURE_WIDTH
   readonly height = PICTURE_HEIGHT
   private ctx: CanvasRenderingContext2D
-  private host: Source = { el: makeVideo(), stream: null, label: 'Host' }
-  private guest: Source = { el: makeVideo(), stream: null, label: 'Guest' }
+  private host: Source = makeSource('host', 'Host')
+  private guest: Source = makeSource('guest', 'Guest')
+  /** Called after every Program paint (drives the broadcast delay from the same tick). */
+  onFrame: (() => void) | null = null
+  /** Face-blur state changes per person (loading / ok / stalled / failed / off). */
+  onVision: ((who: LivePerson, state: VisionState, detail?: string) => void) | null = null
   private scene: LiveScene = 'starting'
   private fromScene: LiveScene | null = null
   private fadeStart = 0
@@ -103,6 +135,54 @@ export class LiveCompositor {
     return this.scene
   }
 
+  /**
+   * Turn face blur on/off for one person. While the detector loads the person is a
+   * silhouette card; if it fails to load they stay a card (never an unblurred face).
+   */
+  setFaceBlur(who: LivePerson, on: boolean) {
+    const src = who === 'host' ? this.host : this.guest
+    if (src.blur === on) return
+    src.blur = on
+    src.blurGen += 1
+    src.blurrer?.close()
+    src.blurrer = null
+    if (!on) {
+      this.setVision(src, 'off')
+      return
+    }
+    const gen = src.blurGen
+    this.setVision(src, 'loading')
+    createFaceBlurrer({
+      label: `${src.label} · camera hidden for privacy`,
+      onState: (state, detail) => {
+        if (src.blurGen === gen) this.setVision(src, state, detail)
+      },
+    })
+      .then((blurrer) => {
+        if (src.blurGen !== gen || !src.blur) {
+          blurrer.close()
+          return
+        }
+        src.blurrer = blurrer
+      })
+      .catch((err) => {
+        if (src.blurGen === gen) {
+          this.setVision(src, 'failed', err instanceof Error ? err.message : 'Face detector did not load')
+        }
+      })
+  }
+
+  getFaceBlur(who: LivePerson) {
+    const src = who === 'host' ? this.host : this.guest
+    return { on: src.blur, state: src.vision }
+  }
+
+  /** Paint a hold slate into another context (the air canvas while the delay (re)builds). */
+  paintHold(ctx: CanvasRenderingContext2D, reason: 'filling' | 'dump') {
+    if (reason === 'filling') this.paintSlate('Starting soon', this.copy.episodeTitle || '', false, ctx)
+    else this.paintSlate('We’ll be right back', 'Please stay with us.', false, ctx)
+  }
+
   /** Cut (or short fade between camera layouts). Slates always cut. */
   setScene(next: LiveScene, fade = false) {
     if (next === this.scene) return
@@ -120,11 +200,20 @@ export class LiveCompositor {
     if (this.fallbackTimer != null) window.clearInterval(this.fallbackTimer)
     this.fallbackTimer = null
     for (const src of [this.host, this.guest]) {
+      src.blurGen += 1
+      src.blurrer?.close()
+      src.blurrer = null
       src.el.pause()
       src.el.srcObject = null
     }
     this.output?.getTracks().forEach((t) => t.stop())
     this.output = null
+  }
+
+  private setVision(src: Source, state: VisionState, detail?: string) {
+    if (src.vision === state && state !== 'failed') return
+    src.vision = state
+    this.onVision?.(src.who, state, detail)
   }
 
   private attach(src: Source, stream: MediaStream | null, label: string) {
@@ -161,6 +250,11 @@ export class LiveCompositor {
       this.paintScene(this.scene)
     }
     ctx.restore()
+    try {
+      this.onFrame?.()
+    } catch {
+      /* the delay reports its own errors */
+    }
   }
 
   private paintScene(scene: LiveScene) {
@@ -214,6 +308,19 @@ export class LiveCompositor {
       ctx.fillText(`${src.label} · camera off`, x + w / 2, y + h / 2)
       return
     }
+    if (src.blur) {
+      if (src.blurrer) src.blurrer.process(src.el, ctx, x, y, w, h)
+      else
+        paintPrivacyCard(
+          ctx,
+          x,
+          y,
+          w,
+          h,
+          src.vision === 'failed' ? `${src.label} · face blur failed, camera hidden` : `${src.label} · starting face blur…`,
+        )
+      return
+    }
     const vw = src.el.videoWidth
     const vh = src.el.videoHeight
     const scale = Math.max(w / vw, h / vh)
@@ -241,8 +348,9 @@ export class LiveCompositor {
     ctx.fillText(text, x + pad, y + 27, w - pad * 2)
   }
 
-  private paintSlate(headline: string, sub: string, countdown: boolean) {
-    const ctx = this.ctx
+  private paintSlate(headline: string, sub: string, countdown: boolean, ctx: CanvasRenderingContext2D = this.ctx) {
+    ctx.save()
+    ctx.globalAlpha = 1
     const { width: W, height: H } = this
     const bg = ctx.createLinearGradient(0, 0, 0, H)
     bg.addColorStop(0, '#05070A')
@@ -277,5 +385,6 @@ export class LiveCompositor {
       ctx.font = 'bold 64px ui-monospace, SFMono-Regular, Menlo, monospace'
       ctx.fillText(`${mm}:${ss}`, W / 2, H * 0.7)
     }
+    ctx.restore()
   }
 }

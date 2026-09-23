@@ -35,17 +35,34 @@ import { SfxPad } from '@/components/podcast/sfx-pad'
 import { audioInputConstraints, stopStreams } from '@/lib/podcast/capture'
 import { loadStudioIceServers } from '@/lib/podcast/webrtc'
 import type { GuestTallyPhase } from '@/lib/podcast/guest-types'
-import { LiveCompositor } from '@/lib/podcast/live/compositor'
+import { LiveCompositor, type LivePerson, type VisionState } from '@/lib/podcast/live/compositor'
 import { LiveAudioMix, type LiveLevels } from '@/lib/podcast/live/audio-mix'
 import { WhipPublisher } from '@/lib/podcast/live/whip-client'
 import { LiveRecorder, extensionFor, type LiveRecording } from '@/lib/podcast/live/recorder'
+import { BroadcastVideoDelay, type DelayStatus } from '@/lib/podcast/live/broadcast-delay'
+import { DELAY_CHOICES_SEC, DELAY_DEFAULT_SEC, clampDelaySec } from '@/lib/podcast/live/delay-ring'
+import {
+  bitrateCheck,
+  delayCheck,
+  faceBlurCheck,
+  goLiveBlockers,
+  type CheckStatus,
+  type PreflightCheck,
+} from '@/lib/podcast/live/preflight'
+import {
+  VOICE_DISGUISE_PRESETS,
+  VOICE_DISGUISE_WARNING,
+  type VoiceDisguisePreset,
+} from '@/lib/podcast/live/voice-disguise'
 import {
   createDraftEpisode,
   createLiveSession,
   deleteLiveSession,
   fetchLiveProvider,
   listLiveSessions,
+  measureUploadMbps,
   patchLiveSession,
+  probeLiveProvider,
   saveLiveAsEpisodeDraft,
 } from '@/lib/podcast/live/client'
 import {
@@ -73,8 +90,44 @@ const card = 'rounded-2xl border border-[#27313B] bg-[#151B22] p-4 space-y-3'
 const label = 'text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]'
 const input =
   'w-full rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC] placeholder:text-[#5B6873]'
-const btn =
-  'inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#27313B] px-3 py-1.5 text-sm text-[#B8C4CF] hover:border-[#53D6FF] disabled:opacity-40 disabled:pointer-events-none'
+const focusRing =
+  'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#53D6FF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#151B22]'
+const btn = `inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-lg border border-[#27313B] px-3 py-1.5 text-sm text-[#B8C4CF] hover:border-[#53D6FF] disabled:opacity-40 disabled:pointer-events-none ${focusRing}`
+const kbd = 'rounded border border-black/30 bg-black/15 px-1.5 py-0.5 font-mono text-xs'
+
+const CHECK_TONE: Record<CheckStatus, string> = {
+  pending: 'text-[#A9B8C6]',
+  ok: 'text-[#7CFFB2]',
+  warn: 'text-[#FFB86B]',
+  fail: 'text-[#FF7A9A]',
+}
+const CHECK_WORD: Record<CheckStatus, string> = { pending: 'Checking', ok: 'OK', warn: 'Warning', fail: 'Blocked' }
+
+function visionLabel(on: boolean, state: VisionState) {
+  if (!on) return 'off'
+  if (state === 'ok') return 'active'
+  if (state === 'failed') return 'FAILED — silhouette shown'
+  if (state === 'stalled') return 'stalled — silhouette shown'
+  return 'loading — silhouette shown'
+}
+
+function fmtBytes(n: number) {
+  if (n > 1024 * 1024) return `${Math.round(n / 1024 / 1024)} MB`
+  if (n > 1024) return `${Math.round(n / 1024)} KB`
+  return `${n} B`
+}
+
+function isTypingTarget(el: EventTarget | null) {
+  const t = el as HTMLElement | null
+  if (!t || !t.tagName) return false
+  if (t.isContentEditable) return true
+  if (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return true
+  if (t.tagName === 'INPUT') {
+    const type = (t as HTMLInputElement).type
+    return !['checkbox', 'radio', 'button', 'submit', 'range', 'reset'].includes(type)
+  }
+  return false
+}
 
 function toLocalInput(iso: string | null) {
   if (!iso) return ''
@@ -150,7 +203,22 @@ export function LiveControlRoom({ episodes = [] }: Props) {
   const [lowerThird, setLowerThird] = useState(true)
   const [countdownSec, setCountdownSec] = useState(30)
   const [recordVideo, setRecordVideo] = useState(true)
-  const [levels, setLevels] = useState<LiveLevels>({ host: 0, guest: 0, program: 0 })
+  const [levels, setLevels] = useState<LiveLevels>({ host: 0, guest: 0, program: 0, air: 0 })
+
+  // Safety: broadcast delay, face blur, voice disguise
+  const [delaySec, setDelaySec] = useState<number>(DELAY_DEFAULT_SEC)
+  const [activeDelaySec, setActiveDelaySec] = useState(0)
+  const [delayStatus, setDelayStatus] = useState<DelayStatus | null>(null)
+  const [blurGuest, setBlurGuest] = useState(true)
+  const [blurHost, setBlurHost] = useState(false)
+  const [vision, setVision] = useState<Record<LivePerson, { state: VisionState; detail?: string }>>({
+    host: { state: 'off' },
+    guest: { state: 'off' },
+  })
+  const [disguise, setDisguise] = useState<VoiceDisguisePreset | ''>('')
+  const [disguiseError, setDisguiseError] = useState<string | null>(null)
+  const [announcement, setAnnouncement] = useState('')
+  const [preflight, setPreflight] = useState<{ running: boolean; checks: PreflightCheck[] } | null>(null)
 
   // On air
   const [phase, setPhase] = useState<Phase>('off')
@@ -161,6 +229,10 @@ export function LiveControlRoom({ episodes = [] }: Props) {
   const [savedEpisodeId, setSavedEpisodeId] = useState<string | null>(null)
 
   const previewRef = useRef<HTMLDivElement | null>(null)
+  const airRef = useRef<HTMLDivElement | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const preflightRef = useRef<HTMLDivElement | null>(null)
+  const delayRef = useRef<BroadcastVideoDelay | null>(null)
   const compositorRef = useRef<LiveCompositor | null>(null)
   const mixRef = useRef<LiveAudioMix | null>(null)
   const publisherRef = useRef<WhipPublisher | null>(null)
@@ -181,7 +253,9 @@ export function LiveControlRoom({ episodes = [] }: Props) {
     mixRef.current = mix
     recorderRef.current = new LiveRecorder()
     compositor.canvas.className = 'w-full h-auto block rounded-lg bg-black'
-    compositor.canvas.setAttribute('aria-label', 'Program preview')
+    compositor.canvas.setAttribute('role', 'img')
+    compositor.canvas.setAttribute('aria-label', 'Live monitor: Program as you switch it, before the broadcast delay')
+    compositor.onVision = (who, state, detail) => setVision((prev) => ({ ...prev, [who]: { state, detail } }))
     previewRef.current?.appendChild(compositor.canvas)
     const meter = window.setInterval(() => setLevels(mix.levels()), 150)
     return () => {
@@ -191,6 +265,10 @@ export function LiveControlRoom({ episodes = [] }: Props) {
       void publisherRef.current?.stop()
       publisherRef.current = null
       void recorderRef.current?.stop()
+      compositor.onFrame = null
+      delayRef.current?.stop()
+      delayRef.current?.canvas.remove()
+      delayRef.current = null
       compositor.canvas.remove()
       compositor.destroy()
       void mix.close()
@@ -198,19 +276,59 @@ export function LiveControlRoom({ episodes = [] }: Props) {
     }
   }, [])
 
+  // Warn on close while on air AND afterwards until the recording is saved as a draft
+  // (the recording only lives in this tab's memory).
+  const unsavedRecording = phase === 'ended' && Boolean(recording?.audio) && !savedEpisodeId
+  const guardUnload = onAir || unsavedRecording
   useEffect(() => {
-    if (!onAir) return
+    if (!guardUnload) return
     const warn = (e: BeforeUnloadEvent) => {
       e.preventDefault()
       e.returnValue = ''
     }
     window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [guardUnload])
+
+  useEffect(() => {
+    if (!onAir) return
     const tick = window.setInterval(() => setClock(Date.now()), 1000)
-    return () => {
-      window.removeEventListener('beforeunload', warn)
-      window.clearInterval(tick)
-    }
+    return () => window.clearInterval(tick)
   }, [onAir])
+
+  const announce = useCallback((msg: string) => {
+    // Re-set even when unchanged so screen readers repeat "DUMPED" on a second dump.
+    setAnnouncement('')
+    window.setTimeout(() => setAnnouncement(msg), 30)
+  }, [])
+
+  // Announce ingest trouble once per transition.
+  const ingestTrouble =
+    onAir && (health.state === 'reconnecting' || health.state === 'disconnected' || health.state === 'failed')
+  useEffect(() => {
+    if (ingestTrouble) announce('Stream reconnecting. Viewers see a reconnecting message.')
+  }, [ingestTrouble, announce])
+
+  // ---------- face blur / voice disguise ----------
+  useEffect(() => {
+    compositorRef.current?.setFaceBlur('guest', blurGuest)
+  }, [blurGuest])
+
+  useEffect(() => {
+    compositorRef.current?.setFaceBlur('host', blurHost)
+  }, [blurHost])
+
+  useEffect(() => {
+    const mix = mixRef.current
+    if (!mix) return
+    const preset = VOICE_DISGUISE_PRESETS.find((p) => p.id === disguise)
+    setDisguiseError(null)
+    mix.setGuestDisguise(preset ? preset.semitones : null).catch((err) => {
+      setDisguiseError(
+        `Voice disguise failed (${err instanceof Error ? err.message : 'unknown'}). The guest is held OUT of Program until you turn disguise off.`,
+      )
+    })
+  }, [disguise])
 
   // ---------- data ----------
   const refreshSessions = useCallback(async () => {
@@ -297,7 +415,7 @@ export function LiveControlRoom({ episodes = [] }: Props) {
   }
 
   /** Survivor-safety kill switch: instant cut to slate + guest audio out of Program. */
-  function engageSafeSlate() {
+  function engageSafeSlate(quiet = false) {
     if (countdownTimerRef.current != null) {
       window.clearTimeout(countdownTimerRef.current)
       countdownTimerRef.current = null
@@ -305,6 +423,7 @@ export function LiveControlRoom({ episodes = [] }: Props) {
     mixRef.current?.setGuestMuted(true)
     compositorRef.current?.setScene('slate')
     setSceneState('slate')
+    if (!safe && !quiet) announce('Safe slate on. Guest removed from Program.')
     setSafe(true)
   }
 
@@ -312,7 +431,56 @@ export function LiveControlRoom({ episodes = [] }: Props) {
     setSafe(false)
     mixRef.current?.setGuestMuted(guestMuted)
     putScene(lastCamera)
+    announce(
+      activeDelaySec > 0 && onAir
+        ? `Safe slate released. Viewers see cameras in ${activeDelaySec} seconds.`
+        : 'Safe slate released.',
+    )
   }
+
+  /**
+   * DUMP: discard the delayed segment (video ring + audio delay line) so it never airs,
+   * and put Program on the safe slate so the rebuilt delay starts from the slate too.
+   * No confirm — this must be one keystroke.
+   */
+  function dump() {
+    const delay = delayRef.current
+    const buffered = Boolean(delay && onAir && activeDelaySec > 0)
+    if (buffered) {
+      delay!.dump()
+      mixRef.current?.dumpAir()
+    }
+    engageSafeSlate(true)
+    announce(
+      buffered
+        ? `DUMPED. The last ${activeDelaySec} seconds will not air. Delay rebuilding behind the safe slate.`
+        : 'Safe slate on. No broadcast delay was running, so nothing was buffered to dump.',
+    )
+  }
+
+  // Hotkeys: D = DUMP, S = safe slate. Only while this tab is visible and not typing.
+  const dumpRef = useRef(dump)
+  const safeRef = useRef(() => engageSafeSlate())
+  dumpRef.current = dump
+  safeRef.current = () => engageSafeSlate()
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
+      if (isTypingTarget(e.target)) return
+      const root = rootRef.current
+      if (!root || !root.isConnected || root.closest('[hidden]')) return
+      const key = e.key.toLowerCase()
+      if (key === 'd') {
+        e.preventDefault()
+        dumpRef.current()
+      } else if (key === 's') {
+        e.preventDefault()
+        safeRef.current()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // ---------- devices ----------
   async function refreshDevices() {
@@ -441,19 +609,124 @@ export function LiveControlRoom({ episodes = [] }: Props) {
     }
   }
 
-  // ---------- go live / end ----------
+  // ---------- pre-flight / go live / end ----------
+  const playbackMissing = Boolean(
+    active && !active.playback_hls_url && !active.playback_whep_url && !provider?.defaultHlsUrl && !provider?.defaultWhepUrl,
+  )
+  const { blockers, warnings } = goLiveBlockers({
+    active,
+    hostStreamOpen: Boolean(hostStream),
+    provider,
+    providerError,
+    guestConnected: Boolean(guestStream),
+    playbackMissing,
+  })
+
+  function updateCheck(check: PreflightCheck) {
+    setPreflight((prev) =>
+      prev ? { ...prev, checks: prev.checks.map((c) => (c.id === check.id ? check : c)) } : prev,
+    )
+  }
+
+  /** Go live → run the checklist first. The host confirms with "Go live now". */
+  async function runPreflight() {
+    if (blockers.length) return
+    setError(null)
+    const guestBlur = compositorRef.current?.getFaceBlur('guest') ?? { on: blurGuest, state: vision.guest.state }
+    const hostBlur = compositorRef.current?.getFaceBlur('host') ?? { on: blurHost, state: vision.host.state }
+    const checks: PreflightCheck[] = [
+      { id: 'provider', label: 'Live provider reachable', status: 'pending', detail: 'Contacting the WHIP endpoint…' },
+      bitrateCheck(null),
+      delayCheck(clampDelaySec(delaySec)),
+      guestBlur.on && !guestStream && guestBlur.state === 'loading'
+        ? {
+            id: 'blur-guest',
+            label: 'Guest face blur',
+            status: 'ok',
+            detail: 'On. Starts when the guest camera arrives (silhouette until the first detection).',
+          }
+        : faceBlurCheck('Guest', { ...guestBlur, detail: vision.guest.detail }, true),
+      faceBlurCheck('Host', { ...hostBlur, detail: vision.host.detail }, false),
+      {
+        id: 'slate',
+        label: 'Safe slate ready',
+        status: compositorRef.current ? 'ok' : 'fail',
+        detail: compositorRef.current
+          ? 'Press S (or SAFE SLATE) at any moment; D dumps the delay and cuts to it.'
+          : 'Program engine is not running — reload the page.',
+      },
+      guestStream
+        ? { id: 'guest', label: 'Guest', status: 'ok', detail: `${guestName || 'Guest'} connected.` }
+        : { id: 'guest', label: 'Guest', status: 'warn', detail: 'Not connected. You can go live and bring them in later.' },
+    ]
+    if (disguise) {
+      checks.push(
+        disguiseError
+          ? { id: 'disguise', label: 'Voice disguise', status: 'warn', detail: disguiseError }
+          : { id: 'disguise', label: 'Voice disguise', status: 'ok', detail: 'On. Remember: pitch shifting can be reversed.' },
+      )
+    }
+    setPreflight({ running: true, checks })
+    window.setTimeout(() => preflightRef.current?.focus(), 0)
+    await Promise.all([
+      probeLiveProvider()
+        .then((p) => {
+          setProvider(p)
+          if (!p.configured) {
+            updateCheck({ id: 'provider', label: 'Live provider reachable', status: 'fail', detail: 'LIVE_WHIP_URL is not set.' })
+          } else if (!p.reachable) {
+            updateCheck({
+              id: 'provider',
+              label: 'Live provider reachable',
+              status: 'fail',
+              detail: `The server could not reach ${p.host} (${p.probeError || 'no answer'}).`,
+            })
+          } else {
+            updateCheck({
+              id: 'provider',
+              label: 'Live provider reachable',
+              status: 'ok',
+              detail: `${p.provider} · ${p.host} answered in ${p.probeMs ?? '?'} ms.`,
+            })
+          }
+        })
+        .catch((err) =>
+          updateCheck({
+            id: 'provider',
+            label: 'Live provider reachable',
+            status: 'fail',
+            detail: err instanceof Error ? err.message : 'Probe failed',
+          }),
+        ),
+      measureUploadMbps()
+        .then((mbps) => updateCheck(bitrateCheck(mbps)))
+        .catch((err) => updateCheck(bitrateCheck(null, err instanceof Error ? err.message : 'failed'))),
+    ])
+    setPreflight((prev) => (prev ? { ...prev, running: false } : prev))
+  }
+
+  const preflightFailed = Boolean(preflight?.checks.some((c) => c.status === 'fail'))
+  const preflightPending = Boolean(preflight?.running || preflight?.checks.some((c) => c.status === 'pending'))
+
+  function teardownDelay() {
+    const compositor = compositorRef.current
+    if (compositor) compositor.onFrame = null
+    delayRef.current?.stop()
+    delayRef.current?.canvas.remove()
+    delayRef.current = null
+    setDelayStatus(null)
+    setActiveDelaySec(0)
+  }
+
   async function goLive() {
     const compositor = compositorRef.current
     const mix = mixRef.current
     if (!active || !compositor || !mix) return
-    if (!provider?.configured) {
-      setError('Set LIVE_WHIP_URL on the server first (see docs/podcast-live.md).')
+    if (blockers.length) {
+      setError(blockers.join(' '))
       return
     }
-    if (!hostStream) {
-      setError('Open your camera and mic first.')
-      return
-    }
+    setPreflight(null)
     setError(null)
     setNotice(null)
     setRecording(null)
@@ -464,19 +737,40 @@ export function LiveControlRoom({ episodes = [] }: Props) {
       const target = countdownSec > 0 ? Date.now() + countdownSec * 1000 : null
       compositor.setCopy({ countdownTo: target })
       if (!safe) putScene(target ? 'starting' : lastCamera)
-      const program = new MediaStream([
-        ...compositor.captureStream().getVideoTracks(),
-        ...mix.stream.getAudioTracks(),
-      ])
+
+      // Broadcast delay: Program canvas → ring buffer → Air canvas; audio through a DelayNode.
+      const seconds = clampDelaySec(delaySec)
+      const delay = new BroadcastVideoDelay({
+        source: compositor.canvas,
+        delayMs: seconds * 1000,
+        width: compositor.width,
+        height: compositor.height,
+        paintHold: (ctx, reason) => compositor.paintHold(ctx, reason),
+        onStatus: setDelayStatus,
+      })
+      delayRef.current = delay
+      delay.canvas.className = 'w-full h-auto block rounded-lg bg-black'
+      delay.canvas.setAttribute('role', 'img')
+      delay.canvas.setAttribute('aria-label', `On-air monitor: what viewers get, ${seconds} seconds behind`)
+      airRef.current?.replaceChildren(delay.canvas)
+      await delay.start()
+      // Start audio + video delay together so they stay aligned.
+      mix.setAirDelay(seconds)
+      compositor.onFrame = () => delay.tick()
+      setActiveDelaySec(seconds)
+
+      const program = new MediaStream([...delay.captureStream().getVideoTracks(), ...mix.stream.getAudioTracks()])
       const ice = await loadStudioIceServers()
       const publisher = new WhipPublisher({ iceServers: ice.iceServers, onHealth: setHealth })
       publisherRef.current = publisher
       await publisher.start(program)
       const { session } = await patchLiveSession(active.id, { action: 'start' })
       upsertSession(session)
+      // Record what aired (post-delay, post-dump) — dumped material never reaches the draft.
       recorderRef.current?.start(program, mix.stream, recordVideo)
       setOnAirAt(Date.now())
       setPhase('live')
+      announce(seconds > 0 ? `ON AIR with a ${seconds} second delay.` : 'ON AIR. No delay.')
       if (target) {
         const camera = lastCamera
         countdownTimerRef.current = window.setTimeout(() => {
@@ -490,8 +784,11 @@ export function LiveControlRoom({ episodes = [] }: Props) {
     } catch (err) {
       await publisherRef.current?.stop().catch(() => {})
       publisherRef.current = null
+      teardownDelay()
+      mix.setAirDelay(0)
       setPhase('off')
       setError(err instanceof Error ? err.message : 'Could not go live')
+      announce('Could not go live. Still off air.')
     }
   }
 
@@ -505,11 +802,15 @@ export function LiveControlRoom({ episodes = [] }: Props) {
     heartbeatRef.current = null
     compositorRef.current?.setScene('ended')
     setSceneState('ended')
-    await new Promise((r) => window.setTimeout(r, END_SLATE_MS))
+    // Let the delayed tail (and the end slate) finish airing before cutting the stream.
+    await new Promise((r) => window.setTimeout(r, END_SLATE_MS + activeDelaySec * 1000))
     await publisherRef.current?.stop().catch(() => {})
     publisherRef.current = null
     const rec = (await recorderRef.current?.stop()) || null
+    teardownDelay()
+    mixRef.current?.setAirDelay(0)
     setRecording(rec)
+    announce('OFF AIR. The stream has stopped.')
     try {
       const { session } = await patchLiveSession(active.id, { action: 'end' })
       upsertSession(session)
@@ -546,47 +847,115 @@ export function LiveControlRoom({ episodes = [] }: Props) {
     phase === 'live' ? (scene === 'starting' ? 'count-in' : 'rec') : phase === 'ended' ? 'stopped' : 'waiting'
   const lossTone =
     health.packetLossPct > 5 ? 'text-[#FF7A9A]' : health.packetLossPct > 2 ? 'text-[#FFB86B]' : 'text-[#7CFFB2]'
-  const playbackMissing =
-    active && !active.playback_hls_url && !active.playback_whep_url && !provider?.defaultHlsUrl && !provider?.defaultWhepUrl
   const elapsed = onAirAt && clock ? Math.max(0, Math.round((clock - onAirAt) / 1000)) : 0
+  const rebuildingSec = delayStatus ? Math.ceil(delayStatus.rebuildingMs / 1000) : 0
+  const rebuilding = onAir && activeDelaySec > 0 && rebuildingSec > 0
+  const dumpedOnce = (delayStatus?.dumps ?? 0) > 0
+  const airLabel = activeDelaySec > 0 ? `On air (+${activeDelaySec} s)` : onAir ? 'On air (no delay)' : 'On air'
+  const goLiveDisabled = blockers.length > 0 || Boolean(preflight)
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" ref={rootRef}>
+      {/* Screen-reader announcements for ON AIR / OFF AIR / DUMPED / reconnecting. */}
+      <div className="sr-only" role="status" aria-live="assertive" aria-atomic="true">
+        {announcement}
+      </div>
+
       {(error || notice) && (
-        <div className="space-y-1" role="status">
+        <div className="space-y-1" role="alert">
           {error && <p className="text-sm text-red-300">{error}</p>}
           {notice && <p className="text-sm text-[#8DEBFF]">{notice}</p>}
         </div>
       )}
 
+      {ingestTrouble && (
+        <div
+          className="flex flex-wrap items-center gap-3 rounded-2xl border-2 border-[#FFB86B] bg-[#2A1E10] px-4 py-3 text-[#FFD9A8]"
+          role="alert"
+        >
+          <RefreshCw size={20} className="animate-spin motion-reduce:animate-none" aria-hidden />
+          <p className="text-base font-bold">
+            Stream {health.state === 'reconnecting' ? 'reconnecting' : health.state}… (attempt {health.reconnects})
+          </p>
+          <p className="text-sm">
+            Retrying automatically with backoff. Viewers see “Reconnecting”. Keep talking — the local recording continues.
+            {health.lastError ? ` Last error: ${health.lastError}.` : ''}
+          </p>
+        </div>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         {/* Program + switcher */}
-        <section className={card}>
+        <section className={card} aria-label="Program">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className={label}>Program</p>
-            <div className="flex items-center gap-2 text-xs">
-              {phase === 'live' && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-[#FF3B5C] px-2 py-0.5 font-bold uppercase tracking-widest text-white">
-                  <Radio size={12} /> On air {fmtDuration(elapsed)}
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              {phase === 'live' ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#FF3B5C] px-3 py-1 font-bold uppercase tracking-widest text-white">
+                  <Radio size={12} aria-hidden /> On air {fmtDuration(elapsed)}
                 </span>
+              ) : (
+                phase !== 'connecting' &&
+                phase !== 'ending' && (
+                  <span className="rounded-full border border-[#27313B] px-3 py-1 font-bold uppercase tracking-widest text-[#A9B8C6]">
+                    Off air
+                  </span>
+                )
               )}
               {phase === 'connecting' && <span className="text-[#FFB86B]">Connecting to ingest…</span>}
-              {phase === 'ending' && <span className="text-[#FFB86B]">Ending…</span>}
+              {phase === 'ending' && (
+                <span className="text-[#FFB86B]">
+                  Ending… {activeDelaySec > 0 ? `the last ${activeDelaySec} s are still airing` : ''}
+                </span>
+              )}
               {safe && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-[#FFB86B] px-2 py-0.5 font-bold uppercase tracking-widest text-[#061016]">
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#FFB86B] px-3 py-1 font-bold uppercase tracking-widest text-[#061016]">
                   Safe slate
                 </span>
               )}
             </div>
           </div>
-          <div ref={previewRef} className="relative" />
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <figure className="space-y-1">
+              <figcaption className="text-xs font-semibold text-[#B8C4CF]">Live (you)</figcaption>
+              <div ref={previewRef} className="relative" />
+            </figure>
+            <figure className="space-y-1">
+              <figcaption className="flex items-center justify-between text-xs font-semibold text-[#B8C4CF]">
+                <span>{airLabel}</span>
+                {delayStatus && delayStatus.mode !== 'off' && (
+                  <span className="font-normal text-[#7C8B97]">
+                    {delayStatus.mode === 'encoded'
+                      ? `encoded buffer · ${fmtBytes(delayStatus.bufferedBytes)}`
+                      : `frame buffer${delayStatus.plan ? ` ${delayStatus.plan.width}×${delayStatus.plan.height} @${delayStatus.plan.fps} fps` : ''} · ${fmtBytes(delayStatus.bufferedBytes)}`}
+                  </span>
+                )}
+              </figcaption>
+              <div className="relative">
+                <div ref={airRef} />
+                {!onAir && (
+                  <div className="flex aspect-video w-full items-center justify-center rounded-lg border border-dashed border-[#27313B] bg-[#05070A] text-sm text-[#7C8B97]">
+                    Off air — the delayed feed appears here when you go live
+                  </div>
+                )}
+                {rebuilding && (
+                  <div className="absolute inset-x-0 bottom-0 rounded-b-lg bg-black/75 px-3 py-2 text-center text-sm font-bold text-[#FFB86B]">
+                    {dumpedOnce ? `DUMPED · Delay rebuilding… ${rebuildingSec} s` : `Delay filling… ${rebuildingSec} s`}
+                  </div>
+                )}
+              </div>
+            </figure>
+          </div>
+          {delayStatus?.error && <p className="text-xs text-[#FFB86B]">{delayStatus.error}</p>}
+
+          <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Scenes">
             {(['host', 'guest', 'pip'] as const).map((id) => (
               <button
                 key={id}
                 type="button"
                 disabled={safe}
+                aria-pressed={scene === id}
                 onClick={() => takeCamera(id)}
                 className={`${btn} ${scene === id ? 'border-[#53D6FF] text-[#8DEBFF]' : ''}`}
               >
@@ -596,32 +965,48 @@ export function LiveControlRoom({ episodes = [] }: Props) {
             <button
               type="button"
               disabled={safe}
+              aria-pressed={scene === 'starting'}
               onClick={() => putScene('starting')}
               className={`${btn} ${scene === 'starting' ? 'border-[#53D6FF] text-[#8DEBFF]' : ''}`}
             >
               Starting soon
             </button>
-            <label className="inline-flex items-center gap-1.5 text-xs text-[#A9B8C6]">
+            <label className="inline-flex min-h-[40px] items-center gap-1.5 text-xs text-[#A9B8C6]">
               <input type="checkbox" checked={lowerThird} onChange={(e) => setLowerThird(e.target.checked)} />
               Title lower third
             </label>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Safety controls: big targets, hotkeys shown on the buttons. */}
+          <div className="flex flex-wrap items-stretch gap-3">
+            <button
+              type="button"
+              onClick={dump}
+              aria-keyshortcuts="D"
+              aria-label={
+                activeDelaySec > 0 && onAir
+                  ? `Dump: discard the last ${activeDelaySec} seconds and cut to the safe slate. Hotkey D.`
+                  : 'Dump: cut to the safe slate. Hotkey D.'
+              }
+              className={`inline-flex min-h-[64px] min-w-[180px] items-center justify-center gap-3 rounded-2xl bg-[#E0162B] px-6 py-3 text-2xl font-black uppercase tracking-wider text-white shadow-lg hover:bg-[#FF2A40] ${focusRing}`}
+            >
+              <Trash2 size={24} aria-hidden /> Dump <kbd className={`${kbd} border-white/50 bg-white/15`}>D</kbd>
+            </button>
             {!safe ? (
               <button
                 type="button"
-                onClick={engageSafeSlate}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#FFB86B] px-5 py-3 text-base font-bold text-[#061016] hover:bg-[#FFC98A]"
+                onClick={() => engageSafeSlate()}
+                aria-keyshortcuts="S"
+                className={`inline-flex min-h-[64px] items-center gap-2 rounded-2xl bg-[#FFB86B] px-5 py-3 text-lg font-bold text-[#061016] hover:bg-[#FFC98A] ${focusRing}`}
                 title="Instantly cut Program to the branded slate and remove guest audio"
               >
-                <ShieldAlert size={18} /> SAFE SLATE
+                <ShieldAlert size={20} aria-hidden /> SAFE SLATE <kbd className={kbd}>S</kbd>
               </button>
             ) : (
               <button
                 type="button"
                 onClick={releaseSafeSlate}
-                className="inline-flex items-center gap-2 rounded-xl border-2 border-[#FFB86B] px-5 py-3 text-base font-bold text-[#FFB86B]"
+                className={`inline-flex min-h-[64px] items-center gap-2 rounded-2xl border-2 border-[#FFB86B] px-5 py-3 text-lg font-bold text-[#FFB86B] ${focusRing}`}
               >
                 Release safe slate → {lastCamera.toUpperCase()}
               </button>
@@ -629,29 +1014,108 @@ export function LiveControlRoom({ episodes = [] }: Props) {
             {phase === 'off' || phase === 'ended' ? (
               <button
                 type="button"
-                onClick={() => void goLive()}
-                disabled={!active || active.status === 'ended' || !hostStream || !provider?.configured}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#FF3B5C] px-5 py-3 text-base font-bold text-white disabled:opacity-40"
+                onClick={() => void runPreflight()}
+                disabled={goLiveDisabled}
+                aria-describedby="go-live-why"
+                className={`inline-flex min-h-[64px] items-center gap-2 rounded-2xl bg-[#FF3B5C] px-6 py-3 text-lg font-bold text-white disabled:opacity-40 ${focusRing}`}
               >
-                <Radio size={18} /> Go live
+                <Radio size={20} aria-hidden /> Go live…
               </button>
             ) : (
               <button
                 type="button"
                 onClick={() => void endShow()}
                 disabled={phase !== 'live'}
-                className="inline-flex items-center gap-2 rounded-xl border-2 border-[#FF3B5C] px-5 py-3 text-base font-bold text-[#FF7A9A] disabled:opacity-40"
+                className={`inline-flex min-h-[64px] items-center gap-2 rounded-2xl border-2 border-[#FF3B5C] px-6 py-3 text-lg font-bold text-[#FF7A9A] disabled:opacity-40 ${focusRing}`}
               >
-                <Square size={16} /> End show
+                <Square size={18} aria-hidden /> End show
               </button>
             )}
-            <label className="inline-flex items-center gap-1.5 text-xs text-[#A9B8C6]">
+          </div>
+
+          {(phase === 'off' || phase === 'ended') && (blockers.length > 0 || warnings.length > 0) && (
+            <div id="go-live-why" className="space-y-1 text-sm">
+              {blockers.length > 0 && <p className="font-semibold text-[#FF7A9A]">Go live is unavailable because:</p>}
+              <ul className="space-y-0.5">
+                {blockers.map((b) => (
+                  <li key={b} className="text-[#FF9AB0]">
+                    • {b}
+                  </li>
+                ))}
+                {warnings.map((w) => (
+                  <li key={w} className="text-[#FFB86B]">
+                    ⚠ {w}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {preflight && (
+            <div
+              ref={preflightRef}
+              tabIndex={-1}
+              role="region"
+              aria-label="Pre-flight checklist"
+              className={`space-y-2 rounded-xl border border-[#53D6FF]/50 bg-[#0A1016] p-3 ${focusRing}`}
+            >
+              <p className={label}>Pre-flight checklist</p>
+              <ul className="space-y-1.5" aria-live="polite">
+                {preflight.checks.map((c) => (
+                  <li key={c.id} className="flex gap-2 text-sm">
+                    <span className={`w-20 shrink-0 font-bold ${CHECK_TONE[c.status]}`}>{CHECK_WORD[c.status]}</span>
+                    <span>
+                      <span className="text-[#F6FAFC]">{c.label}</span>
+                      <span className="text-[#A9B8C6]"> — {c.detail}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void goLive()}
+                  disabled={preflightPending || preflightFailed || blockers.length > 0}
+                  className={`inline-flex min-h-[48px] items-center gap-2 rounded-xl bg-[#FF3B5C] px-5 py-2 text-base font-bold text-white disabled:opacity-40 ${focusRing}`}
+                >
+                  <Radio size={18} aria-hidden /> Go live now
+                </button>
+                <button type="button" className={btn} onClick={() => setPreflight(null)}>
+                  Cancel
+                </button>
+                <button type="button" className={btn} disabled={preflight.running} onClick={() => void runPreflight()}>
+                  <RefreshCw size={14} aria-hidden /> Re-run checks
+                </button>
+              </div>
+              {preflightFailed && (
+                <p className="text-xs text-[#FF9AB0]">Fix the blocked item(s) above, then re-run the checks.</p>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex min-h-[40px] items-center gap-1.5 text-sm text-[#A9B8C6]">
+              Broadcast delay
+              <select
+                value={delaySec}
+                disabled={onAir}
+                onChange={(e) => setDelaySec(Number(e.target.value))}
+                className={`rounded border border-[#27313B] bg-[#05070A] px-2 py-1 text-sm text-[#F6FAFC] ${focusRing}`}
+              >
+                {DELAY_CHOICES_SEC.map((s) => (
+                  <option key={s} value={s}>
+                    {s === 0 ? 'Off (DUMP = slate only)' : `${s} s${s === DELAY_DEFAULT_SEC ? ' (recommended)' : ''}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="inline-flex min-h-[40px] items-center gap-1.5 text-sm text-[#A9B8C6]">
               Countdown
               <select
                 value={countdownSec}
                 disabled={onAir}
                 onChange={(e) => setCountdownSec(Number(e.target.value))}
-                className="rounded border border-[#27313B] bg-[#05070A] px-1 py-0.5 text-xs text-[#F6FAFC]"
+                className={`rounded border border-[#27313B] bg-[#05070A] px-2 py-1 text-sm text-[#F6FAFC] ${focusRing}`}
               >
                 {[0, 10, 30, 60, 120, 300].map((s) => (
                   <option key={s} value={s}>
@@ -660,7 +1124,7 @@ export function LiveControlRoom({ episodes = [] }: Props) {
                 ))}
               </select>
             </label>
-            <label className="inline-flex items-center gap-1.5 text-xs text-[#A9B8C6]">
+            <label className="inline-flex min-h-[40px] items-center gap-1.5 text-sm text-[#A9B8C6]">
               <input
                 type="checkbox"
                 checked={recordVideo}
@@ -671,8 +1135,13 @@ export function LiveControlRoom({ episodes = [] }: Props) {
             </label>
           </div>
           <p className="text-xs text-[#7C8B97]">
-            Safe slate is an instant cut (no fade) and hard-mutes guest audio in Program. It works before, during and
-            after going live. Keep this browser tab in the foreground and stay on this Live show tab while on air — switching console tabs stops the stream.
+            <strong className="text-[#B8C4CF]">DUMP</strong> (<kbd className="font-mono">D</kbd>) throws away everything
+            in the delay so it never airs, cuts Program to the safe slate and rebuilds the delay behind it.{' '}
+            <strong className="text-[#B8C4CF]">Safe slate</strong> (<kbd className="font-mono">S</kbd>) is an instant cut
+            (no fade) that hard-mutes the guest; with a delay, viewers see it after the delay — use DUMP when something
+            has just been said. Hotkeys work while this Live show tab is showing and you are not typing. You can switch
+            console tabs while on air — the stream keeps running — but keep this browser tab in the foreground, because
+            browsers slow down background tabs.
           </p>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -680,30 +1149,102 @@ export function LiveControlRoom({ episodes = [] }: Props) {
               <Meter name="Host" value={levels.host} />
               <Meter name="Guest" value={levels.guest} />
               <Meter name="Program" value={levels.program} />
+              <Meter name="Air" value={levels.air} />
             </div>
             <div className="flex flex-wrap items-start gap-2">
-              <button type="button" className={btn} onClick={() => setHostMuted((v) => !v)}>
-                {hostMuted ? <MicOff size={14} /> : <Mic size={14} />} Host {hostMuted ? 'muted' : 'on'}
+              <button type="button" className={btn} aria-pressed={hostMuted} onClick={() => setHostMuted((v) => !v)}>
+                {hostMuted ? <MicOff size={14} aria-hidden /> : <Mic size={14} aria-hidden />} Host{' '}
+                {hostMuted ? 'muted' : 'on'}
               </button>
-              <button type="button" className={btn} disabled={safe} onClick={() => setGuestMuted((v) => !v)}>
-                {guestMuted || safe ? <MicOff size={14} /> : <Mic size={14} />} Guest{' '}
+              <button
+                type="button"
+                className={btn}
+                disabled={safe}
+                aria-pressed={guestMuted || safe}
+                onClick={() => setGuestMuted((v) => !v)}
+              >
+                {guestMuted || safe ? <MicOff size={14} aria-hidden /> : <Mic size={14} aria-hidden />} Guest{' '}
                 {guestMuted || safe ? 'muted' : 'on'}
               </button>
-              <button type="button" className={btn} onClick={() => setMonitor((v) => !v)}>
-                <Headphones size={14} /> Monitor {monitor ? 'on' : 'off'}
+              <button type="button" className={btn} aria-pressed={monitor} onClick={() => setMonitor((v) => !v)}>
+                <Headphones size={14} aria-hidden /> Monitor {monitor ? 'on' : 'off'}
               </button>
             </div>
           </div>
           <SfxPad compact disabled={!hostStream} onDrop={(id) => void mixRef.current?.playSfx(id)} />
         </section>
 
-        {/* Right column: health, provider, devices */}
+        {/* Right column: privacy, health, provider, devices */}
         <div className="space-y-4">
+          <section className={card} aria-label="Privacy">
+            <p className={label}>Privacy</p>
+            <div className="space-y-2 text-sm">
+              <label className="flex min-h-[40px] items-center gap-2 text-[#F6FAFC]">
+                <input type="checkbox" checked={blurGuest} onChange={(e) => setBlurGuest(e.target.checked)} />
+                Blur guest face
+              </label>
+              <p className={`-mt-1 text-xs ${blurGuest && vision.guest.state !== 'ok' ? 'text-[#FFB86B]' : 'text-[#A9B8C6]'}`}>
+                Guest: {visionLabel(blurGuest, vision.guest.state)}
+                {vision.guest.state === 'failed' && vision.guest.detail ? ` (${vision.guest.detail})` : ''}
+              </p>
+              <label className="flex min-h-[40px] items-center gap-2 text-[#F6FAFC]">
+                <input type="checkbox" checked={blurHost} onChange={(e) => setBlurHost(e.target.checked)} />
+                Blur host face
+              </label>
+              <p className={`-mt-1 text-xs ${blurHost && vision.host.state !== 'ok' ? 'text-[#FFB86B]' : 'text-[#A9B8C6]'}`}>
+                Host: {visionLabel(blurHost, vision.host.state)}
+              </p>
+              <p className="text-xs text-[#7C8B97]">
+                Guest blur is on by default. Turn it off only if the guest agreed to show their face. If the detector
+                is loading, stalls or fails, that person is shown as a silhouette — never an unblurred face. When no
+                face is found the whole picture is pixelated.
+              </p>
+              <label className="flex flex-col gap-1 text-[#F6FAFC]">
+                Guest voice disguise
+                <select
+                  value={disguise}
+                  onChange={(e) => setDisguise(e.target.value as VoiceDisguisePreset | '')}
+                  className={`${input} ${focusRing}`}
+                >
+                  <option value="">Off — natural voice</option>
+                  {VOICE_DISGUISE_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {disguiseError && (
+                <p className="text-xs text-[#FF9AB0]" role="alert">
+                  {disguiseError}
+                </p>
+              )}
+              {disguise && (
+                <p className="flex gap-1 text-xs text-[#FFB86B]">
+                  <AlertTriangle size={12} className="mt-0.5 shrink-0" aria-hidden /> {VOICE_DISGUISE_WARNING}
+                </p>
+              )}
+              {disguise && (
+                <p className="text-xs text-[#7C8B97]">Your headphones keep the natural voice; only Program is shifted.</p>
+              )}
+            </div>
+          </section>
+
           <section className={card}>
             <p className={label}>Stream health</p>
             <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
               <dt className="text-[#A9B8C6]">Ingest</dt>
-              <dd className="text-[#F6FAFC]">{health.state}</dd>
+              <dd
+                className={
+                  health.state === 'connected'
+                    ? 'font-semibold text-[#7CFFB2]'
+                    : ingestTrouble
+                      ? 'font-bold uppercase text-[#FFB86B]'
+                      : 'text-[#F6FAFC]'
+                }
+              >
+                {health.state}
+              </dd>
               <dt className="text-[#A9B8C6]">Bitrate</dt>
               <dd className="text-[#F6FAFC]">{health.bitrateKbps ? `${health.bitrateKbps} kbps` : '—'}</dd>
               <dt className="text-[#A9B8C6]">Packet loss</dt>

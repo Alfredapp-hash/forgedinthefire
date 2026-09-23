@@ -20,6 +20,37 @@ export async function fetchLiveProvider() {
   return readJson<LiveProviderStatus>(await fetch(`${BASE}/whip`, { cache: 'no-store' }))
 }
 
+export type LiveProviderProbe = LiveProviderStatus & {
+  reachable?: boolean
+  probeStatus?: number
+  probeMs?: number
+  probeError?: string
+}
+
+/** Provider config + a reachability probe of the WHIP host (server-side OPTIONS). */
+export async function probeLiveProvider() {
+  return readJson<LiveProviderProbe>(await fetch(`${BASE}/whip?probe=1`, { cache: 'no-store' }))
+}
+
+/**
+ * Rough uplink test: POST random bytes to the admin speed-test route and time it.
+ * A small warm-up request first so a cold serverless start is not counted.
+ */
+export async function measureUploadMbps(bytes = 1_500_000): Promise<number> {
+  const url = `${BASE}/speedtest`
+  await fetch(url, { method: 'POST', body: new Uint8Array(1024), cache: 'no-store' }).catch(() => null)
+  const body = new Uint8Array(bytes)
+  // Random so nothing on the path can compress it; getRandomValues takes ≤ 65,536 bytes per call.
+  for (let i = 0; i < body.length; i += 65536) {
+    crypto.getRandomValues(body.subarray(i, Math.min(body.length, i + 65536)))
+  }
+  const started = performance.now()
+  const res = await fetch(url, { method: 'POST', body, cache: 'no-store' })
+  const data = await readJson<{ bytes: number }>(res)
+  const seconds = Math.max(0.001, (performance.now() - started) / 1000)
+  return Math.round(((data.bytes * 8) / seconds / 1_000_000) * 10) / 10
+}
+
 export async function listLiveSessions() {
   return readJson<{ sessions: LiveSessionRow[] }>(await fetch(BASE, { cache: 'no-store' }))
 }
