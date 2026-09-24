@@ -90,12 +90,21 @@ export function encodeWav(buffer: AudioBuffer): Blob {
   return new Blob([bytes], { type: 'audio/wav' })
 }
 
-export async function encodeMp3(buffer: AudioBuffer): Promise<Blob> {
+/**
+ * Lowest CBR bitrate Apple Podcasts / Spotify accept without transcoding penalties.
+ * lamejs's `Mp3Encoder(channels, rate, kbps)` emits **constant** bitrate at this value,
+ * so a 128 kbps floor keeps the enclosure inside every major directory's spec.
+ */
+export const PODCAST_MP3_BITRATE = 128
+
+export async function encodeMp3(buffer: AudioBuffer, bitrateKbps = PODCAST_MP3_BITRATE): Promise<Blob> {
   const mod = await import('@breezystack/lamejs')
   const Encoder = mod.Mp3Encoder ?? (mod as { default?: { Mp3Encoder: typeof mod.Mp3Encoder } }).default?.Mp3Encoder
   if (!Encoder) throw new Error('MP3 encoder failed to load. Export WAV instead.')
   const channels = Math.min(2, buffer.numberOfChannels)
-  const encoder = new Encoder(channels, buffer.sampleRate, 128)
+  // Clamp to a podcast-safe CBR floor; a stereo mix gets at least 128 kbps.
+  const kbps = Math.max(PODCAST_MP3_BITRATE, Math.round(bitrateKbps) || PODCAST_MP3_BITRATE)
+  const encoder = new Encoder(channels, buffer.sampleRate, kbps)
   const left = floatTo16(buffer.getChannelData(0))
   const right = channels > 1 ? floatTo16(buffer.getChannelData(1)) : left
   const block = 1152
@@ -124,6 +133,19 @@ export async function decodeUrl(url: string): Promise<AudioBuffer> {
   const res = await fetch(url)
   if (!res.ok) throw new Error('Could not load audio for editing')
   const data = await res.arrayBuffer()
+  const ctx = new AudioContext()
+  const buffer = await ctx.decodeAudioData(data.slice(0))
+  void ctx.close()
+  return buffer
+}
+
+/**
+ * Decode an already-encoded Blob (the exact WAV/MP3 we are about to hand off) back
+ * to an AudioBuffer. Used to re-measure LUFS on the *delivered* file rather than the
+ * pre-encode mix, so a lossy encoder that shifts loudness is caught before save.
+ */
+export async function decodeBlob(blob: Blob): Promise<AudioBuffer> {
+  const data = await blob.arrayBuffer()
   const ctx = new AudioContext()
   const buffer = await ctx.decodeAudioData(data.slice(0))
   void ctx.close()

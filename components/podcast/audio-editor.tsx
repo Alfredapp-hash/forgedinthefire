@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyGainAndFades,
+  decodeBlob,
   decodeUrl,
   encodeMp3,
   encodeWav,
@@ -104,10 +105,22 @@ import {
   type CaptureWatchdog,
   type LaneCapture,
 } from '@/lib/podcast/capture'
-import { renderPictureMix, type PictureMode, type PictureScene } from '@/lib/podcast/picture'
+import {
+  renderCameraDeliverable,
+  renderPictureMix,
+  type PictureMode,
+  type PictureScene,
+} from '@/lib/podcast/picture'
 import type { PodcastChapter } from '@/lib/studio/types'
 import { applyFollowTalker } from '@/lib/podcast/auto-mix'
-import { gainForTargetLufs, measureLoudness, PODCAST_LUFS } from '@/lib/podcast/lufs'
+import {
+  gainForTargetLufs,
+  measureLoudness,
+  verifyLufs,
+  LUFS_TOLERANCE,
+  PODCAST_LUFS,
+} from '@/lib/podcast/lufs'
+import { checkFeedCompliance } from '@/lib/podcast/compliance'
 import { slugFile, zipStore } from '@/lib/podcast/zip'
 import { renderSfx, SFX_META, type SfxId } from '@/lib/podcast/sfx'
 import { SfxPad } from '@/components/podcast/sfx-pad'
@@ -161,6 +174,7 @@ import {
   nudgeAudioWithCamera,
   nudgeCamerasWithAudio,
   personAvLinked,
+  snapCamerasToAudio,
 } from '@/lib/podcast/av-sync'
 
 const REMOTE_GUEST_KEY = 'remote:guest'
@@ -2276,6 +2290,63 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
   }
 
+  /**
+   * One-click video deliverable: the edited camera timeline muxed with the same
+   * mixed master audio the audio export uses. MP4 (H.264/AAC) preferred; WebM fallback.
+   * Local download only — never touches episode.audio_url / the RSS mix.
+   */
+  async function downloadDeliverable() {
+    const host = cameraClips.filter((c) => c.personId === 'host')
+    const guest = cameraClips.filter((c) => c.personId === 'guest')
+    if (host.length === 0 && guest.length === 0) {
+      setError('Record or import a camera file first — the MP4 deliverable needs picture')
+      return
+    }
+    const mode: PictureMode = guest.length > 0 ? 'pip' : 'a-roll'
+    setBusy('Encoding MP4 (picture + master mix)…')
+    setError(null)
+    setOk(null)
+    try {
+      // Reuse the audio-export mixdown so the video carries the identical master mix.
+      const prepared = await tracksWithInserts(tracks)
+      let master = mixdownTracks(prepared)
+      master = applyGainAndFades(master, masterGain, masterFadeIn, masterFadeOut)
+      if (matchLufs) {
+        master = applyGainAndFades(master, gainForTargetLufs(measureLoudness(master).lufs, PODCAST_LUFS), 0, 0)
+      }
+      const overlays = cameraClips.filter((c) => cameraLayer(c) === 'overlay')
+      const out = await renderCameraDeliverable({
+        host: [...(host.length ? host : cameraClips.filter((c) => c.personId === guest[0]?.personId)), ...overlays],
+        guest: mode === 'pip' ? guest : null,
+        master,
+        mode,
+        fileStem: `${slugFile(title)}-program`,
+        onProgress: (ratio, info) => {
+          setBusy(
+            info?.realtime
+              ? `Encoding MP4 ${Math.round(ratio * 100)}% — keep this tab open`
+              : `Encoding MP4 ${Math.round(ratio * 100)}%`,
+          )
+        },
+      })
+      const url = URL.createObjectURL(out.blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = out.filename
+      a.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 4000)
+      setOk(
+        out.realtime
+          ? `Downloaded ${out.ext.toUpperCase()} (realtime encode) — public RSS is still the audio mix`
+          : `Downloaded ${out.ext.toUpperCase()} deliverable — public RSS is still the audio mix`,
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'MP4 deliverable failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   async function downloadStems() {
     if (!hasAudio) return
     setBusy('Packing stems zip…')
@@ -2343,7 +2414,57 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         `${title.replace(/[^\w]+/g, '-').slice(0, 48) || 'episode'}-mix.${ext}`,
         { type: blob.type },
       )
-      await onExported(file, mixed.duration)
+
+      // Validate the *delivered* file, not just the pre-encode mix: re-decode the
+      // exact blob and confirm it still lands on the LUFS target and carries a real
+      // duration. A lossy encoder or limiter that clawed loudness back shows up here.
+      const warnings: string[] = []
+      let durationSeconds = mixed.duration
+      try {
+        const rendered = await decodeBlob(blob)
+        if (Number.isFinite(rendered.duration) && rendered.duration > 0) {
+          durationSeconds = rendered.duration
+        }
+        if (matchLufs) {
+          const verdict = verifyLufs(rendered, PODCAST_LUFS, LUFS_TOLERANCE)
+          if (Number.isFinite(verdict.lufs)) setLoudness({ lufs: verdict.lufs, peakDb: verdict.peakDb })
+          if (!verdict.onTarget) {
+            warnings.push(
+              `Rendered mix is ${verdict.lufs.toFixed(1)} LUFS (${verdict.deltaLu >= 0 ? '+' : ''}${verdict.deltaLu.toFixed(1)} LU off the ${PODCAST_LUFS} target). ` +
+                (verdict.deltaLu > 0 ? 'The limiter held it hotter than target.' : 'It came out quieter than target.'),
+            )
+          }
+        }
+      } catch {
+        /* Re-decode is a validation nicety; the mix duration is a safe fallback. */
+      }
+
+      // Never hand off a null/NaN duration — the RSS enclosure needs > 0.
+      if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) durationSeconds = mixed.duration || 0
+
+      // Non-blocking feed-compliance hint at export time, mirroring the publish gate,
+      // so an unusable enclosure (0 bytes / 0 duration / bad mime) surfaces here.
+      try {
+        const gate = checkFeedCompliance({
+          title,
+          audio_url: 'about:blank', // a real URL is assigned after upload; not the check we care about here
+          audio_mime: blob.type,
+          duration_seconds: durationSeconds,
+          file_size: file.size,
+          cover_url: 'about:blank', // cover is managed in the episode form, out of scope for the editor
+          chapters: chapters ?? null,
+          summary: '',
+        })
+        const relevant = gate.blockers.filter((b) => ['file_size', 'duration', 'audio_mime', 'chapters', 'title'].includes(b.id))
+        for (const b of relevant) warnings.push(b.detail || `${b.label} is not feed-ready`)
+      } catch {
+        /* compliance hint is advisory only */
+      }
+
+      await onExported(file, durationSeconds)
+      if (warnings.length) {
+        setError(`Saved, but check before publish: ${warnings.join(' · ')}`)
+      }
       setOk(thenPublish ? 'Mix saved to site host' : `Saved ${ext.toUpperCase()} mix to episode`)
       if (thenPublish && onPublished) await onPublished()
     } catch (err) {
@@ -3527,6 +3648,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                     }
                     drift={avDriftForPerson(tracks, cameraClips, person.id)}
                     broken={avBroken(tracks, cameraClips, person)}
+                    onSnapSync={() => {
+                      const drift = avDriftForPerson(tracks, cameraClips, person.id)
+                      if (!drift) return
+                      pushHistory()
+                      setCameraClips((prev) => snapCamerasToAudio(prev, drift))
+                      setOk(`Snapped ${person.name} picture to the audio in-point — sync corrected`)
+                    }}
                     disabled={Boolean(busy) || recording}
                     onSplit={splitSelectedCameraAtPlayhead}
                     onCutHole={(ripple) => editCameraRange(ripple)}
@@ -3909,6 +4037,15 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             onClick={() => void downloadPicture('pip')}
           >
             {busy?.includes('PIP') ? busy : 'Download PIP'}
+          </button>
+          <button
+            type="button"
+            className={primary}
+            disabled={!cameraClips.length || Boolean(busy)}
+            title="Camera timeline muxed with the master mix into one MP4 (WebM fallback). Local deliverable — RSS stays the audio mix."
+            onClick={() => void downloadDeliverable()}
+          >
+            {busy?.includes('MP4') ? busy : 'Download MP4 (picture + master mix)'}
           </button>
         </div>
 
