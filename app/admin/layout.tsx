@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { AdminSidebarNav } from '@/components/admin/admin-sidebar-nav'
+import { FBot } from '@/components/admin/fbot'
 
 function normalizeEmail(email: string | undefined): string {
   return (email || '').trim().toLowerCase()
@@ -45,9 +46,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   }
 
   return (
-    <div className="admin-portal flex min-h-screen bg-[#05070A]" style={{ colorScheme: 'dark' }}>
-      {/* Sidebar */}
-      <aside className="w-64 shrink-0 text-white flex flex-col bg-[#05070A] border-r border-[#27313B] print:hidden">
+    <div className="admin-portal flex h-screen overflow-hidden bg-[#05070A] print:h-auto print:overflow-visible" style={{ colorScheme: 'dark' }}>
+      <aside className="w-64 shrink-0 h-full text-white flex flex-col bg-[#05070A] border-r border-[#27313B] print:hidden">
         <div className="px-5 py-5 border-b border-[#27313B]">
           <p className="font-bold text-base text-[#8DEBFF]">Forged in the Fire</p>
           <p className="text-xs text-[#A9B8C6]">Admin Portal</p>
@@ -56,11 +56,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       </aside>
 
       {/* Main */}
-      <div className="flex-1 overflow-auto">
+      <div className="min-w-0 flex-1 overflow-auto">
         <div className="p-8 print:p-0">
           {children}
         </div>
       </div>
+      <FBot />
     </div>
   )
   } catch (error) {
