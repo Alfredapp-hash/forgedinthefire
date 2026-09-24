@@ -366,7 +366,11 @@ function paintTimed(
   ctx.save()
   ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity))
   ctx.filter = cssCameraFilter(layer.clip.filter)
-  ctx.translate((layer.x || 0) * WIDTH, (layer.y || 0) * HEIGHT)
+  // Keyframe X/Y are fractions of the box the clip fills, so a PIP moves within
+  // its window and a full-frame clip moves across the program — not always the
+  // full 1280×720. (Titles/stingers paint at full frame, so they use WIDTH/HEIGHT.)
+  const box = cameraKind(layer.clip) === 'camera' ? { w, h } : { w: WIDTH, h: HEIGHT }
+  ctx.translate((layer.x || 0) * box.w, (layer.y || 0) * box.h)
   const kind = cameraKind(layer.clip)
   if (kind === 'stinger') {
     paintStinger(ctx, layer.clip, WIDTH, HEIGHT)
@@ -504,34 +508,58 @@ function composeLayers(
   paintProgramFrame(ctx, { mode, host, guest, overlays })
 }
 
-async function pickEncodePlan() {
-  const mb = await import('mediabunny')
-  const video = await mb.getFirstEncodableVideoCodec(['vp8', 'vp9', 'av1'], {
+type EncodePlan = {
+  format: import('mediabunny').OutputFormat
+  video: import('mediabunny').VideoCodec
+  audio: import('mediabunny').AudioCodec
+  mime: string
+  ext: 'mp4' | 'webm'
+  quality: import('mediabunny').Quality
+}
+
+async function planMp4(mb: typeof import('mediabunny')): Promise<EncodePlan | null> {
+  const avc = await mb.canEncodeVideo('avc', { width: WIDTH, height: HEIGHT, frameRate: FPS })
+  const aac = await mb.canEncodeAudio('aac', { numberOfChannels: 2 })
+  if (!avc || !aac) return null
+  return {
+    format: new mb.Mp4OutputFormat(),
+    video: 'avc',
+    audio: 'aac',
+    mime: 'video/mp4',
+    ext: 'mp4',
+    quality: mb.QUALITY_HIGH,
+  }
+}
+
+async function planWebm(mb: typeof import('mediabunny')): Promise<EncodePlan | null> {
+  const video = await mb.getFirstEncodableVideoCodec(['vp9', 'vp8', 'av1'], {
     width: WIDTH,
     height: HEIGHT,
     frameRate: FPS,
     quality: mb.QUALITY_HIGH,
   })
   const opus = await mb.canEncodeAudio('opus', { numberOfChannels: 2, sampleRate: 48000 })
-  if (video && opus) {
-    return {
-      format: new mb.WebMOutputFormat(),
-      video,
-      audio: 'opus' as const,
-      mime: 'video/webm',
-      quality: mb.QUALITY_HIGH,
-    }
+  if (!video || !opus) return null
+  return {
+    format: new mb.WebMOutputFormat(),
+    video,
+    audio: 'opus',
+    mime: 'video/webm',
+    ext: 'webm',
+    quality: mb.QUALITY_HIGH,
   }
-  const avc = await mb.canEncodeVideo('avc', { width: WIDTH, height: HEIGHT, frameRate: FPS })
-  const aac = await mb.canEncodeAudio('aac', { numberOfChannels: 2 })
-  if (avc && aac) {
-    return {
-      format: new mb.Mp4OutputFormat(),
-      video: 'avc' as const,
-      audio: 'aac' as const,
-      mime: 'video/mp4',
-      quality: mb.QUALITY_HIGH,
-    }
+}
+
+/**
+ * @param prefer 'mp4' tries H.264/AAC first (deliverable default); 'webm' tries VP9/Opus first.
+ * Falls back to the other container if the preferred codecs can't encode here.
+ */
+async function pickEncodePlan(prefer: 'mp4' | 'webm' = 'webm'): Promise<EncodePlan | null> {
+  const mb = await import('mediabunny')
+  const order = prefer === 'mp4' ? [planMp4, planWebm] : [planWebm, planMp4]
+  for (const build of order) {
+    const plan = await build(mb)
+    if (plan) return plan
   }
   return null
 }
@@ -541,10 +569,11 @@ async function renderFastPicture(opts: {
   host: CameraClip[]
   guest: CameraClip[]
   audio: AudioBuffer
+  prefer?: 'mp4' | 'webm'
   onProgress?: (ratio: number, info?: { realtime: boolean }) => void
-}): Promise<Blob> {
+}): Promise<{ blob: Blob; ext: 'mp4' | 'webm' }> {
   const mb = await import('mediabunny')
-  const plan = await pickEncodePlan()
+  const plan = await pickEncodePlan(opts.prefer)
   if (!plan) throw new Error('This browser cannot encode a picture mix faster than realtime')
 
   const canvas = document.createElement('canvas')
@@ -614,19 +643,23 @@ async function renderFastPicture(opts: {
 
   const buffer = target.buffer
   if (!buffer || buffer.byteLength < 64) throw new Error('Picture encoder produced an empty file')
-  return new Blob([buffer], { type: plan.mime })
+  return { blob: new Blob([buffer], { type: plan.mime }), ext: plan.ext }
 }
 
 async function renderRealtimePicture(opts: {
   mode: PictureMode
   host: CameraClip[]
   guest: CameraClip[]
-  audio: AudioBuffer
+  audio: AudioBuffer | MediaStream
+  /** Required when audio is a live MediaStream; ignored for AudioBuffer. */
+  duration?: number
+  prefer?: 'mp4' | 'webm'
   onProgress?: (ratio: number, info?: { realtime: boolean }) => void
-}): Promise<Blob> {
+}): Promise<{ blob: Blob; ext: 'mp4' | 'webm' }> {
   if (typeof MediaRecorder === 'undefined' || !HTMLCanvasElement.prototype.captureStream) {
     throw new Error('This browser cannot record a canvas picture mix')
   }
+  const audioIsStream = opts.audio instanceof MediaStream
 
   const canvas = document.createElement('canvas')
   canvas.width = WIDTH
@@ -658,19 +691,30 @@ async function renderRealtimePicture(opts: {
     overlayEls.set(url, await loadVideo(url, cameraSourceTime(first, first.offset)))
   }
 
-  const duration = pictureSpan(opts.audio.duration, opts.host, opts.guest)
+  const audioDur = audioIsStream ? (opts.duration ?? 0) : (opts.audio as AudioBuffer).duration
+  const duration = pictureSpan(audioDur, opts.host, opts.guest)
 
-  const audioCtx = new AudioContext()
-  const dest = audioCtx.createMediaStreamDestination()
-  const source = audioCtx.createBufferSource()
-  source.buffer = opts.audio
-  source.connect(dest)
+  // AudioBuffer → play through a graph into a capture stream; MediaStream → use its tracks live.
+  const audioCtx = audioIsStream ? null : new AudioContext()
+  let source: AudioBufferSourceNode | null = null
+  let audioTracks: MediaStreamTrack[] = []
+  if (audioIsStream) {
+    audioTracks = (opts.audio as MediaStream).getAudioTracks()
+  } else if (audioCtx) {
+    const dest = audioCtx.createMediaStreamDestination()
+    source = audioCtx.createBufferSource()
+    source.buffer = opts.audio as AudioBuffer
+    source.connect(dest)
+    audioTracks = dest.stream.getAudioTracks()
+  }
 
   const frames = canvas.captureStream(FPS)
-  dest.stream.getAudioTracks().forEach((track) => frames.addTrack(track))
-  const mime = ['video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find((t) =>
-    MediaRecorder.isTypeSupported(t),
-  )
+  audioTracks.forEach((track) => frames.addTrack(track))
+  const preferOrder =
+    opts.prefer === 'mp4'
+      ? ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm']
+      : ['video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
+  const mime = preferOrder.find((t) => MediaRecorder.isTypeSupported(t))
   const recorder = mime ? new MediaRecorder(frames, { mimeType: mime }) : new MediaRecorder(frames)
   const chunks: Blob[] = []
   const done = new Promise<Blob>((resolve, reject) => {
@@ -681,12 +725,13 @@ async function renderRealtimePicture(opts: {
     recorder.onerror = () => reject(new Error('Picture recorder failed'))
   })
 
-  const started = audioCtx.currentTime
+  const clockStart = audioCtx ? audioCtx.currentTime : performance.now() / 1000
+  const now = () => (audioCtx ? audioCtx.currentTime : performance.now() / 1000)
   recorder.start(250)
-  source.start()
+  source?.start()
   await new Promise<void>((resolve) => {
     const tick = () => {
-      const t = audioCtx.currentTime - started
+      const t = now() - clockStart
       const allEls = new Map([...hostEls, ...guestEls, ...overlayEls])
       composeLayers(
         ctx,
@@ -709,7 +754,7 @@ async function renderRealtimePicture(opts: {
   guestEls.forEach((el) => el.pause())
   overlayEls.forEach((el) => el.pause())
   if (recorder.state !== 'inactive') recorder.stop()
-  await audioCtx.close().catch(() => {})
+  await audioCtx?.close().catch(() => {})
   const release = (el: HTMLVideoElement) => {
     el.removeAttribute('src')
     el.load()
@@ -717,7 +762,9 @@ async function renderRealtimePicture(opts: {
   hostEls.forEach(release)
   guestEls.forEach(release)
   overlayEls.forEach(release)
-  return done
+  const blob = await done
+  const ext: 'mp4' | 'webm' = /mp4/.test(blob.type) ? 'mp4' : 'webm'
+  return { blob, ext }
 }
 
 export async function renderPictureMix(opts: {
@@ -737,7 +784,7 @@ export async function renderPictureMix(opts: {
   if (typeof VideoEncoder !== 'undefined' && typeof AudioEncoder !== 'undefined') {
     try {
       opts.onProgress?.(0, { realtime: false })
-      const blob = await renderFastPicture(normalized)
+      const { blob } = await renderFastPicture(normalized)
       return { blob, realtime: false }
     } catch {
       /* WebCodecs/mux failed — last resort is the old 1× capture */
@@ -745,5 +792,89 @@ export async function renderPictureMix(opts: {
   }
 
   opts.onProgress?.(0, { realtime: true })
-  return { blob: await renderRealtimePicture(normalized), realtime: true }
+  const { blob } = await renderRealtimePicture(normalized)
+  return { blob, realtime: true }
+}
+
+/** A downloadable video deliverable: canvas picture + the caller-supplied master mix, muxed and A/V-aligned. */
+export type CameraDeliverable = {
+  blob: Blob
+  /** 'mp4' or 'webm' — use for the download filename and the <a download>. */
+  ext: 'mp4' | 'webm'
+  mime: string
+  /** True only if the realtime MediaRecorder fallback ran (wall-clock 1×). */
+  realtime: boolean
+  /** A safe default filename, e.g. "podcast-program.mp4". */
+  filename: string
+}
+
+/**
+ * Render the camera timeline against a caller-provided **mixed master audio** and mux both into a
+ * single downloadable video file. MP4 (H.264/AAC) is preferred; WebM (VP9/Opus) is the fallback.
+ *
+ * Fast path: an `AudioBuffer` master mix encodes faster-than-realtime via WebCodecs/mediabunny.
+ * A live `MediaStream` master mix (or a browser without WebCodecs) records at 1× via MediaRecorder;
+ * pass `durationSec` so the recorder knows when to stop.
+ *
+ * The caller (audio-editor) wires the returned blob to a "Download MP4" button:
+ *   const out = await renderCameraDeliverable({ host, guest, master, mode })
+ *   const a = document.createElement('a'); a.href = URL.createObjectURL(out.blob); a.download = out.filename; a.click()
+ */
+export async function renderCameraDeliverable(opts: {
+  /** Base A-roll camera clip(s). */
+  host: CameraClip | CameraClip[] | null
+  /** Guest camera clip(s) — used for PIP in 'pip' mode. */
+  guest: CameraClip | CameraClip[] | null
+  /** The finished, mixed program audio. AudioBuffer = fast/offline; MediaStream = live 1× capture. */
+  master: AudioBuffer | MediaStream
+  mode?: PictureMode
+  /** Program length when master is a MediaStream (seconds). Ignored for AudioBuffer. */
+  durationSec?: number
+  /** Filename stem; extension is appended based on the chosen container. Default 'podcast-program'. */
+  fileStem?: string
+  onProgress?: (ratio: number, info?: { realtime: boolean }) => void
+}): Promise<CameraDeliverable> {
+  const host = asClipList(opts.host)
+  const guest = asClipList(opts.guest)
+  if (host.length === 0 && guest.length === 0) {
+    throw new Error('Need at least one camera file for a video deliverable')
+  }
+  const mode: PictureMode = opts.mode || (guest.length > 0 ? 'pip' : 'a-roll')
+  const stem = (opts.fileStem || 'podcast-program').replace(/[^\w.-]+/g, '-')
+  const masterIsBuffer = !(opts.master instanceof MediaStream)
+
+  // Fast, deterministic path — only possible with an AudioBuffer master and WebCodecs.
+  if (
+    masterIsBuffer &&
+    typeof VideoEncoder !== 'undefined' &&
+    typeof AudioEncoder !== 'undefined'
+  ) {
+    try {
+      opts.onProgress?.(0, { realtime: false })
+      const { blob, ext } = await renderFastPicture({
+        mode,
+        host,
+        guest,
+        audio: opts.master as AudioBuffer,
+        prefer: 'mp4',
+        onProgress: opts.onProgress,
+      })
+      return { blob, ext, mime: blob.type, realtime: false, filename: `${stem}.${ext}` }
+    } catch {
+      /* WebCodecs/mux failed — fall through to the realtime recorder */
+    }
+  }
+
+  opts.onProgress?.(0, { realtime: true })
+  const duration = masterIsBuffer ? (opts.master as AudioBuffer).duration : opts.durationSec
+  const { blob, ext } = await renderRealtimePicture({
+    mode,
+    host,
+    guest,
+    audio: opts.master,
+    duration,
+    prefer: 'mp4',
+    onProgress: opts.onProgress,
+  })
+  return { blob, ext, mime: blob.type, realtime: true, filename: `${stem}.${ext}` }
 }

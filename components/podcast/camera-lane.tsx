@@ -35,6 +35,8 @@ type Props = {
   onLinkedChange?: (linked: boolean) => void
   drift?: AvDrift | null
   broken?: boolean
+  /** One-click "snap to sync": nudge the lagging picture to the audio in-point (or vice-versa). */
+  onSnapSync?: () => void
   onSplit?: () => void
   onCutHole?: (ripple: boolean) => void
   onTrimEdge?: (edge: 'in' | 'out') => void
@@ -66,6 +68,7 @@ export function CameraLane({
   onLinkedChange,
   drift,
   broken,
+  onSnapSync,
   onSplit,
   onCutHole,
   onTrimEdge,
@@ -176,11 +179,24 @@ export function CameraLane({
             </button>
           )}
           {showBroken && drift && (
-            <span
-              className="text-[10px] font-mono text-[#FFB86B]"
-              title={`Audio in-point ${formatClock(drift.audioOffset)} vs picture ${formatClock(drift.cameraOffset)}`}
-            >
-              Broken sync · {formatDrift(drift.seconds)}
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="text-[10px] font-mono text-[#FFB86B]"
+                title={`Audio in-point ${formatClock(drift.audioOffset)} vs picture ${formatClock(drift.cameraOffset)}`}
+              >
+                Broken sync · {formatDrift(drift.seconds)}
+              </span>
+              {onSnapSync && (
+                <button
+                  type="button"
+                  className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-[#FFB86B]/50 text-[#FFB86B]"
+                  onClick={onSnapSync}
+                  disabled={disabled}
+                  title={`Slide the picture ${formatDrift(drift.seconds)} to the audio in-point (${formatClock(drift.audioOffset)}).`}
+                >
+                  Snap to sync
+                </button>
+              )}
             </span>
           )}
         </div>

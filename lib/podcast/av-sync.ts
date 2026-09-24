@@ -110,3 +110,63 @@ export function formatDrift(seconds: number) {
   if (ms < 1000) return `${ms} ms`
   return `${seconds.toFixed(2)}s`
 }
+
+// ---------------------------------------------------------------------------
+// Auto-snap. Detection lives in avDriftForPerson; this brings A/V back within
+// AV_SYNC_SLOP by nudging the picture clip (default) or the linked audio.
+// ---------------------------------------------------------------------------
+
+export type SnapTarget = 'camera' | 'audio'
+
+/**
+ * The signed delta that aligns the drifted lane to its mate. Positive means the
+ * target lane's in-point must move later. Returns 0 when already within slop.
+ *
+ * - target 'camera' (default): slide the picture to the audio in-point.
+ * - target 'audio': slide the listen-take audio to the picture in-point.
+ */
+export function snapDelta(drift: AvDrift | null, target: SnapTarget = 'camera'): number {
+  if (!drift || drift.seconds <= AV_SYNC_SLOP) return 0
+  return target === 'camera'
+    ? drift.audioOffset - drift.cameraOffset
+    : drift.cameraOffset - drift.audioOffset
+}
+
+/**
+ * Snap the drifted picture to the audio in-point. Moves every linked camera clip for the
+ * person that sits at the drifted picture offset by the detected delta. Detection and the
+ * manual Slip/nudge stay untouched. No-op when within slop.
+ */
+export function snapCamerasToAudio(
+  cameras: CameraClip[],
+  drift: AvDrift | null,
+): CameraClip[] {
+  const delta = snapDelta(drift, 'camera')
+  if (!drift || Math.abs(delta) < 0.0005) return cameras
+  return cameras.map((c) => {
+    if (c.personId !== drift.personId || !isLinkedPicture(c)) return c
+    return Math.abs(c.offset - drift.cameraOffset) < 0.08
+      ? { ...c, offset: Math.max(0, c.offset + delta) }
+      : c
+  })
+}
+
+/**
+ * Snap the drifted listen-take audio to the picture in-point instead. Moves clips of the
+ * person's listen lane that sit at the drifted audio offset by the detected delta.
+ */
+export function snapAudioToCameras(
+  tracks: StudioTrack[],
+  drift: AvDrift | null,
+): StudioTrack[] {
+  const delta = snapDelta(drift, 'audio')
+  if (!drift || Math.abs(delta) < 0.0005) return tracks
+  return tracks.map((t) => {
+    if (t.personId !== drift.personId || !isVoiceRole(t.role) || !t.listen || !t.buffer) return t
+    const clips = clipsOf(t).map((c) =>
+      Math.abs(c.offset - drift.audioOffset) < 0.08 ? { ...c, offset: Math.max(0, c.offset + delta) } : c,
+    )
+    const offset = clips[0]?.offset ?? t.offset
+    return { ...t, clips, offset }
+  })
+}
