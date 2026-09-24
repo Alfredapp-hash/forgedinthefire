@@ -1,5 +1,6 @@
 import type { BrowserContext, Page, Route } from '@playwright/test'
 import { test, expect, json, gotoHarness, filterConsole } from './fixtures'
+import { takeExt } from '../lib/podcast/upload/guest-take-manifest'
 
 const SESSION = {
   id: 'invite-e2e',
@@ -76,37 +77,49 @@ async function mockGuestBackend(page: Page, context: BrowserContext) {
     return json(route, { ok: true })
   })
 
-  // Guest backup upload: sign → PUT to "storage" → finalize.
+  // Guest backup upload (chunked, lib/podcast/upload/guest-backup.ts):
+  //   POST take/chunks {action:'start'} → {takeId}; {action:'sign'} → signed PUT URLs; PUT each part;
+  //   {action:'finish'} → {missing: []}. The start step mirrors the real route's allowlist (takeExt).
   const uploads: { kind: string; bytes: number; mime: string }[] = []
+  const takes = new Map<string, { kind: string; mime: string }>()
   await page.route(/\/e2e-storage\//, async (route) => {
     const req = route.request()
     uploads.push({ kind: 'put', bytes: req.postDataBuffer()?.length || 0, mime: req.headers()['content-type'] || '' })
-    await route.fulfill({ status: 200, body: '' })
+    await route.fulfill({ status: 200, body: '{}' })
   })
-  await page.route(/\/api\/studio\/guest\/[^/]+\/take/, async (route) => {
+  await page.route(/\/api\/studio\/guest\/[^/]+\/take\/chunks/, async (route) => {
     const req = route.request()
-    const body = req.postDataJSON() as { kind?: string; mime?: string; size?: number }
-    posted.push({ kind: `take:${req.method()}`, body })
-    if (req.method() === 'POST') {
-      // Mirror the real route's allowlist (app/api/studio/guest/[token]/take/route.ts AUDIO_TYPES / VIDEO_TYPES).
-      const allowed = body.kind === 'camera' ? ['video/webm', 'video/mp4'] : ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/x-m4a']
-      const base = String(body.mime || '').split(';')[0].trim().toLowerCase()
-      if (!allowed.includes(base)) {
+    const body = req.postDataJSON() as { action?: string; kind?: string; mime?: string; takeId?: string; from?: number; count?: number; chunks?: number }
+    posted.push({ kind: `chunks:${body.action}`, body })
+    if (body.action === 'start') {
+      const kind = body.kind === 'camera' ? 'camera' : 'audio'
+      const ext = takeExt(kind, String(body.mime || ''))
+      if (!ext) {
         return json(
           route,
-          { error: body.kind === 'camera' ? 'Camera backup must be WebM or MP4 video' : 'Take must be WebM, Ogg, or MP4 audio' },
+          { error: kind === 'camera' ? 'Camera backup must be WebM or MP4 video' : 'Backup must be WebM, Ogg, MP4 or WAV audio' },
           400,
         )
       }
-      const path = `guest/e2e/${body.kind || 'audio'}-${Date.now()}.webm`
-      return json(route, {
-        signedUrl: `${new URL(req.url()).origin}/e2e-storage/${path}`,
-        path,
-        publicUrl: `https://storage.example/${path}`,
-        mime: body.mime,
-      })
+      const takeId = `00000000-0000-4000-8000-${String(takes.size + 1).padStart(12, '0')}`
+      takes.set(takeId, { kind, mime: String(body.mime) })
+      return json(route, { takeId, ext, mime: body.mime, chunkMaxBytes: 50 << 20, takeMaxBytes: 2 << 30, timesliceMs: 10_000 })
     }
-    return json(route, { takeReady: body.kind !== 'camera', cameraReady: body.kind === 'camera' })
+    if (body.action === 'sign') {
+      const from = Number(body.from || 0)
+      const origin = new URL(req.url()).origin
+      const urls = Array.from({ length: Math.max(1, Number(body.count || 1)) }, (_, i) => ({
+        index: from + i,
+        path: `guest-takes/e2e/${body.takeId}/${from + i}`,
+        signedUrl: `${origin}/e2e-storage/${body.takeId}/${from + i}`,
+      }))
+      return json(route, { urls })
+    }
+    if (body.action === 'finish') {
+      const kind = takes.get(String(body.takeId))?.kind
+      return json(route, { takeReady: kind === 'audio', cameraReady: kind === 'camera', missing: [] })
+    }
+    return json(route, { error: 'unknown action' }, 400)
   })
 
   await page.route(/\/api\/studio\/guest\/[^/?]+(\?.*)?$/, async (route: Route) => {
@@ -149,11 +162,8 @@ async function joinBooth(page: Page) {
   await expect(page.getByText('You are connected. The host can hear you.')).toBeVisible({ timeout: 30_000 })
 }
 
-/** BUG-guest-close: guest-portal.tsx booth effect cleanup stops the headphone mix teardown() already stopped. */
-const DOUBLE_CLOSE = /Cannot close a closed AudioContext/
-
 test.describe('guest booth (/dev/guest)', () => {
-  test.use({ allowPageErrors: [DOUBLE_CLOSE] })
+  test.use({ allowPageErrors: [] })
 
   test('consent → lobby → join (mocked signaling) → connected → Leave', async ({ page, context, diag }) => {
     const backend = await mockGuestBackend(page, context)
@@ -201,7 +211,10 @@ test.describe('guest booth (/dev/guest)', () => {
 
     await recordOnOff(page, backend)
     await expect
-      .poll(() => backend.posted.find((p) => p.kind === 'take:POST')?.body.size, { message: 'guest requested an upload' })
+      .poll(() => backend.posted.some((p) => p.kind === 'chunks:start'), { message: 'guest started a backup upload' })
+      .toBe(true)
+    await expect
+      .poll(() => backend.uploads.reduce((n, u) => n + u.bytes, 0), { message: 'guest uploaded backup bytes' })
       .toBeGreaterThan(1000)
 
     backend.hostSends('hangup')
@@ -211,23 +224,37 @@ test.describe('guest booth (/dev/guest)', () => {
     await page.waitForTimeout(1500) // let teardown promises settle so late pageerrors are caught
   })
 
-  // BUG-guest-upload: the booth records with the AudioWorklet path (lib/podcast/worklet-capture.ts → WAV,
-  // audio/wav) but the take route only accepts webm/ogg/mp4 → 400 "Take must be WebM, Ogg, or MP4 audio".
-  test('KNOWN BUG: guest audio backup is accepted by the take route', async ({ page, context }) => {
-    test.fail(!process.env.E2E_SHOW_KNOWN_BUGS, 'guest take is audio/wav; /api/studio/guest/[token]/take rejects it (400)')
+  test('guest audio backup is uploaded in parts and finished', async ({ page, context }) => {
     const backend = await mockGuestBackend(page, context)
     await gotoHarness(page, '/dev/guest')
     await joinBooth(page)
     await recordOnOff(page, backend)
-    await expect(page.getByText('Your audio backup was sent privately to the host.')).toBeVisible({ timeout: 15_000 })
-    expect(backend.uploads.length).toBe(1)
+    await expect(page.getByText('Audio backup: sent privately to the host ✓')).toBeVisible({ timeout: 20_000 })
+    expect(backend.uploads.length).toBeGreaterThanOrEqual(1)
+    expect(backend.posted.some((p) => p.kind === 'chunks:finish')).toBe(true)
+  })
+
+  // Was BUG-guest-upload: with no MediaRecorder the booth records WAV (AudioWorklet); the take route
+  // used to reject audio/wav. The allowlist (takeExt) now accepts it.
+  test('WAV fallback backup (no MediaRecorder) is accepted and uploaded', async ({ page, context }) => {
+    await page.addInitScript(() => {
+      delete (window as unknown as { MediaRecorder?: unknown }).MediaRecorder
+    })
+    const backend = await mockGuestBackend(page, context)
+    await gotoHarness(page, '/dev/guest')
+    await joinBooth(page)
+    await recordOnOff(page, backend)
+    await expect(page.getByText('Audio backup: sent privately to the host ✓')).toBeVisible({ timeout: 20_000 })
+    const start = backend.posted.find((p) => p.kind === 'chunks:start')
+    expect(String(start?.body.mime)).toBe('audio/wav')
+    expect(backend.uploads.some((u) => u.mime === 'audio/wav' && u.bytes > 1000)).toBe(true)
   })
 
   test.describe('strict page errors', () => {
     test.use({ allowPageErrors: [] })
 
-    test('KNOWN BUG: Leave raises no uncaught AudioContext error', async ({ page, context }) => {
-      test.fail(!process.env.E2E_SHOW_KNOWN_BUGS, 'InvalidStateError: Cannot close a closed AudioContext (guest-cue stop() called twice)')
+    // Was BUG-guest-close: guest-cue stop() is idempotent and never closes a closed AudioContext.
+    test('Leave raises no uncaught AudioContext error', async ({ page, context }) => {
       await mockGuestBackend(page, context)
       await gotoHarness(page, '/dev/guest')
       await joinBooth(page)

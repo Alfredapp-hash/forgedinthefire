@@ -27,15 +27,24 @@ async function openStudio(page: Page, episode: string) {
 }
 
 async function recordTake(page: Page, seconds: number) {
-  // Preroll 0 so the take is exactly what we roll.
-  await page.locator('label', { hasText: 'Preroll' }).locator('select').selectOption('0')
-  await page.getByRole('button', { name: 'Arm', exact: true }).first().click()
+  // Lead-in (preroll) 0 so the take is exactly what we roll. It lives under "Advanced tools".
+  const advanced = page.getByRole('checkbox', { name: 'Advanced tools' })
+  if (!(await advanced.isChecked())) await advanced.check()
+  await page.locator('label', { hasText: 'Lead-in' }).locator('select').selectOption('0')
+  // Host take 1 is armed by default ("Record on Host · take 1", pressed); make sure it still is.
+  const arm = page.getByRole('button', { name: 'Record on Host · take 1' })
+  if ((await arm.getAttribute('aria-pressed')) !== 'true') await arm.click()
   await page.getByRole('button', { name: 'Record new take' }).click()
-  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Stop recording', exact: true })).toBeVisible()
   await page.waitForTimeout(seconds * 1000)
-  await page.getByRole('button', { name: 'Stop', exact: true }).click()
+  await page.getByRole('button', { name: 'Stop recording', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Record new take' })).toBeVisible()
   await expect(clips(page).first()).toBeVisible({ timeout: 30_000 })
+}
+
+/** Guided layout: 1 Set up · 2 Record · 3 Edit · 4 Publish. */
+async function goStep(page: Page, step: 'Set up' | 'Record' | 'Edit' | 'Publish') {
+  await page.getByRole('navigation', { name: 'Production steps' }).getByRole('button', { name: new RegExp(`${step}$`) }).click()
 }
 
 function consoleReport(diag: Diagnostics) {
@@ -60,7 +69,8 @@ test.describe('production room (/dev/studio)', () => {
     expect(before).toBeGreaterThanOrEqual(1)
 
     // --- rewind, play ~1 s, pause (playhead lands inside the take) ---
-    await page.getByRole('button', { name: '5s', exact: true }).first().click() // ◀ 5 s → 0:00
+    await goStep(page, 'Edit')
+    await page.getByRole('button', { name: 'Back 5 seconds' }).click() // ◀ 5 s → 0:00
     await page.getByRole('button', { name: 'Play mix' }).click()
     await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Pause', exact: true }).click()
@@ -78,7 +88,8 @@ test.describe('production room (/dev/studio)', () => {
 
     // --- export WAV → download ---
     const downloadPromise = page.waitForEvent('download', { timeout: 60_000 })
-    await page.getByRole('button', { name: 'Save mix WAV' }).click()
+    await goStep(page, 'Publish')
+    await page.getByRole('button', { name: 'Save as WAV instead' }).click()
     const download = await downloadPromise
     const file = await download.path()
     const size = (await stat(file)).size
@@ -88,7 +99,7 @@ test.describe('production room (/dev/studio)', () => {
     const exported = await page.evaluate(() => window.__e2e?.exports ?? [])
     expect(exported.length).toBe(1)
     expect(exported[0].durationSeconds).toBeGreaterThan(1.5)
-    await expect(page.getByText('Saved WAV mix to episode')).toBeVisible()
+    await expect(page.getByText(/Saved WAV mix \(.*\) to the episode/)).toBeVisible()
 
     // --- autosave → reload → recovery banner ---
     await page.waitForTimeout(3500) // autosave debounce is 1.6 s
@@ -109,6 +120,8 @@ test.describe('production room (/dev/studio)', () => {
     await recordTake(page, 3)
     await expect(page.getByText(/Take at \d/)).toBeVisible({ timeout: 30_000 })
 
+    // Stems live on Publish under "Advanced tools" (recordTake turned Advanced on).
+    await goStep(page, 'Publish')
     const downloadPromise = page.waitForEvent('download', { timeout: 90_000 })
     await page.getByRole('button', { name: 'Download stems zip' }).click()
     const download = await downloadPromise
@@ -121,7 +134,8 @@ test.describe('production room (/dev/studio)', () => {
     await page.waitForTimeout(3500)
     await page.reload({ waitUntil: 'load' })
     await expect(page.getByText(/Recover \d+ take/)).toBeVisible({ timeout: 30_000 })
-    await page.getByRole('button', { name: 'Discard saved' }).click()
+    page.once('dialog', (dialog) => void dialog.accept()) // permanent delete always asks
+    await page.getByRole('button', { name: 'Delete saved takes…' }).click()
     await expect(page.getByText(/Recover \d+ take/)).toHaveCount(0)
     await page.waitForTimeout(1000)
     await page.reload({ waitUntil: 'load' })
@@ -130,10 +144,30 @@ test.describe('production room (/dev/studio)', () => {
     await expect(page.getByText(/Recover \d+ take/), 'discarded session must not come back').toHaveCount(0)
   })
 
-  // BUG-delete-whole-take: lib/podcast/edit.ts deleteRange → withClips(track, []) → clipsOf() treats an
-  // empty clip list on a track with a buffer as one full-length clip, so the take comes back.
-  test('KNOWN BUG: Delete over the whole take removes it', async ({ page }) => {
-    test.fail(!process.env.E2E_SHOW_KNOWN_BUGS, 'deleteRange over the only clip resurrects the full take')
+  test('crash mid-take: the take journal offers the audio back after reload', async ({ page }) => {
+    await openStudio(page, `crash-${Date.now()}`)
+    const advanced = page.getByRole('checkbox', { name: 'Advanced tools' })
+    if (!(await advanced.isChecked())) await advanced.check()
+    await page.locator('label', { hasText: 'Lead-in' }).locator('select').selectOption('0')
+    await page.getByRole('button', { name: 'Record new take' }).click()
+    await expect(page.getByRole('button', { name: 'Stop recording', exact: true })).toBeVisible()
+    await page.waitForTimeout(4500) // journal persists ~1 s chunks, batched every ~1.5 s
+    // "Crash": the tab goes away without Stop, so the take never reaches the session autosave.
+    await page.reload({ waitUntil: 'load' })
+    await expect(page.getByText(/We found 1 unfinished recording/)).toBeVisible({ timeout: 30_000 })
+    await page.getByRole('alert').filter({ hasText: 'unfinished recording' }).getByRole('button', { name: 'Restore' }).click()
+    await expect(page.getByText(/Restored 1 unfinished recording/)).toBeVisible({ timeout: 30_000 })
+    await expect(clips(page).first()).toBeVisible()
+    // Once the session autosave holds it, the journal copy is dropped: no offer after another reload.
+    await page.waitForTimeout(3500)
+    await page.reload({ waitUntil: 'load' })
+    await expect(page.getByRole('button', { name: 'Record new take' })).toBeEnabled()
+    await page.waitForTimeout(2000)
+    await expect(page.getByText(/unfinished recording/)).toHaveCount(0)
+  })
+
+  // Was BUG-delete-whole-take: an emptied lane is now marked noClips so the take does not come back.
+  test('Delete over the whole take removes it', async ({ page }) => {
     await openStudio(page, `del-${Date.now()}`)
     await recordTake(page, 3)
     await expect(page.getByText(/Take at \d/)).toBeVisible({ timeout: 30_000 })
@@ -141,7 +175,7 @@ test.describe('production room (/dev/studio)', () => {
     await expect(page.getByText(/sel 0:00–0:0\d/)).toBeVisible()
     await blur(page)
     await page.keyboard.press('Delete')
-    await expect(page.getByText('Cut hole in lane')).toBeVisible()
+    await expect(page.getByText('Removed the range, left silence')).toBeVisible()
     await expect.poll(() => clips(page).count(), { timeout: 5_000 }).toBe(0)
   })
 })

@@ -3682,13 +3682,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 onChange={(e) => setLiveCleanupChoice(e.target.checked)}
               />
               Clean-up while recording (use if no headphones)
-              <InfoTip label="About clean-up while recording">
+            </label>
+            <InfoTip label="About clean-up while recording">
                 Off: the microphone is recorded exactly as it sounds, and noise clean-up happens after the take,
                 where you can undo it. That sounds best when everyone wears headphones. On: the browser removes echo
                 and background noise and evens out the level as you record — use it when the mix plays on speakers.
-                {liveCleanupChoice === null ? ' (Set automatically from the headphones option above.)' : ''}
-              </InfoTip>
-            </label>
+              {liveCleanupChoice === null ? ' (Set automatically from the headphones option above.)' : ''}
+            </InfoTip>
             {mics.length > 0 && (
               <label className="inline-flex items-center gap-2">
                 Default microphone

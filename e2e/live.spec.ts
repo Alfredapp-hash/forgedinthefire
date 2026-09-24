@@ -43,7 +43,7 @@ test.describe('live control room (/dev/live)', () => {
     await mockLive(page)
     await gotoHarness(page, '/dev/live')
     await expect(page.getByText('Program', { exact: true }).first()).toBeVisible()
-    await expect(page.getByLabel('Program preview')).toBeVisible()
+    await expect(page.getByRole('img', { name: /Live monitor: Program/ })).toBeVisible()
     await expect(page.getByText('Not configured — set LIVE_WHIP_URL on Netlify')).toBeVisible()
     await expect(page.getByText('No live shows yet. Schedule one →')).toBeVisible()
     await expect(goLive(page)).toBeDisabled()
@@ -57,17 +57,19 @@ test.describe('live control room (/dev/live)', () => {
     await mockLive(page, { sessions: [SCHEDULED] })
     await gotoHarness(page, '/dev/live')
     await expect(page.getByText(/Active:\s*E2E Live Show/)).toBeVisible()
-    await expect(page.getByText(/No playback URL/)).toBeVisible()
+    // Shown in the go-live checklist and beside the playback settings.
+    await expect(page.getByText(/No playback URL/).first()).toBeVisible()
     await page.getByRole('button', { name: 'Open camera + mic' }).click()
     await expect(page.getByRole('button', { name: 'Re-open devices' })).toBeVisible({ timeout: 20_000 })
     // Everything but the provider is ready → the provider panel is the only reason shown.
     await expect(goLive(page)).toBeDisabled()
     await expect(page.getByText('Not configured — set LIVE_WHIP_URL on Netlify')).toBeVisible()
 
-    await page.getByRole('button', { name: 'SAFE SLATE' }).click()
-    await expect(page.getByText('Safe slate', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: /^SAFE SLATE/ }).click()
+    // The on-air badge (the help text also says "Safe slate").
+    await expect(page.locator('span', { hasText: /^Safe slate$/ })).toBeVisible()
     await page.getByRole('button', { name: /Release safe slate/ }).click()
-    await expect(page.getByRole('button', { name: 'SAFE SLATE' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /^SAFE SLATE/ })).toBeVisible()
     await page.getByRole('button', { name: 'Close', exact: true }).click()
     await page.waitForTimeout(1000)
   })
@@ -75,7 +77,8 @@ test.describe('live control room (/dev/live)', () => {
   test('provider check failing shows an error instead of crashing', async ({ page }) => {
     await mockLive(page, { provider: null })
     await gotoHarness(page, '/dev/live')
-    await expect(page.getByText('Provider check failed')).toBeVisible()
+    await expect(page.getByText('Provider check failed', { exact: true })).toBeVisible()
+    await expect(page.getByText(/Live provider check failed/)).toBeVisible()
     await expect(goLive(page)).toBeDisabled()
   })
 })
