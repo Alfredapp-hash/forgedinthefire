@@ -42,22 +42,9 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
   const router = useRouter()
   const supabase = createClient()
   const emailConfigured = isEmailConfigured()
-  
-  // Handle missing Supabase configuration
-  if (!supabase) {
-    return (
-      <div className="max-w-4xl mx-auto p-8">
-        <div className="bg-[#53D6FF]/10 border border-[#53D6FF]/30 rounded-lg p-6">
-          <h2 className="text-[#8DEBFF] font-medium mb-2">Database Not Connected</h2>
-          <p className="text-[#8DEBFF]/80 text-sm">
-            Supabase environment variables are missing. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.
-          </p>
-        </div>
-      </div>
-    )
-  }
 
   const loadNewsletter = useCallback(async () => {
+    if (!supabase) return
     const { id } = await params
     
     // Load newsletter
@@ -101,6 +88,20 @@ export default function NewsletterDetailPage({ params }: NewsletterDetailPagePro
   useEffect(() => {
     loadNewsletter()
   }, [loadNewsletter])
+
+  // Rules of Hooks: guard after all hooks are declared, never before them.
+  if (!supabase) {
+    return (
+      <div className="max-w-4xl mx-auto p-8">
+        <div className="bg-[#53D6FF]/10 border border-[#53D6FF]/30 rounded-lg p-6">
+          <h2 className="text-[#8DEBFF] font-medium mb-2">Database Not Connected</h2>
+          <p className="text-[#8DEBFF]/80 text-sm">
+            Supabase environment variables are missing. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   const handleSave = async () => {
     if (!newsletter) return
