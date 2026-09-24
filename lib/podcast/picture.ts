@@ -1,8 +1,27 @@
 /** Local canvas A-roll / Host+Guest PIP. Does not write episode.audio_url or the RSS mix. */
 
-import type { CameraClip } from '@/lib/podcast/camera'
+import {
+  cameraClipEnd,
+  cameraKind,
+  cameraLayer,
+  camerasAtTime,
+  cameraSourceTime,
+  clipOpacity,
+  clipTranslate,
+  cssCameraFilter,
+  isGraphicClip,
+  normalizeCameraClip,
+  type CameraClip,
+} from '@/lib/podcast/camera'
 
 export type PictureMode = 'a-roll' | 'pip'
+
+/** One-click Program layout — not an OBS scene graph. */
+export type PictureScene = 'host' | 'guest' | 'pip'
+
+export function sceneFromPictureMode(mode: PictureMode): PictureScene {
+  return mode === 'pip' ? 'pip' : 'host'
+}
 
 export type PictureRenderResult = {
   blob: Blob
@@ -10,13 +29,23 @@ export type PictureRenderResult = {
   realtime: boolean
 }
 
-const WIDTH = 1280
-const HEIGHT = 720
+export const PICTURE_WIDTH = 1280
+export const PICTURE_HEIGHT = 720
+const WIDTH = PICTURE_WIDTH
+const HEIGHT = PICTURE_HEIGHT
 const FPS = 30
 const FRAME = 1 / FPS
 
+export type TimedPaint = {
+  clip: CameraClip
+  source: PaintSource | null
+  opacity: number
+  x: number
+  y: number
+}
+
 type FramePainter = {
-  at: (sessionTime: number) => Promise<PaintSource | null>
+  at: (sessionTime: number) => Promise<TimedPaint[]>
   close: () => void
 }
 
@@ -116,12 +145,58 @@ function paintCover(
   drawCover(ctx, source as HTMLVideoElement, x, y, w, h)
 }
 
-function clipActive(clip: CameraClip | null, t: number) {
-  return Boolean(clip && t >= clip.offset && t <= clip.offset + clip.duration)
+function asClipList(clips: CameraClip | CameraClip[] | null | undefined): CameraClip[] {
+  if (!clips) return []
+  return (Array.isArray(clips) ? clips : [clips]).map(normalizeCameraClip)
+}
+
+function pictureLayers(host: CameraClip[], guest: CameraClip[]) {
+  const seen = new Set<string>()
+  const overlays: CameraClip[] = []
+  for (const clip of [...host, ...guest]) {
+    if (cameraLayer(clip) !== 'overlay' || seen.has(clip.id)) continue
+    seen.add(clip.id)
+    overlays.push(clip)
+  }
+  return {
+    host: host.filter((c) => cameraLayer(c) === 'base'),
+    guest: guest.filter((c) => cameraLayer(c) === 'base'),
+    overlays,
+  }
+}
+
+function timedFromVideos(
+  clips: CameraClip[],
+  els: Map<string, HTMLVideoElement>,
+  t: number,
+): TimedPaint[] {
+  const painted: TimedPaint[] = []
+  for (const clip of camerasAtTime(clips, t)) {
+    const opacity = clipOpacity(clip, t)
+    if (opacity <= 0) continue
+    const { x, y } = clipTranslate(clip, t)
+    if (isGraphicClip(clip) || !clip.url) {
+      painted.push({ clip, source: null, opacity, x, y })
+      continue
+    }
+    const el = els.get(clip.url)
+    if (el) void seekVideo(el, sourceTime(clip, t))
+    painted.push({ clip, source: el || null, opacity, x, y })
+  }
+  return painted
 }
 
 function sourceTime(clip: CameraClip, sessionTime: number) {
-  return sessionTime - clip.offset + clip.trimStart
+  return cameraSourceTime(clip, sessionTime)
+}
+
+function pictureSpan(audioDur: number, host: CameraClip[], guest: CameraClip[]) {
+  return Math.max(
+    audioDur,
+    ...host.map((c) => cameraClipEnd(c)),
+    ...guest.map((c) => cameraClipEnd(c)),
+    0.5,
+  )
 }
 
 function yieldUi() {
@@ -130,8 +205,13 @@ function yieldUi() {
   })
 }
 
-async function openDecodedPainter(clip: CameraClip): Promise<FramePainter> {
-  const blob = await fetch(clip.url).then((res) => {
+type SourcePainter = {
+  atSource: (sourceSec: number) => Promise<PaintSource | null>
+  close: () => void
+}
+
+async function openDecodedSource(url: string): Promise<SourcePainter> {
+  const blob = await fetch(url).then((res) => {
     if (!res.ok) throw new Error('camera fetch failed')
     return res.blob()
   })
@@ -148,9 +228,8 @@ async function openDecodedPainter(clip: CameraClip): Promise<FramePainter> {
   const sink = new mb.VideoSampleSink(track)
   let held: PaintSource | null = null
   return {
-    async at(sessionTime) {
-      if (!clipActive(clip, sessionTime)) return null
-      const t = sourceTime(clip, sessionTime)
+    async atSource(sourceSec) {
+      const t = Math.max(0, sourceSec)
       if (
         held &&
         'timestamp' in held &&
@@ -161,7 +240,7 @@ async function openDecodedPainter(clip: CameraClip): Promise<FramePainter> {
       }
       if (held && 'close' in held) held.close?.()
       held = null
-      const sample = await sink.getSample(Math.max(0, t))
+      const sample = await sink.getSample(t)
       if (!sample) return null
       held = sample
       return sample
@@ -174,12 +253,11 @@ async function openDecodedPainter(clip: CameraClip): Promise<FramePainter> {
   }
 }
 
-async function openSeekPainter(clip: CameraClip): Promise<FramePainter> {
-  const el = await loadVideo(clip.url, clip.trimStart)
+async function openSeekSource(url: string, startSec: number): Promise<SourcePainter> {
+  const el = await loadVideo(url, startSec)
   return {
-    async at(sessionTime) {
-      if (!clipActive(clip, sessionTime)) return null
-      await seekVideo(el, Math.max(0, sourceTime(clip, sessionTime)))
+    async atSource(sourceSec) {
+      await seekVideo(el, Math.max(0, sourceSec))
       return el
     },
     close() {
@@ -190,33 +268,240 @@ async function openSeekPainter(clip: CameraClip): Promise<FramePainter> {
   }
 }
 
-async function openPainter(clip: CameraClip | null): Promise<FramePainter | null> {
-  if (!clip) return null
+async function openSourcePainter(url: string, startSec: number): Promise<SourcePainter> {
   try {
-    return await openDecodedPainter(clip)
+    return await openDecodedSource(url)
   } catch {
-    return openSeekPainter(clip)
+    return openSeekSource(url, startSec)
   }
 }
 
-function composeFrame(
-  ctx: CanvasRenderingContext2D,
-  mode: PictureMode,
-  host: PaintSource | null,
-  guest: PaintSource | null,
-) {
+async function openClipSetPainter(clips: CameraClip[]): Promise<FramePainter | null> {
+  const live = clips.filter((c) => c.url || isGraphicClip(c))
+  if (live.length === 0) return null
+  const urls = [...new Set(live.map((c) => c.url).filter(Boolean))]
+  const sources = new Map<string, SourcePainter>()
+  for (const url of urls) {
+    const first = live.find((c) => c.url === url)!
+    sources.set(url, await openSourcePainter(url, cameraSourceTime(first, first.offset)))
+  }
+  return {
+    async at(sessionTime) {
+      const hits = camerasAtTime(live, sessionTime)
+      const painted: TimedPaint[] = []
+      for (const clip of hits) {
+        const opacity = clipOpacity(clip, sessionTime)
+        if (opacity <= 0) continue
+        const { x, y } = clipTranslate(clip, sessionTime)
+        if (isGraphicClip(clip) || !clip.url) {
+          painted.push({ clip, source: null, opacity, x, y })
+          continue
+        }
+        const painter = sources.get(clip.url)
+        if (!painter) continue
+        painted.push({
+          clip,
+          source: await painter.atSource(sourceTime(clip, sessionTime)),
+          opacity,
+          x,
+          y,
+        })
+      }
+      return painted
+    },
+    close() {
+      sources.forEach((p) => p.close())
+      sources.clear()
+    },
+  }
+}
+
+function paintTitle(ctx: CanvasRenderingContext2D, clip: CameraClip, w: number, h: number) {
+  const name = (clip.label || 'Title').slice(0, 80)
+  const sub = (clip.sublabel || '').slice(0, 80)
+  const pad = Math.round(h * 0.05)
+  const barH = sub ? Math.round(h * 0.122) : Math.round(h * 0.08)
+  const barW = Math.min(Math.round(w * 0.55), 640)
+  const y = h - pad - barH
+  ctx.fillStyle = 'rgba(5, 7, 10, 0.78)'
+  ctx.fillRect(pad, y, barW, barH)
+  ctx.fillStyle = '#53D6FF'
+  ctx.fillRect(pad, y, 4, barH)
+  ctx.fillStyle = '#F6FAFC'
+  ctx.font = `600 ${Math.round(h * 0.039)}px ui-sans-serif, system-ui, sans-serif`
+  ctx.fillText(name, pad + 18, y + (sub ? Math.round(barH * 0.42) : Math.round(barH * 0.66)), barW - 36)
+  if (sub) {
+    ctx.fillStyle = '#8DEBFF'
+    ctx.font = `400 ${Math.round(h * 0.022)}px ui-sans-serif, system-ui, sans-serif`
+    ctx.fillText(sub, pad + 18, y + Math.round(barH * 0.74), barW - 36)
+  }
+}
+
+function paintStinger(ctx: CanvasRenderingContext2D, clip: CameraClip, w: number, h: number) {
   ctx.fillStyle = '#05070A'
-  ctx.fillRect(0, 0, WIDTH, HEIGHT)
-  if (host) paintCover(ctx, host, 0, 0, WIDTH, HEIGHT)
-  else if (guest && mode === 'a-roll') paintCover(ctx, guest, 0, 0, WIDTH, HEIGHT)
-  if (mode === 'pip' && guest) {
+  ctx.fillRect(0, 0, w, h)
+  if ((clip.stingerStyle || 'black') !== 'title') return
+  const name = (clip.label || 'Title').slice(0, 80)
+  const sub = (clip.sublabel || '').slice(0, 80)
+  ctx.textAlign = 'center'
+  ctx.fillStyle = '#F6FAFC'
+  ctx.font = `700 ${Math.round(h * 0.078)}px ui-sans-serif, system-ui, sans-serif`
+  ctx.fillText(name, w / 2, h / 2 - (sub ? Math.round(h * 0.02) : 0), Math.round(w * 0.82))
+  if (sub) {
+    ctx.fillStyle = '#8DEBFF'
+    ctx.font = `400 ${Math.round(h * 0.03)}px ui-sans-serif, system-ui, sans-serif`
+    ctx.fillText(sub, w / 2, h / 2 + Math.round(h * 0.05), Math.round(w * 0.82))
+  }
+  ctx.textAlign = 'left'
+}
+
+function paintTimed(
+  ctx: CanvasRenderingContext2D,
+  layer: TimedPaint,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+) {
+  ctx.save()
+  ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity))
+  ctx.filter = cssCameraFilter(layer.clip.filter)
+  ctx.translate((layer.x || 0) * WIDTH, (layer.y || 0) * HEIGHT)
+  const kind = cameraKind(layer.clip)
+  if (kind === 'stinger') {
+    paintStinger(ctx, layer.clip, WIDTH, HEIGHT)
+  } else if (kind === 'title' || !layer.source) {
+    if (kind === 'title') paintTitle(ctx, layer.clip, WIDTH, HEIGHT)
+  } else {
+    paintCover(ctx, layer.source, x, y, w, h)
+  }
+  ctx.restore()
+}
+
+function paintStack(ctx: CanvasRenderingContext2D, stack: TimedPaint[], x: number, y: number, w: number, h: number) {
+  for (const layer of stack) {
+    if (isGraphicClip(layer.clip)) continue
+    paintTimed(ctx, layer, x, y, w, h)
+  }
+}
+
+function overlayRank(clip: CameraClip) {
+  const kind = cameraKind(clip)
+  if (kind === 'stinger') return 2
+  if (kind === 'title') return 1
+  return 0
+}
+
+export function splitPictureStacks(layers: TimedPaint[]) {
+  const base: TimedPaint[] = []
+  const overlays: TimedPaint[] = []
+  for (const layer of layers) {
+    if (cameraLayer(layer.clip) === 'overlay' || cameraKind(layer.clip) !== 'camera') overlays.push(layer)
+    else base.push(layer)
+  }
+  return { base, overlays }
+}
+
+function paintSceneLayout(
+  ctx: CanvasRenderingContext2D,
+  scene: PictureScene,
+  host: TimedPaint[],
+  guest: TimedPaint[],
+) {
+  if (scene === 'guest') {
+    if (guest.length) paintStack(ctx, guest, 0, 0, WIDTH, HEIGHT)
+    else if (host.length) paintStack(ctx, host, 0, 0, WIDTH, HEIGHT)
+    return
+  }
+  if (host.length) paintStack(ctx, host, 0, 0, WIDTH, HEIGHT)
+  else if (guest.length && scene === 'host') paintStack(ctx, guest, 0, 0, WIDTH, HEIGHT)
+  if (scene === 'pip' && guest.length) {
     const pipW = Math.round(WIDTH * 0.28)
     const pipH = Math.round(HEIGHT * 0.28)
     const pad = 24
     ctx.fillStyle = '#0C141C'
     ctx.fillRect(WIDTH - pipW - pad - 4, HEIGHT - pipH - pad - 4, pipW + 8, pipH + 8)
-    paintCover(ctx, guest, WIDTH - pipW - pad, HEIGHT - pipH - pad, pipW, pipH)
+    paintStack(ctx, guest, WIDTH - pipW - pad, HEIGHT - pipH - pad, pipW, pipH)
   }
+}
+
+function paintOverlayStack(ctx: CanvasRenderingContext2D, overlays: TimedPaint[]) {
+  const ordered = [...overlays].sort((a, b) => overlayRank(a.clip) - overlayRank(b.clip))
+  for (const layer of ordered) {
+    if (layer.opacity <= 0) continue
+    if (cameraKind(layer.clip) === 'stinger') {
+      paintTimed(ctx, layer, 0, 0, WIDTH, HEIGHT)
+      continue
+    }
+    if (cameraKind(layer.clip) === 'title') {
+      ctx.save()
+      ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity))
+      ctx.translate((layer.x || 0) * WIDTH, (layer.y || 0) * HEIGHT)
+      paintTitle(ctx, layer.clip, WIDTH, HEIGHT)
+      ctx.restore()
+      continue
+    }
+    if (layer.clip.overlayFit === 'pip') {
+      const pipW = Math.round(WIDTH * 0.28)
+      const pipH = Math.round(HEIGHT * 0.28)
+      const pad = 24
+      paintTimed(ctx, layer, pad, HEIGHT - pipH - pad, pipW, pipH)
+    } else {
+      paintTimed(ctx, layer, 0, 0, WIDTH, HEIGHT)
+    }
+  }
+}
+
+export function paintProgramFrame(
+  ctx: CanvasRenderingContext2D,
+  opts: {
+    mode?: PictureMode
+    scene?: PictureScene
+    fromScene?: PictureScene
+    /** 0 = fromScene, 1 = scene. Used for Fade to Program. */
+    mix?: number
+    host: TimedPaint[]
+    guest: TimedPaint[]
+    overlays?: TimedPaint[]
+    width?: number
+    height?: number
+  },
+) {
+  const width = opts.width || WIDTH
+  const height = opts.height || HEIGHT
+  const scene = opts.scene || sceneFromPictureMode(opts.mode || 'a-roll')
+  const mix = opts.mix == null ? 1 : Math.max(0, Math.min(1, opts.mix))
+  const fromScene = opts.fromScene && opts.fromScene !== scene && mix < 0.999 ? opts.fromScene : null
+  ctx.save()
+  ctx.setTransform(width / WIDTH, 0, 0, height / HEIGHT, 0, 0)
+  ctx.fillStyle = '#05070A'
+  ctx.fillRect(0, 0, WIDTH, HEIGHT)
+  const host = opts.host.filter((l) => l.opacity > 0)
+  const guest = opts.guest.filter((l) => l.opacity > 0)
+  if (fromScene) {
+    ctx.save()
+    ctx.globalAlpha = 1 - mix
+    paintSceneLayout(ctx, fromScene, host, guest)
+    ctx.restore()
+    ctx.save()
+    ctx.globalAlpha = mix
+    paintSceneLayout(ctx, scene, host, guest)
+    ctx.restore()
+  } else {
+    paintSceneLayout(ctx, scene, host, guest)
+  }
+  paintOverlayStack(ctx, opts.overlays || [])
+  ctx.restore()
+}
+
+function composeLayers(
+  ctx: CanvasRenderingContext2D,
+  mode: PictureMode,
+  host: TimedPaint[],
+  guest: TimedPaint[],
+  overlays: TimedPaint[],
+) {
+  paintProgramFrame(ctx, { mode, host, guest, overlays })
 }
 
 async function pickEncodePlan() {
@@ -253,8 +538,8 @@ async function pickEncodePlan() {
 
 async function renderFastPicture(opts: {
   mode: PictureMode
-  host: CameraClip | null
-  guest: CameraClip | null
+  host: CameraClip[]
+  guest: CameraClip[]
   audio: AudioBuffer
   onProgress?: (ratio: number, info?: { realtime: boolean }) => void
 }): Promise<Blob> {
@@ -268,17 +553,16 @@ async function renderFastPicture(opts: {
   const ctx = canvas.getContext('2d', { alpha: false })
   if (!ctx) throw new Error('Could not open a 2D canvas')
 
-  const duration = Math.max(
-    opts.audio.duration,
-    opts.host ? opts.host.offset + opts.host.duration : 0,
-    opts.guest ? opts.guest.offset + opts.guest.duration : 0,
-    FRAME,
-  )
+  const layers = pictureLayers(opts.host, opts.guest)
+  const duration = Math.max(pictureSpan(opts.audio.duration, opts.host, opts.guest), FRAME)
   const frames = Math.max(1, Math.round(duration * FPS))
 
-  const hostPainter = await openPainter(opts.host)
+  const hostPainter = await openClipSetPainter(layers.host)
   const guestPainter =
-    opts.mode === 'pip' && opts.guest && opts.guest !== opts.host ? await openPainter(opts.guest) : null
+    opts.mode === 'pip' && layers.guest.length > 0 && layers.guest !== layers.host
+      ? await openClipSetPainter(layers.guest)
+      : null
+  const overlayPainter = await openClipSetPainter(layers.overlays)
 
   const target = new mb.BufferTarget()
   const output = new mb.Output({ format: plan.format, target })
@@ -302,9 +586,10 @@ async function renderFastPicture(opts: {
   try {
     for (let i = 0; i < frames; i++) {
       const t = i * FRAME
-      const host = hostPainter ? await hostPainter.at(t) : null
-      const guest = guestPainter ? await guestPainter.at(t) : null
-      composeFrame(ctx, opts.mode, host, guest)
+      const host = hostPainter ? await hostPainter.at(t) : []
+      const guest = guestPainter ? await guestPainter.at(t) : []
+      const overlays = overlayPainter ? await overlayPainter.at(t) : []
+      composeLayers(ctx, opts.mode, host, guest, overlays)
       await videoSource.add(t, FRAME, { keyFrame: i === 0 || i % (FPS * 2) === 0 })
       if (i % 12 === 0) {
         opts.onProgress?.(i / frames, { realtime: false })
@@ -317,6 +602,7 @@ async function renderFastPicture(opts: {
   } finally {
     hostPainter?.close()
     guestPainter?.close()
+    overlayPainter?.close()
     if (!finished) {
       try {
         await output.cancel()
@@ -333,8 +619,8 @@ async function renderFastPicture(opts: {
 
 async function renderRealtimePicture(opts: {
   mode: PictureMode
-  host: CameraClip | null
-  guest: CameraClip | null
+  host: CameraClip[]
+  guest: CameraClip[]
   audio: AudioBuffer
   onProgress?: (ratio: number, info?: { realtime: boolean }) => void
 }): Promise<Blob> {
@@ -348,15 +634,31 @@ async function renderRealtimePicture(opts: {
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('Could not open a 2D canvas')
 
-  const hostEl = opts.host ? await loadVideo(opts.host.url, opts.host.trimStart) : null
-  const guestEl = opts.guest && opts.guest !== opts.host ? await loadVideo(opts.guest.url, opts.guest.trimStart) : null
-
-  const duration = Math.max(
-    opts.audio.duration,
-    opts.host ? opts.host.offset + opts.host.duration : 0,
-    opts.guest ? opts.guest.offset + opts.guest.duration : 0,
-    0.5,
+  const layers = pictureLayers(opts.host, opts.guest)
+  const hostUrls = [...new Set(layers.host.map((c) => c.url).filter(Boolean))]
+  const guestUrls = [...new Set(layers.guest.map((c) => c.url).filter(Boolean))].filter((url) => !hostUrls.includes(url))
+  const overlayUrls = [...new Set(layers.overlays.map((c) => c.url).filter(Boolean))].filter(
+    (url) => !hostUrls.includes(url) && !guestUrls.includes(url),
   )
+  const hostEls = new Map<string, HTMLVideoElement>()
+  const guestEls = new Map<string, HTMLVideoElement>()
+  const overlayEls = new Map<string, HTMLVideoElement>()
+  for (const url of hostUrls) {
+    const first = layers.host.find((c) => c.url === url)!
+    hostEls.set(url, await loadVideo(url, cameraSourceTime(first, first.offset)))
+  }
+  if (opts.mode === 'pip') {
+    for (const url of guestUrls) {
+      const first = layers.guest.find((c) => c.url === url)!
+      guestEls.set(url, await loadVideo(url, cameraSourceTime(first, first.offset)))
+    }
+  }
+  for (const url of overlayUrls) {
+    const first = layers.overlays.find((c) => c.url === url)!
+    overlayEls.set(url, await loadVideo(url, cameraSourceTime(first, first.offset)))
+  }
+
+  const duration = pictureSpan(opts.audio.duration, opts.host, opts.guest)
 
   const audioCtx = new AudioContext()
   const dest = audioCtx.createMediaStreamDestination()
@@ -382,15 +684,17 @@ async function renderRealtimePicture(opts: {
   const started = audioCtx.currentTime
   recorder.start(250)
   source.start()
-  if (hostEl) void hostEl.play().catch(() => {})
-  if (guestEl) void guestEl.play().catch(() => {})
-
   await new Promise<void>((resolve) => {
     const tick = () => {
       const t = audioCtx.currentTime - started
-      const hostActive = hostEl && clipActive(opts.host, t)
-      const guestActive = guestEl && clipActive(opts.guest, t)
-      composeFrame(ctx, opts.mode, hostActive ? hostEl : null, guestActive ? guestEl : null)
+      const allEls = new Map([...hostEls, ...guestEls, ...overlayEls])
+      composeLayers(
+        ctx,
+        opts.mode,
+        timedFromVideos(layers.host, allEls, t),
+        opts.mode === 'pip' ? timedFromVideos(layers.guest, allEls, t) : [],
+        timedFromVideos(layers.overlays, allEls, t),
+      )
       opts.onProgress?.(Math.min(1, t / duration), { realtime: true })
       if (t >= duration) {
         resolve()
@@ -401,29 +705,39 @@ async function renderRealtimePicture(opts: {
     requestAnimationFrame(tick)
   })
 
-  hostEl?.pause()
-  guestEl?.pause()
+  hostEls.forEach((el) => el.pause())
+  guestEls.forEach((el) => el.pause())
+  overlayEls.forEach((el) => el.pause())
   if (recorder.state !== 'inactive') recorder.stop()
   await audioCtx.close().catch(() => {})
-  hostEl?.removeAttribute('src')
-  guestEl?.removeAttribute('src')
+  const release = (el: HTMLVideoElement) => {
+    el.removeAttribute('src')
+    el.load()
+  }
+  hostEls.forEach(release)
+  guestEls.forEach(release)
+  overlayEls.forEach(release)
   return done
 }
 
 export async function renderPictureMix(opts: {
   mode: PictureMode
-  host: CameraClip | null
-  guest: CameraClip | null
+  host: CameraClip | CameraClip[] | null
+  guest: CameraClip | CameraClip[] | null
   audio: AudioBuffer
   onProgress?: (ratio: number, info?: { realtime: boolean }) => void
 }): Promise<PictureRenderResult> {
-  const lead = opts.mode === 'pip' ? opts.host || opts.guest : opts.host || opts.guest
-  if (!lead) throw new Error('Need at least one camera file for a picture export')
+  const host = asClipList(opts.host)
+  const guest = asClipList(opts.guest)
+  if (host.length === 0 && guest.length === 0) {
+    throw new Error('Need at least one camera file for a picture export')
+  }
+  const normalized = { ...opts, host, guest }
 
   if (typeof VideoEncoder !== 'undefined' && typeof AudioEncoder !== 'undefined') {
     try {
       opts.onProgress?.(0, { realtime: false })
-      const blob = await renderFastPicture(opts)
+      const blob = await renderFastPicture(normalized)
       return { blob, realtime: false }
     } catch {
       /* WebCodecs/mux failed — last resort is the old 1× capture */
@@ -431,5 +745,5 @@ export async function renderPictureMix(opts: {
   }
 
   opts.onProgress?.(0, { realtime: true })
-  return { blob: await renderRealtimePicture(opts), realtime: true }
+  return { blob: await renderRealtimePicture(normalized), realtime: true }
 }

@@ -20,6 +20,8 @@ export type SessionPerson = {
   inputDeviceId?: string
   /** Local camera for this person. Empty = default camera. Video stays off the audio mix. */
   videoDeviceId?: string
+  /** Linked: moving a take can nudge that person's camera. Default true. */
+  avLinked?: boolean
 }
 
 export type StudioTrack = {
@@ -71,6 +73,8 @@ export type TrackClip = {
   muted: boolean
   fadeIn: number
   fadeOut: number
+  /** Same punch as a camera clip — used for link / broken-sync, not mux. */
+  syncGroup?: string
 }
 
 export type AutomationPoint = {

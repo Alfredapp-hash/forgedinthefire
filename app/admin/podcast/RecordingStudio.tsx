@@ -494,6 +494,7 @@ export function RecordingStudio({
                   onExported={saveMix}
                   onPublished={publish}
                   onMarkChapter={markChapterAt}
+                  chapters={episode.chapters}
                 />
               </div>
               <aside className="lg:sticky lg:top-20 space-y-3">
