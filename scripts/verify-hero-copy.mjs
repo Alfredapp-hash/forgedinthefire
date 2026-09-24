@@ -68,9 +68,11 @@ async (page) => {
     const ratio = (L) => (WHITE_L + 0.05) / (L + 0.05);
 
     const sect = section.getBoundingClientRect();
-    const scale = Math.max(sect.width / 1280, sect.height / 720);
-    const offX = sect.left + (sect.width - 1280 * scale) / 2;
-    const offY = sect.top + (sect.height - 720 * scale) / 2;
+    const stageEl = shown.parentElement;
+    const box = (stageEl || section).getBoundingClientRect();
+    const scale = Math.max(box.width / 1280, box.height / 720);
+    const offX = box.left + (box.width - 1280 * scale) / 2;
+    const offY = box.top + (box.height - 720 * scale) / 2;
 
     const measure = (el) => {
       const range = document.createRange();
@@ -164,9 +166,12 @@ async (page) => {
       cover: {
         scale: +scale.toFixed(4),
         visibleSourceRows: [
-          Math.round((sect.top - offY) / scale),
-          Math.round((sect.bottom - offY) / scale),
+          Math.round((box.top - offY) / scale),
+          Math.round((box.bottom - offY) / scale),
         ],
+        visibleSourceWidth: +((box.width / scale)).toFixed(1),
+        sectionHeight: Math.round(sect.height),
+        stageHeight: Math.round(box.height),
       },
     };
   };

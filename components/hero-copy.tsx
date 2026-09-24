@@ -3,13 +3,10 @@
 /**
  * The hero's copy, staged over the intro video and resting over the looping tail.
  *
- * Placement is the hard part. Both hero videos render with `object-fit: cover`, so
- * the anvil's on-screen position is decided by the cover transform rather than by
- * the element box, and it moves with the viewport's aspect ratio. Percentages of
- * the container would drift off the anvil or ride up into the flame. Instead
- * `hero-animation` publishes the cover transform as CSS variables and this overlay
- * addresses rows in the video's own 1280x720 space, so a given source row lands on
- * the same piece of artwork at every viewport.
+ * Placement is the hard part. Both hero videos render with `object-fit: cover`.
+ * Copy sits inside a 16:9 frame sized with the same cover math, so `top: 71.11%`
+ * (source row 512 of 720) lands on the anvil at every viewport — including the
+ * mobile stage, which is itself 16:9 so cover equals contain.
  *
  * Row choice comes from scripts/analyze-intro-geometry.mjs. The intro is not a
  * locked-off shot: a droplet falls while the camera pulls back, so the anvil's top
@@ -94,7 +91,7 @@ export function HeroCopy({ stage }: HeroCopyProps) {
       // where the two overlap on short viewports.
       className="pointer-events-none absolute inset-x-0 z-[2] select-none"
       style={{
-        top: `calc(var(--hero-cover-top, 0px) + ${COPY_TOP_ROW}px * var(--hero-cover-scale, 1))`,
+        top: `${(COPY_TOP_ROW / 720) * 100}%`,
       }}
     >
       {/*

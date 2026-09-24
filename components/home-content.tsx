@@ -44,7 +44,7 @@ const valueIcons: Record<string, React.ComponentType<{ className?: string }>> = 
 export function HomeContent() {
   return (
     <div className="min-h-screen">
-      {/* Hero — full viewport video lock; overlays next */}
+      {/* Hero — full-viewport on desktop; 16:9 lockup below the nav on mobile */}
       <HeroAnimation />
 
       {/* Impact Stats - Emotional Warmth Section */}
