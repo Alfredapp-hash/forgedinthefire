@@ -78,3 +78,9 @@ AUDIT_REPORT.txt
 
 # SEO crawler output
 /generated
+
+# Git bundle backups (local only)
+*.bundle
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo
