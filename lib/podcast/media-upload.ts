@@ -53,12 +53,43 @@ export async function uploadPodcastMedia(file: File, alt: string): Promise<Uploa
   return asset as UploadedAsset
 }
 
+/**
+ * Measure audio duration in seconds. Handles the common WebM/MediaRecorder case
+ * where `audio.duration` is `Infinity` until you seek to the end, and guards
+ * against NaN and a hung metadata load so the RSS enclosure duration is reliable.
+ */
 export function measureAudioDuration(url: string) {
   return new Promise<number | null>((resolve) => {
     const audio = document.createElement('audio')
     audio.preload = 'metadata'
-    audio.onloadedmetadata = () => resolve(Math.round(audio.duration) || null)
-    audio.onerror = () => resolve(null)
+    let settled = false
+    const finish = (value: number | null) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      audio.onloadedmetadata = null
+      audio.ontimeupdate = null
+      audio.onerror = null
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish(null), 15000)
+
+    const valid = (d: number) => Number.isFinite(d) && d > 0 ? Math.round(d) : null
+
+    audio.onloadedmetadata = () => {
+      if (Number.isFinite(audio.duration) && audio.duration > 0) {
+        finish(valid(audio.duration))
+        return
+      }
+      // Infinite/unknown (streamed WebM): force the browser to compute it.
+      audio.ontimeupdate = () => {
+        audio.ontimeupdate = null
+        audio.currentTime = 0
+        finish(valid(audio.duration))
+      }
+      audio.currentTime = Number.MAX_SAFE_INTEGER
+    }
+    audio.onerror = () => finish(null)
     audio.src = url
   })
 }

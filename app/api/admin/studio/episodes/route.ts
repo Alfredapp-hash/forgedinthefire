@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { studioError, withStudioAdmin } from '@/lib/studio/api'
 import { slugify, uniqueSlug } from '@/lib/studio/slug'
+import { checkCoverArt, checkFeedCompliance } from '@/lib/podcast/compliance'
+import type { PodcastChapter } from '@/lib/studio/types'
 
 const ALLOWED = [
   'topic_id', 'show_id', 'title', 'slug', 'summary', 'show_notes', 'guest_name', 'guest_bio',
@@ -105,19 +107,53 @@ export async function PATCH(request: Request) {
     if (!Array.isArray(patch.ad_markers) && patch.ad_markers != null) delete patch.ad_markers
     const { data: current, error: currentError } = await supabase
       .from('podcast_episodes')
-      .select('audio_url, published_at, status, scheduled_for')
+      .select(
+        'title, audio_url, audio_mime, duration_seconds, file_size, cover_url, chapters, summary, published_at, status, scheduled_for',
+      )
       .eq('id', id)
       .single()
     if (currentError) throw currentError
     const nextStatus = String(patch.status ?? current.status)
-    const nextAudio = (patch.audio_url ?? current.audio_url) as string | null
     const nextScheduled = (patch.scheduled_for ?? current.scheduled_for) as string | null
-    if (nextStatus === 'published' && !nextAudio) {
-      return NextResponse.json({ error: 'Upload audio before publishing' }, { status: 400 })
-    }
     if (nextStatus === 'scheduled' && !nextScheduled) {
       return NextResponse.json({ error: 'Set scheduled_for before scheduling' }, { status: 400 })
     }
+
+    // Feed-compliance gate: block publish (and scheduling a publish) on a
+    // broken enclosure so Apple/Spotify never reject it after the fact.
+    if (nextStatus === 'published' || nextStatus === 'scheduled') {
+      const merged = {
+        title: (patch.title ?? current.title) as string,
+        audio_url: (patch.audio_url ?? current.audio_url) as string | null,
+        audio_mime: (patch.audio_mime ?? current.audio_mime) as string | null,
+        duration_seconds: (patch.duration_seconds ?? current.duration_seconds) as number | null,
+        file_size: (patch.file_size ?? current.file_size) as number | null,
+        cover_url: (patch.cover_url ?? current.cover_url) as string | null,
+        chapters: (Array.isArray(patch.chapters) ? patch.chapters : current.chapters) as PodcastChapter[] | null,
+        summary: (patch.summary ?? current.summary) as string | null,
+      }
+      const compliance = checkFeedCompliance(merged)
+      if (!compliance.ok) {
+        return NextResponse.json(
+          {
+            error: `Cannot publish — ${compliance.blockers.map((b) => b.detail || b.label).join('; ')}`,
+            compliance,
+          },
+          { status: 422 },
+        )
+      }
+      // Cover dimensions require fetching the image; only enforce when we can measure.
+      if (merged.cover_url) {
+        const art = await checkCoverArt(merged.cover_url)
+        if (!art.ok) {
+          return NextResponse.json(
+            { error: `Cannot publish — ${art.detail || 'cover art does not meet Apple/Spotify requirements'}` },
+            { status: 422 },
+          )
+        }
+      }
+    }
+
     if (nextStatus === 'published' && !patch.published_at) {
       patch.published_at = current.published_at || new Date().toISOString()
     }

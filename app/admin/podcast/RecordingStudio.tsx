@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { CheckCircle2, Circle, Mic2, Plus, Trash2 } from 'lucide-react'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
 import { measureAudioDuration, uploadPodcastMedia } from '@/lib/podcast/media-upload'
+import { checkFeedCompliance } from '@/lib/podcast/compliance'
 import type {
   ContentTopic,
   EpisodeStatus,
@@ -87,23 +88,29 @@ export function RecordingStudio({
     [topics, episode?.topic_id],
   )
 
+  const compliance = useMemo(
+    () => (episode ? checkFeedCompliance(episode) : null),
+    [episode],
+  )
+
   const checks = useMemo(() => {
     if (!episode) return []
+    // Feed-compliance blockers (must pass to publish) + advisory production items.
+    const feed = (compliance?.checks ?? []).map((c) => ({
+      ok: c.ok,
+      label: c.detail && !c.ok ? `${c.label} — ${c.detail}` : c.label,
+      required: c.required,
+    }))
     return [
-      { ok: Boolean(episode.title.trim()), label: 'Title' },
-      { ok: Boolean(episode.summary), label: 'Summary' },
-      { ok: Boolean(episode.show_notes), label: 'Show notes / script' },
-      { ok: Boolean(episode.audio_url), label: 'Recorded mix' },
-      { ok: Boolean(episode.file_size && episode.file_size > 0), label: 'Hosted file size' },
-      { ok: Boolean(episode.duration_seconds), label: 'Duration' },
-      { ok: Boolean(episode.cover_url), label: 'Cover art' },
-      { ok: episode.episode_number != null, label: 'Episode number' },
-      { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters' },
-      { ok: Boolean(episode.transcript), label: 'Transcript' },
-      { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)' },
-      { ok: Boolean(episode.topic_id), label: 'Linked studio topic' },
+      ...feed,
+      { ok: Boolean(episode.show_notes), label: 'Show notes / script', required: false },
+      { ok: episode.episode_number != null, label: 'Episode number', required: false },
+      { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters added', required: false },
+      { ok: Boolean(episode.transcript), label: 'Transcript', required: false },
+      { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)', required: false },
+      { ok: Boolean(episode.topic_id), label: 'Linked studio topic', required: false },
     ]
-  }, [episode])
+  }, [episode, compliance])
 
   function replaceEpisode(next: PodcastEpisode) {
     const exists = episodes.some((ep) => ep.id === next.id)
@@ -201,17 +208,25 @@ export function RecordingStudio({
   async function saveMix(file: File, durationSeconds: number) {
     if (!episode) throw new Error('Pick or write an episode first')
     const asset = await uploadPodcastMedia(file, episode.title)
-    const seconds = durationSeconds || (await measureAudioDuration(asset.url)) || null
-    await saveEpisode(
-      {
-        audio_url: asset.url,
-        audio_mime: asset.mime_type || file.type,
-        file_size: asset.size_bytes || file.size,
-        duration_seconds: seconds,
-        status: episode.status === 'draft' || episode.status === 'recording' ? 'editing' : episode.status,
-      },
-      'Mix saved to this episode',
-    )
+    const measured =
+      (durationSeconds && durationSeconds > 0 ? Math.round(durationSeconds) : null) ??
+      (await measureAudioDuration(asset.url))
+    // Never overwrite a known-good duration with null on a re-save.
+    const seconds = measured ?? episode.duration_seconds ?? null
+    const fileSize = asset.size_bytes || file.size
+    const patch: Record<string, unknown> = {
+      audio_url: asset.url,
+      audio_mime: asset.mime_type || file.type,
+      file_size: fileSize,
+      duration_seconds: seconds,
+      status: episode.status === 'draft' || episode.status === 'recording' ? 'editing' : episode.status,
+    }
+    await saveEpisode(patch, 'Mix saved to this episode')
+    if (!seconds) {
+      setError('Mix saved, but duration could not be measured — set it manually before publishing (RSS needs it)')
+    } else if (!fileSize) {
+      setError('Mix saved, but file size is missing — re-upload before publishing')
+    }
   }
 
   async function uploadCover(file: File) {
@@ -229,16 +244,10 @@ export function RecordingStudio({
   }
 
   async function publish() {
-    if (!episode?.audio_url) {
-      setError('Save a mix before publishing')
-      return
-    }
-    if (!episode.file_size || episode.file_size < 1) {
-      setError('Re-save the mix so Apple RSS has a file size')
-      return
-    }
-    if (!episode.cover_url) {
-      setError('Add square cover art before publishing')
+    if (!episode) return
+    const gate = checkFeedCompliance(episode)
+    if (!gate.ok) {
+      setError(`Cannot publish — ${gate.blockers.map((b) => b.detail || b.label).join('; ')}`)
       return
     }
     await saveEpisode(
@@ -476,7 +485,8 @@ export function RecordingStudio({
                 <button
                   type="button"
                   onClick={() => void publish()}
-                  disabled={!episode.audio_url || episode.status === 'published'}
+                  disabled={episode.status === 'published' || !compliance?.ok}
+                  title={compliance && !compliance.ok ? compliance.blockers.map((b) => b.detail || b.label).join('; ') : undefined}
                   className="px-3 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium disabled:opacity-40"
                 >
                   {episode.status === 'published' ? 'Live' : 'Publish now'}
@@ -710,14 +720,23 @@ export function RecordingStudio({
           </section>
 
           <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5">
-            <p className="text-sm font-medium text-[#F6FAFC] mb-3">Ready to publish?</p>
+            <p className="text-sm font-medium text-[#F6FAFC] mb-1">Ready to publish?</p>
+            {compliance && !compliance.ok && (
+              <p className="text-xs text-red-300 mb-3">
+                Publish blocked: {compliance.blockers.map((b) => b.detail || b.label).join('; ')}
+              </p>
+            )}
             <ul className="grid sm:grid-cols-2 gap-2">
               {checks.map((item) => (
-                <li key={item.label} className="flex items-center gap-2 text-sm text-[#B8C4CF]">
+                <li
+                  key={item.label}
+                  className={`flex items-center gap-2 text-sm ${item.required && !item.ok ? 'text-red-300' : 'text-[#B8C4CF]'}`}
+                >
                   {item.ok
                     ? <CheckCircle2 size={16} className="text-[#53D6FF]" />
-                    : <Circle size={16} className="text-[#27313B]" />}
+                    : <Circle size={16} className={item.required ? 'text-red-400' : 'text-[#27313B]'} />}
                   {item.label}
+                  {item.required && !item.ok && <span className="text-[10px] uppercase tracking-wide">required</span>}
                 </li>
               ))}
             </ul>

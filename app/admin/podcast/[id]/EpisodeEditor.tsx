@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
 import { measureAudioDuration, uploadPodcastMedia } from '@/lib/podcast/media-upload'
+import { checkFeedCompliance } from '@/lib/podcast/compliance'
 import type {
   ContentTopic,
   PodcastAdMarker,
@@ -96,13 +97,23 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
       if (kind === 'cover') {
         await save({ cover_url: asset.url }, 'Cover saved')
       } else {
-        const seconds = duration ?? await measureAudioDuration(asset.url)
+        const measured =
+          (duration && duration > 0 ? Math.round(duration) : null) ??
+          (await measureAudioDuration(asset.url))
+        // Preserve an existing duration rather than clobbering it with null.
+        const seconds = measured ?? episode?.duration_seconds ?? null
+        const fileSize = asset.size_bytes || file.size
         await save({
           audio_url: asset.url,
           audio_mime: asset.mime_type || file.type,
-          file_size: asset.size_bytes || file.size,
+          file_size: fileSize,
           duration_seconds: seconds,
         }, 'Audio saved')
+        if (!seconds) {
+          setError('Audio saved, but duration could not be measured — set it manually before publishing (RSS needs it)')
+        } else if (!fileSize) {
+          setError('Audio saved, but file size is missing — re-upload before publishing')
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed')
@@ -112,16 +123,10 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
   }
 
   async function publish() {
-    if (!episode?.audio_url) {
-      setError('Upload or record audio before publishing')
-      return
-    }
-    if (!episode.file_size || episode.file_size < 1) {
-      setError('Audio is missing file size — re-save the mix so Apple RSS enclosure length is valid')
-      return
-    }
-    if (!episode.cover_url) {
-      setError('Add episode cover art (Apple: square ≥1400px; aim for 3000×3000 show/episode art)')
+    if (!episode) return
+    const gate = checkFeedCompliance(episode)
+    if (!gate.ok) {
+      setError(`Cannot publish — ${gate.blockers.map((b) => b.detail || b.label).join('; ')}`)
       return
     }
     await save(
@@ -195,23 +200,28 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
     void save({ ad_markers: next }, 'Ad marker added')
   }
 
+  const compliance = useMemo(
+    () => (episode ? checkFeedCompliance(episode) : null),
+    [episode],
+  )
+
   const checks = useMemo(() => {
     if (!episode) return []
+    const feed = (compliance?.checks ?? []).map((c) => ({
+      ok: c.ok,
+      label: c.detail && !c.ok ? `${c.label} — ${c.detail}` : c.label,
+      required: c.required,
+    }))
     return [
-      { ok: Boolean(episode.title.trim()), label: 'Title' },
-      { ok: Boolean(episode.summary), label: 'Summary' },
-      { ok: Boolean(episode.show_notes), label: 'Show notes' },
-      { ok: Boolean(episode.audio_url), label: 'Audio file' },
-      { ok: Boolean(episode.file_size && episode.file_size > 0), label: 'Enclosure file size (Apple RSS)' },
-      { ok: Boolean(episode.duration_seconds), label: 'Duration measured' },
-      { ok: Boolean(episode.cover_url), label: 'Cover art (square; aim 3000×3000)' },
-      { ok: episode.episode_number != null, label: 'Episode number' },
-      { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters' },
-      { ok: Boolean(episode.transcript), label: 'Transcript → VTT in RSS' },
-      { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)' },
-      { ok: Boolean(episode.topic_id), label: 'Linked biweekly topic' },
+      ...feed,
+      { ok: Boolean(episode.show_notes), label: 'Show notes', required: false },
+      { ok: episode.episode_number != null, label: 'Episode number', required: false },
+      { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters', required: false },
+      { ok: Boolean(episode.transcript), label: 'Transcript → VTT in RSS', required: false },
+      { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)', required: false },
+      { ok: Boolean(episode.topic_id), label: 'Linked biweekly topic', required: false },
     ]
-  }, [episode])
+  }, [episode, compliance])
 
   if (!episode) {
     return <p className="text-[#A9B8C6] flex items-center gap-2"><Loader2 className="animate-spin" size={16} /> Loading episode…</p>
@@ -254,7 +264,8 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
           <button
             type="button"
             onClick={() => void publish()}
-            disabled={!episode.audio_url || episode.status === 'published'}
+            disabled={episode.status === 'published' || !compliance?.ok}
+            title={compliance && !compliance.ok ? compliance.blockers.map((b) => b.detail || b.label).join('; ') : undefined}
             className="px-3 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium disabled:opacity-40"
           >
             {episode.status === 'published' ? 'Live' : 'Publish now'}
@@ -516,14 +527,23 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
       </section>
 
       <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5">
-        <p className="text-sm font-medium text-[#F6FAFC] mb-3">Publish checklist</p>
+        <p className="text-sm font-medium text-[#F6FAFC] mb-1">Publish checklist</p>
+        {compliance && !compliance.ok && (
+          <p className="text-xs text-red-300 mb-3">
+            Publish blocked: {compliance.blockers.map((b) => b.detail || b.label).join('; ')}
+          </p>
+        )}
         <ul className="space-y-2">
           {checks.map((item) => (
-            <li key={item.label} className="flex items-center gap-2 text-sm text-[#B8C4CF]">
+            <li
+              key={item.label}
+              className={`flex items-center gap-2 text-sm ${item.required && !item.ok ? 'text-red-300' : 'text-[#B8C4CF]'}`}
+            >
               {item.ok
                 ? <CheckCircle2 size={16} className="text-[#53D6FF]" />
-                : <Circle size={16} className="text-[#27313B]" />}
+                : <Circle size={16} className={item.required ? 'text-red-400' : 'text-[#27313B]'} />}
               {item.label}
+              {item.required && !item.ok && <span className="text-[10px] uppercase tracking-wide">required</span>}
             </li>
           ))}
         </ul>
