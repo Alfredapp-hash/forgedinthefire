@@ -657,6 +657,12 @@ export function GuestInvitePanel({
       {freshUrl && (
         <p className="text-[11px] font-mono text-[#8DEBFF] break-all">{freshUrl}</p>
       )}
+      {!turnConfigured && (
+        <div className="rounded-lg border border-[#E8B84B]/50 bg-[#221B0A] px-3 py-2 text-xs text-[#F2D68A]">
+          Relay (TURN) not configured. Guests on strict or office networks may fail to connect — set
+          TURN_URL, TURN_USERNAME, and TURN_CREDENTIAL, or have the guest use a phone hotspot.
+        </div>
+      )}
       <p className="text-[11px] text-[#7C8B97]">
         Talkback is your mic in their phones. Cue to guest sends the live mix (other lanes, beds,
         SFX — not the Guest take being recorded) on a second audio line. Neither is laid on the

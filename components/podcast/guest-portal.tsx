@@ -605,6 +605,12 @@ export function GuestPortal({
         {phase === 'lobby' && (
           <div className="rounded-2xl border border-[#27313B] bg-[#11161C] p-4 space-y-4">
             <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Green room</p>
+            {!turnConfigured && (
+              <div className="rounded-xl border border-[#E8B84B]/50 bg-[#221B0A] px-3 py-2 text-[11px] text-[#F2D68A]">
+                Relay server isn’t configured for this booth. If you can’t connect from your current
+                network, join from a phone hotspot.
+              </div>
+            )}
             <label className="block space-y-1.5">
               <span className="text-xs text-[#A9B8C6]">Display name</span>
               <input

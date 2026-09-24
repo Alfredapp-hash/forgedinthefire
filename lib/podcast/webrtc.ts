@@ -192,22 +192,62 @@ export async function makeOffer(peer: RTCPeerConnection, recvVideo = false) {
 
 export async function answerOffer(peer: RTCPeerConnection, offer: RTCSessionDescriptionInit) {
   await peer.setRemoteDescription(offer)
+  await flushPendingIce(peer)
   const answer = await peer.createAnswer()
   await peer.setLocalDescription(answer)
   return peer.localDescription
 }
 
-export async function applyAnswer(peer: RTCPeerConnection, answer: RTCSessionDescriptionInit) {
-  if (peer.signalingState === 'have-local-offer') {
-    await peer.setRemoteDescription(answer)
+/**
+ * Apply the remote answer. Returns false (and logs) if it arrives in the wrong
+ * signaling state — a missed offer or a duplicate answer — so callers can react
+ * instead of silently ending up with no audio.
+ */
+export async function applyAnswer(
+  peer: RTCPeerConnection,
+  answer: RTCSessionDescriptionInit,
+): Promise<boolean> {
+  if (peer.signalingState !== 'have-local-offer') {
+    console.warn('[studio] dropped answer in signaling state', peer.signalingState)
+    return false
+  }
+  await peer.setRemoteDescription(answer)
+  await flushPendingIce(peer)
+  return true
+}
+
+/**
+ * ICE candidates trickle over 900ms polling and often arrive before the remote
+ * description is set — applying them then throws and the candidate is lost.
+ * Queue early candidates per-peer and flush them once the remote description
+ * lands, so the answer/candidate race can't strand the connection.
+ */
+const pendingIce = new WeakMap<RTCPeerConnection, RTCIceCandidateInit[]>()
+
+async function flushPendingIce(peer: RTCPeerConnection) {
+  const queued = pendingIce.get(peer)
+  if (!queued?.length) return
+  pendingIce.delete(peer)
+  for (const candidate of queued) {
+    try {
+      await peer.addIceCandidate(candidate)
+    } catch {
+      /* stale candidate from a superseded negotiation */
+    }
   }
 }
 
 export async function addIce(peer: RTCPeerConnection, candidate: RTCIceCandidateInit | null) {
+  if (candidate && !peer.remoteDescription) {
+    const queued = pendingIce.get(peer) ?? []
+    queued.push(candidate)
+    pendingIce.set(peer, queued)
+    return
+  }
   try {
     await peer.addIceCandidate(candidate || undefined)
   } catch {
-    /* trickle arrived before remote description */
+    /* trickle arrived before remote description, or candidate is stale */
   }
 }
 
