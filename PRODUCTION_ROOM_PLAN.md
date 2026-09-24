@@ -152,4 +152,7 @@ latency, and the session is auto-archived as a publishable episode.
 Four parallel read-only explorer passes over connectivity, capture/recording,
 editing/export, and live/distribution. File:line anchors above point at the specific
 evidence. Verification at time of writing: `tsc --noEmit` clean, `next build` succeeds
-(55/55 pages), `eslint .` clean.
+(55/55 pages). `eslint .` was newly wired up (Next 16 removed `next lint`) and surfaces
+a large pre-existing backlog (~21.5k problems, ~2.2k errors) because lint had never
+actually run in this repo — triaging that backlog is its own tracked task, separate
+from the studio work.
