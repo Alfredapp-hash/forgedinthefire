@@ -9,6 +9,14 @@ export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
   
   const { pathname } = request.nextUrl
+  // Dev/QA harness (app/dev/*): a real 404 in production. The pages call notFound() too, but the
+  // root loading.tsx streams the response first, so that alone would answer 200 with a not-found body.
+  if (pathname === '/dev' || pathname.startsWith('/dev/')) {
+    if (process.env.NODE_ENV === 'production') {
+      return new NextResponse('Not found', { status: 404, headers: { 'X-Robots-Tag': 'noindex' } })
+    }
+    return NextResponse.next()
+  }
   // Guest booth is public. Matcher includes /studio so the root layout can hide marketing chrome.
   if (pathname.startsWith('/studio/')) {
     const requestHeaders = new Headers(request.headers)
@@ -119,5 +127,7 @@ export const config = {
     '/login',
     '/unauthorized',
     '/studio/:path*',
+    '/dev',
+    '/dev/:path*',
   ],
 }
