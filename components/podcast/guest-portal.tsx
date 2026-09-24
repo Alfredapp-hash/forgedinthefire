@@ -6,7 +6,7 @@ import { createGuestHeadphoneMix, type GuestHeadphoneMix } from '@/lib/podcast/g
 import { CameraPreview } from '@/components/podcast/camera-preview'
 import { resilientUpload, type SignedTarget } from '@/lib/podcast/resumable-upload'
 import { openCameraStream, startCameraCapture, type CameraCapture } from '@/lib/podcast/camera'
-import { attachInputMeter } from '@/lib/podcast/record-session'
+import { attachInputMeter, encodePunchAlignment } from '@/lib/podcast/record-session'
 import {
   openInputStream,
   recorderMime,
@@ -41,6 +41,7 @@ import {
   detachLocalVideo,
   ensureCueRecvTransceiver,
   ensureVideoTransceiver,
+  estimateOneWayLatency,
   iceFailedHint,
   loadStudioIceServers,
   type StudioIceConfig,
@@ -102,6 +103,12 @@ export function GuestPortal({
   const afterRef = useRef(0)
   const captureRef = useRef<LaneCapture | null>(null)
   const captureStartRef = useRef<Promise<LaneCapture> | null>(null)
+  // T5 shared punch clock: the wall-clock epoch (ms) at which this guest's local
+  // capture actually started, plus the one-way transport latency sampled off the
+  // peer at that instant. Reported to the host on the finalized take URL so the
+  // host can shift the take onto the same clock as its own punch.
+  const captureStartEpochRef = useRef<number | null>(null)
+  const captureLatencyRef = useRef<number | null>(null)
   const iceCfgRef = useRef<StudioIceConfig | null>(null)
   const [turnConfigured, setTurnConfigured] = useState(false)
   const camCaptureRef = useRef<CameraCapture | null>(null)
@@ -601,6 +608,18 @@ export function GuestPortal({
   async function startLocalTake() {
     const stream = streamRef.current
     if (stream && !captureRef.current && !captureStartRef.current) {
+      // T5: stamp the shared-punch clock at the instant capture is triggered by
+      // the host's record-on, and sample one-way transport latency off the peer.
+      // Both ride the finalized take URL to the host; a failed sample just yields
+      // null and the host falls back to placing the take at the raw punch point.
+      captureStartEpochRef.current = Date.now()
+      void estimateOneWayLatency(peerRef.current)
+        .then((latency) => {
+          captureLatencyRef.current = latency
+        })
+        .catch(() => {
+          captureLatencyRef.current = null
+        })
       captureStartRef.current = startLaneCapture('guest', stream)
       captureRef.current = await captureStartRef.current
       captureStartRef.current = null
@@ -646,7 +665,18 @@ export function GuestPortal({
       },
       // Only after finalize resolves is the take considered safely delivered.
       finalize: async (target) => {
-        await finalizeGuestTake(token, target.path, target.publicUrl, mime, kind)
+        // T5: ride the guest's capture-start epoch + one-way latency to the host
+        // on the audio take URL (the camera take inherits the same clock via its
+        // syncGroup). The PUT validates `path`, not the URL fragment, so this is
+        // stored verbatim and parsed back off when the host lays the take.
+        const stampedUrl =
+          kind === 'audio' && captureStartEpochRef.current != null
+            ? encodePunchAlignment(target.publicUrl, {
+                guestCaptureEpochMs: captureStartEpochRef.current,
+                oneWayLatencySec: captureLatencyRef.current,
+              })
+            : target.publicUrl
+        await finalizeGuestTake(token, target.path, stampedUrl, mime, kind)
       },
       onProgress: (fraction) => setUploadProgress(fraction),
       onStatus: (message) => setUploadStatus(message),

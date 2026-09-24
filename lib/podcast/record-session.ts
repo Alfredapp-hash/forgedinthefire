@@ -50,6 +50,89 @@ export function punchInTime(
   return sessionDuration(tracks)
 }
 
+/**
+ * Shared punch clock (T5) — device-clock alignment, distinct from the timeline
+ * `punchInTime` above.
+ *
+ * The host stamps a wall-clock epoch (ms) at punch. The guest starts its OWN
+ * local capture when the record-on signal arrives and stamps its own epoch, plus
+ * a one-way transport-latency estimate. The alignment offset (seconds) is:
+ *
+ *     offset = (guestCaptureEpoch − hostPunchEpoch) / 1000 − oneWayLatency
+ *
+ * A POSITIVE offset means the guest's first sample is LATER in real time than the
+ * host punch (the record-on took time to reach the guest), so the guest take is
+ * laid `offset` seconds AFTER the punch point to line the two recordings up. The
+ * `oneWayLatency` term removes the slice of that gap that is just transport delay
+ * already implied by the media path.
+ *
+ * The guest reports its epoch + latency to the host by riding on the finalized
+ * take URL as a fragment (`#avoff=…`); no new signal transport is invented. If
+ * either stamp or the parse is missing we return null and the caller places the
+ * take at the raw punch point — today's behaviour — leaving the av-sync drift
+ * badge + manual nudge as the safety net.
+ */
+export const AV_ALIGN_FRAGMENT = 'avoff'
+
+/** Cap the automatic shift so a skewed cross-machine clock can't fling a take wildly. */
+export const AV_ALIGN_MAX_SEC = 2
+
+export function computePunchAlignmentOffset(input: {
+  hostPunchEpochMs: number
+  guestCaptureEpochMs: number
+  oneWayLatencySec?: number | null
+}): number | null {
+  const { hostPunchEpochMs, guestCaptureEpochMs, oneWayLatencySec } = input
+  if (!Number.isFinite(hostPunchEpochMs) || hostPunchEpochMs <= 0) return null
+  if (!Number.isFinite(guestCaptureEpochMs) || guestCaptureEpochMs <= 0) return null
+  const startDelaySec = (guestCaptureEpochMs - hostPunchEpochMs) / 1000
+  const latency =
+    typeof oneWayLatencySec === 'number' && Number.isFinite(oneWayLatencySec) && oneWayLatencySec >= 0
+      ? oneWayLatencySec
+      : 0
+  const offset = startDelaySec - latency
+  if (!Number.isFinite(offset)) return null
+  // Guard garbage clocks: clamp to a believable window. Beyond this we can't
+  // trust the estimate, so drop it and let the manual nudge handle it.
+  if (Math.abs(offset) > AV_ALIGN_MAX_SEC) return null
+  return offset
+}
+
+/** Encode the guest's capture stamp + latency onto a finalized take URL (guest→host). */
+export function encodePunchAlignment(
+  url: string,
+  data: { guestCaptureEpochMs: number; oneWayLatencySec?: number | null },
+): string {
+  if (!url) return url
+  const rtt =
+    typeof data.oneWayLatencySec === 'number' && Number.isFinite(data.oneWayLatencySec)
+      ? Math.max(0, Math.round(data.oneWayLatencySec * 1000))
+      : ''
+  const frag = `${AV_ALIGN_FRAGMENT}=${Math.round(data.guestCaptureEpochMs)}${rtt === '' ? '' : `.${rtt}`}`
+  const base = url.split('#')[0]
+  return `${base}#${frag}`
+}
+
+/** Parse `#avoff=<captureEpochMs>[.<oneWayMs>]` off a take URL. Returns the clean URL + stamps. */
+export function decodePunchAlignment(url: string): {
+  url: string
+  guestCaptureEpochMs: number | null
+  oneWayLatencySec: number | null
+} {
+  const [base, hash = ''] = url.split('#')
+  const match = hash.split('&').find((part) => part.startsWith(`${AV_ALIGN_FRAGMENT}=`))
+  if (!match) return { url: base, guestCaptureEpochMs: null, oneWayLatencySec: null }
+  const value = match.slice(AV_ALIGN_FRAGMENT.length + 1)
+  const [epochStr, rttStr] = value.split('.')
+  const epoch = Number(epochStr)
+  const rttMs = rttStr != null ? Number(rttStr) : NaN
+  return {
+    url: base,
+    guestCaptureEpochMs: Number.isFinite(epoch) && epoch > 0 ? epoch : null,
+    oneWayLatencySec: Number.isFinite(rttMs) && rttMs >= 0 ? rttMs / 1000 : null,
+  }
+}
+
 /** One punch time for every armed person so Host + Guest land together. */
 export function sharedPunchInTime(
   mode: RecMode,

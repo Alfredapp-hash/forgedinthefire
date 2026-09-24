@@ -71,6 +71,8 @@ import {
 import {
   REC_MODE_META,
   attachInputMeter,
+  computePunchAlignmentOffset,
+  decodePunchAlignment,
   playCountIn,
   punchInTime,
   sharedPunchInTime,
@@ -311,6 +313,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const abortRef = useRef<AbortController | null>(null)
   const punchRef = useRef(0)
   const recStartedAtRef = useRef(0)
+  // T5 shared punch clock: wall-clock epoch (ms) at punch. The guest reports its
+  // own capture-start epoch on the take URL; the delta (RTT-corrected) is the
+  // offset we shift an uploaded guest take by so it lines up with the host punch.
+  const recPunchEpochRef = useRef(0)
   const stopMeterRef = useRef<Array<() => void>>([])
   const recRafRef = useRef<number | null>(null)
   const playheadRef = useRef(0)
@@ -1338,9 +1344,36 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setBusy('Loading guest take…')
     try {
       pushHistory()
-      const sourceUrl = `/api/admin/media/file?url=${encodeURIComponent(url)}`
+      // T5 shared punch clock: the guest rides its capture-start epoch + one-way
+      // latency on the take URL fragment. Strip it before hitting the media proxy,
+      // then shift the guest take by the RTT-corrected start delay so it lines up
+      // with the host punch instead of assuming both started at the same instant.
+      const { url: cleanUrl, guestCaptureEpochMs, oneWayLatencySec } = decodePunchAlignment(url)
+      const align =
+        guestCaptureEpochMs != null && recPunchEpochRef.current > 0
+          ? computePunchAlignmentOffset({
+              hostPunchEpochMs: recPunchEpochRef.current,
+              guestCaptureEpochMs,
+              oneWayLatencySec,
+            })
+          : null
+      const sourceUrl = `/api/admin/media/file?url=${encodeURIComponent(cleanUrl)}`
       const buffer = await decodeUrl(sourceUrl)
-      assignBufferToTrack(guest.id, buffer, `Remote guest take laid on ${guest.name}`)
+      // Shift the lane before laying the buffer so assignBufferToTrack rebuilds the
+      // clip at the aligned offset. Fall back to the raw punch offset when there is
+      // no usable stamp — the av-sync drift badge + manual nudge remain the net.
+      if (align != null && Math.abs(align) > 0.0005) {
+        setTracks((prev) =>
+          prev.map((t) =>
+            t.id === guest.id ? { ...t, offset: Math.max(0, t.offset + align) } : t,
+          ),
+        )
+      }
+      const note =
+        align != null && Math.abs(align) > 0.0005
+          ? `Remote guest take laid on ${guest.name} · auto-synced ${align >= 0 ? '+' : ''}${Math.round(align * 1000)} ms`
+          : `Remote guest take laid on ${guest.name}`
+      assignBufferToTrack(guest.id, buffer, note)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load guest take')
     } finally {
@@ -1427,6 +1460,11 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     punchRef.current = punch
     recLiveRef.current = false
     recStartedAtRef.current = performance.now()
+    // Stamp the shared-punch epoch at the record-on instant. The `record` signal
+    // that starts the guest's local capture is pushed off this same `recording`
+    // flip, so this is the host anchor the guest's capture-start epoch is measured
+    // against (see computePunchAlignmentOffset).
+    recPunchEpochRef.current = Date.now()
     recordingRef.current = true
     setSelectedId(jobs[0].lane.id)
     setRecording(true)

@@ -289,6 +289,48 @@ export async function addIce(peer: RTCPeerConnection, candidate: RTCIceCandidate
   }
 }
 
+/**
+ * One-way transport latency estimate for the punch clock (A/V sync, T5).
+ *
+ * Reads `currentRoundTripTime` (seconds) off the nominated/succeeded ICE
+ * candidate-pair and halves it — RTT is symmetric enough for a ~1-frame
+ * alignment. Falls back across pairs (nominated → any pair carrying an RTT)
+ * because some engines don't flag `nominated` on the reported pair. Returns
+ * `null` when stats are unavailable (reconnect mid-take, no succeeded pair, or
+ * the browser doesn't expose the field) so callers degrade to "place at punch"
+ * instead of misplacing on a garbage number.
+ */
+export async function estimateOneWayLatency(
+  peer: RTCPeerConnection | null,
+): Promise<number | null> {
+  if (!peer || typeof peer.getStats !== 'function') return null
+  try {
+    const stats = await peer.getStats()
+    let nominatedRtt: number | null = null
+    let anyRtt: number | null = null
+    stats.forEach((report) => {
+      if (report.type !== 'candidate-pair') return
+      const pair = report as RTCIceCandidatePairStats
+      const rtt = pair.currentRoundTripTime
+      if (typeof rtt !== 'number' || !Number.isFinite(rtt) || rtt < 0) return
+      // Prefer the pair actually carrying media.
+      if (pair.nominated && (pair.state === undefined || pair.state === 'succeeded')) {
+        nominatedRtt = rtt
+      }
+      if (anyRtt == null) anyRtt = rtt
+    })
+    const rtt = nominatedRtt ?? anyRtt
+    if (rtt == null) return null
+    const oneWay = rtt / 2
+    // Sanity clamp: a booth pair over ~1s one-way is almost certainly a stale or
+    // bogus reading — treat as unavailable rather than shove a take a second off.
+    if (oneWay > 1) return null
+    return oneWay
+  } catch {
+    return null
+  }
+}
+
 export function closePeer(peer: RTCPeerConnection | null, stopTracks = false) {
   if (!peer) return
   try {
