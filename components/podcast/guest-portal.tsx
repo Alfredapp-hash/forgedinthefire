@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Download, Headphones, Mic2, Music2, PhoneOff, RefreshCw, Video, VideoOff, Volume2, VolumeX } from 'lucide-react'
 import { createGuestHeadphoneMix, type GuestHeadphoneMix } from '@/lib/podcast/guest-cue'
 import { CameraPreview } from '@/components/podcast/camera-preview'
+import { resilientUpload, type SignedTarget } from '@/lib/podcast/resumable-upload'
 import { openCameraStream, startCameraCapture, type CameraCapture } from '@/lib/podcast/camera'
 import { attachInputMeter } from '@/lib/podcast/record-session'
 import {
@@ -86,6 +87,9 @@ export function GuestPortal({
   const [cueLive, setCueLive] = useState(false)
   const [cueVolume, setCueVolume] = useState(0.85)
   const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null)
+  const [uploadFailed, setUploadFailed] = useState(false)
   const [backupUrl, setBackupUrl] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
@@ -104,6 +108,11 @@ export function GuestPortal({
   const stopMeterRef = useRef<(() => void) | null>(null)
   const stopHostMeterRef = useRef<(() => void) | null>(null)
   const backupUrlRef = useRef<string | null>(null)
+  // T4: hold the recorded take(s) in memory until the server `finalize` confirms.
+  // A pending item is only cleared once its finalize resolves, so a flaky network
+  // (or a page-visible "retry upload") never discards the blob.
+  const pendingTakesRef = useRef<{ blob: Blob; kind: 'audio' | 'camera' }[]>([])
+  const uploadAbortRef = useRef<AbortController | null>(null)
   const mutedRef = useRef(false)
   const muteLockedRef = useRef(false)
   const camLockedRef = useRef(false)
@@ -619,15 +628,71 @@ export function GuestPortal({
     )
   }
 
-  async function uploadBlob(blob: Blob, kind: 'audio' | 'camera', filename: string) {
+  /**
+   * Upload one recorded blob with bounded retry + signed-URL refresh (T4).
+   * The blob is NOT released here — it stays in `pendingTakesRef` until this
+   * resolves (i.e. the server `finalize` confirmed). On failure it throws and
+   * the blob is left in place for a manual "Retry upload".
+   */
+  async function uploadBlob(blob: Blob, kind: 'audio' | 'camera') {
     if (blob.size < 64) return false
     const mime = blob.type || (kind === 'camera' ? 'video/webm' : recorderMime() || 'audio/webm')
-    const file = new File([blob], filename, { type: mime })
-    const signed = await requestGuestTakeUpload(token, mime, file.size, kind)
-    const put = await fetch(signed.signedUrl, { method: 'PUT', headers: { 'Content-Type': mime }, body: file })
-    if (!put.ok) throw new Error(kind === 'camera' ? 'Could not upload camera backup' : 'Could not upload your take')
-    await finalizeGuestTake(token, signed.path, signed.publicUrl, mime, kind)
+    await resilientUpload(blob, mime, {
+      // Refresh = re-request a fresh signed URL from the take route. Called on the
+      // first attempt and whenever the current URL is rejected/expired (403).
+      refreshSignedUrl: async (): Promise<SignedTarget> => {
+        const signed = await requestGuestTakeUpload(token, mime, blob.size, kind)
+        return { signedUrl: signed.signedUrl, path: signed.path, publicUrl: signed.publicUrl }
+      },
+      // Only after finalize resolves is the take considered safely delivered.
+      finalize: async (target) => {
+        await finalizeGuestTake(token, target.path, target.publicUrl, mime, kind)
+      },
+      onProgress: (fraction) => setUploadProgress(fraction),
+      onStatus: (message) => setUploadStatus(message),
+      signal: uploadAbortRef.current?.signal,
+    })
     return true
+  }
+
+  /**
+   * Send everything still pending (each take is removed only after its own upload
+   * + finalize succeed). Used by `stopLocalTake` and the "Retry upload" button.
+   */
+  async function flushPendingTakes() {
+    if (!pendingTakesRef.current.length) return
+    if (!uploadAbortRef.current || uploadAbortRef.current.signal.aborted) {
+      uploadAbortRef.current = new AbortController()
+    }
+    setUploading(true)
+    setUploadFailed(false)
+    setError(null)
+    try {
+      // Iterate over a snapshot; drop each item from the ref only on its success.
+      for (const item of [...pendingTakesRef.current]) {
+        setUploadProgress(0)
+        await uploadBlob(item.blob, item.kind)
+        pendingTakesRef.current = pendingTakesRef.current.filter((p) => p !== item)
+      }
+      setUploadStatus(null)
+      setUploadProgress(0)
+      setOk(
+        backupUrlRef.current
+          ? 'Take + camera backup sent to the host. You can also download the camera file.'
+          : 'Take sent to the host booth',
+      )
+    } catch (err) {
+      // Blob(s) remain in pendingTakesRef — nothing was discarded.
+      setUploadFailed(true)
+      setUploadStatus(null)
+      setError(
+        err instanceof Error
+          ? `${err.message}. Your take is saved on this device — tap “Retry upload”.`
+          : 'Upload failed. Your take is saved — tap “Retry upload”.',
+      )
+    } finally {
+      setUploading(false)
+    }
   }
 
   async function stopLocalTake() {
@@ -643,32 +708,43 @@ export function GuestPortal({
     if (camCapture && camCapture.recorder.state !== 'inactive') camCapture.recorder.stop()
     if (!capture && !camCapture) return
     setUploading(true)
+    setUploadStatus('Preparing take…')
+    let audioBlob: Blob | null = null
+    let camBlob: Blob | null = null
     try {
-      const audioBlob = capture ? await capture.done : null
-      const camBlob = camCapture ? await camCapture.done.catch(() => new Blob()) : null
-      if (camBlob && camBlob.size >= 64) {
-        if (backupUrlRef.current) URL.revokeObjectURL(backupUrlRef.current)
-        const url = URL.createObjectURL(camBlob)
-        backupUrlRef.current = url
-        setBackupUrl(url)
-      }
-      if (audioBlob) await uploadBlob(audioBlob, 'audio', 'guest-take.webm')
-      if (camBlob && camBlob.size >= 64) await uploadBlob(camBlob, 'camera', 'guest-camera.webm')
-      setOk(
-        camBlob && camBlob.size >= 64
-          ? 'Take + camera backup sent to the host. You can also download the camera file.'
-          : 'Take sent to the host booth',
-      )
+      audioBlob = capture ? await capture.done : null
+      camBlob = camCapture ? await camCapture.done.catch(() => new Blob()) : null
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not send take')
-    } finally {
       setUploading(false)
+      setError(err instanceof Error ? err.message : 'Could not finish the recording')
+      return
     }
+    // Camera-backup download fallback stays intact: always mint a local object URL
+    // for the camera take so the guest can download it even if upload fails.
+    if (camBlob && camBlob.size >= 64) {
+      if (backupUrlRef.current) URL.revokeObjectURL(backupUrlRef.current)
+      const url = URL.createObjectURL(camBlob)
+      backupUrlRef.current = url
+      setBackupUrl(url)
+    }
+    // Stage blobs as pending BEFORE any network work. They are held in memory
+    // until each one's finalize confirms, so a mid-upload network kill can never
+    // discard the take — it stays queued for retry.
+    const staged: { blob: Blob; kind: 'audio' | 'camera' }[] = []
+    if (audioBlob && audioBlob.size >= 64) staged.push({ blob: audioBlob, kind: 'audio' })
+    if (camBlob && camBlob.size >= 64) staged.push({ blob: camBlob, kind: 'camera' })
+    pendingTakesRef.current = [...pendingTakesRef.current, ...staged]
+    await flushPendingTakes()
   }
 
   function teardown(stopMic: boolean) {
     clearRestartTimers()
     restartingRef.current = false
+    // Abort any in-flight upload XHR. The pending blob(s) stay in pendingTakesRef
+    // so nothing is discarded; if the session is truly over the ref is GC'd, but
+    // the camera-backup download URL survives for manual recovery.
+    uploadAbortRef.current?.abort()
+    uploadAbortRef.current = null
     stopMeterRef.current?.()
     stopHostMeterRef.current?.()
     if (captureRef.current) stopLaneCapture(captureRef.current)
@@ -1060,8 +1136,41 @@ export function GuestPortal({
                   <Download size={14} /> Download camera take
                 </a>
               )}
-              {uploading && <span className="text-xs text-[#FFB86B] self-center">Sending take…</span>}
+              {uploadFailed && !uploading && (
+                <button
+                  type="button"
+                  onClick={() => void flushPendingTakes()}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium"
+                >
+                  <RefreshCw size={14} /> Retry upload
+                </button>
+              )}
+              {uploading && (
+                <span className="text-xs text-[#FFB86B] self-center">{uploadStatus || 'Sending take…'}</span>
+              )}
             </div>
+
+            {(uploading || uploadFailed) && (
+              <div className="rounded-2xl border border-[#1A232C] bg-[#080C10] p-4 space-y-2">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className={uploadFailed ? 'text-[#FF7A9A]' : 'text-[#8DEBFF]'}>
+                    {uploadFailed ? 'Upload paused — your take is saved on this device' : uploadStatus || 'Uploading take…'}
+                  </span>
+                  <span className="font-mono text-[#A9B8C6]">{Math.round(uploadProgress * 100)}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-[#151B22] overflow-hidden">
+                  <div
+                    className={`h-full transition-[width] duration-150 ${uploadFailed ? 'bg-[#FF5B73]' : 'bg-[#53D6FF]'}`}
+                    style={{ width: `${Math.min(100, uploadProgress * 100)}%` }}
+                  />
+                </div>
+                <p className="text-[11px] text-[#7C8B97]">
+                  {uploadFailed
+                    ? 'The take is held in memory until the host confirms it. It also survives as the downloadable camera backup below. Reconnect and tap “Retry upload”.'
+                    : 'Keep this tab open. If the network drops the upload retries automatically and resumes when you’re back online.'}
+                </p>
+              </div>
+            )}
           </div>
         )}
 

@@ -63,7 +63,14 @@ export async function POST(
       return NextResponse.json({ error: error?.message || 'Could not start take upload' }, { status: 502 })
     }
     const { data: urlData } = supabase.storage.from('media').getPublicUrl(path)
-    return NextResponse.json({ signedUrl: data.signedUrl, path, publicUrl: urlData.publicUrl })
+    // `token` is returned so the client can (a) refresh a rejected/expired URL by
+    // re-POSTing, and (b) drop in a TUS/resumable upload later without a new route.
+    return NextResponse.json({
+      signedUrl: data.signedUrl,
+      token: data.token,
+      path,
+      publicUrl: urlData.publicUrl,
+    })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Take upload failed'
     return NextResponse.json({ error: message.slice(0, 180) }, { status: 500 })
