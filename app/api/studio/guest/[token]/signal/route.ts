@@ -71,6 +71,20 @@ export async function POST(
       const on = Boolean(body.payload?.on)
       await touchInvite(supabase, row.id, { connection_state: on ? 'recording' : 'connected' })
     }
+    // A guest returning on the same token re-offers (a fresh peer or an ICE
+    // restart). If the session was parked at `left` (a prior hangup/leave), that
+    // stale state would keep the admin's controls disabled and hide the new
+    // connection — so a guest offer reactivates presence to `joined`. We only
+    // clear `left`; an active `connected`/`recording` session is untouched so a
+    // mid-take ICE-restart offer never demotes the tally.
+    if (body.kind === 'offer' && body.role === 'guest' && row.connection_state === 'left') {
+      await touchInvite(supabase, row.id, {
+        connection_state: 'joined',
+        last_seen_at: new Date().toISOString(),
+      })
+    }
+    // Guest hangup parks the session; an admin hangup ends the invite for both.
+    // Either way the peer is torn down, so `left` is the correct resting state.
     if (body.kind === 'hangup') {
       await touchInvite(supabase, row.id, { connection_state: 'left' })
     }

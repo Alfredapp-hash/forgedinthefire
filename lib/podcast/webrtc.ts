@@ -190,7 +190,45 @@ export async function makeOffer(peer: RTCPeerConnection, recvVideo = false) {
   return peer.localDescription
 }
 
+/**
+ * Restart ICE on the offerer (guest) side without dropping local tracks or
+ * transceivers. Reuses the existing m-line layout — talkback, cue, video — so a
+ * blackout re-gathers candidates (new ufrag/pwd) instead of rebuilding the peer.
+ * Returns null if the peer is mid-negotiation so we don't stomp an in-flight SDP.
+ */
+export async function restartIceOffer(peer: RTCPeerConnection) {
+  if (peer.signalingState !== 'stable') {
+    console.warn('[studio] skip ICE restart in signaling state', peer.signalingState)
+    return null
+  }
+  const offer = await peer.createOffer({ iceRestart: true })
+  await peer.setLocalDescription(offer)
+  return peer.localDescription
+}
+
 export async function answerOffer(peer: RTCPeerConnection, offer: RTCSessionDescriptionInit) {
+  await peer.setRemoteDescription(offer)
+  await flushPendingIce(peer)
+  const answer = await peer.createAnswer()
+  await peer.setLocalDescription(answer)
+  return peer.localDescription
+}
+
+/**
+ * Re-answer a renegotiation offer (an ICE restart) on the EXISTING peer. The
+ * answerer's ufrag/pwd rotate to match the offerer's restart, keeping the same
+ * senders/receivers so audio recovers without a fresh peer. Returns false (and
+ * logs) if the offer lands in a state where re-answering would throw — the
+ * caller can then fall back to a full rebuild.
+ */
+export async function reanswerOffer(
+  peer: RTCPeerConnection,
+  offer: RTCSessionDescriptionInit,
+): Promise<RTCSessionDescription | null> {
+  if (peer.signalingState !== 'stable' && peer.signalingState !== 'have-remote-offer') {
+    console.warn('[studio] dropped restart offer in signaling state', peer.signalingState)
+    return null
+  }
   await peer.setRemoteDescription(offer)
   await flushPendingIce(peer)
   const answer = await peer.createAnswer()

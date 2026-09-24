@@ -81,17 +81,25 @@ import {
   type RecMode,
 } from '@/lib/podcast/record-session'
 import {
+  checkStorageQuota,
+  clearRecoverableTakes,
   clearSession,
+  loadRecoverableTakes,
   loadSession,
+  peekRecoverableTakes,
   peekSession,
   saveSession,
+  type CheckpointMeta,
   type SessionPeek,
 } from '@/lib/podcast/session-store'
 import {
+  createWatchdog,
+  makeCheckpointSink,
   openInputStreams,
   startLaneCapture,
   stopLaneCapture,
   stopStreams,
+  type CaptureWatchdog,
   type LaneCapture,
 } from '@/lib/podcast/capture'
 import { renderPictureMix, type PictureMode, type PictureScene } from '@/lib/podcast/picture'
@@ -191,6 +199,19 @@ type Snapshot = {
   selectedCamClipId: string | null
 }
 
+/** Best-guess capture sample rate for worklet PCM checkpoints (before capture opens). */
+function sampleRateProbe(): number {
+  try {
+    if (typeof AudioContext === 'undefined') return 48000
+    const ctx = new AudioContext()
+    const rate = ctx.sampleRate
+    void ctx.close()
+    return rate || 48000
+  } catch {
+    return 48000
+  }
+}
+
 function snapshotTracks(tracks: StudioTrack[]): StudioTrack[] {
   return tracks.map((t) => ({
     ...t,
@@ -264,9 +285,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [sessionStatus, setSessionStatus] = useState<'checking' | 'offer' | 'open'>(
     episodeId ? 'checking' : 'open',
   )
+  /** Crash survivors: checkpointed-but-unfinalized takes from a previous tab. */
+  const [crashTakes, setCrashTakes] = useState<CheckpointMeta[]>([])
+  /** Recording watchdog — updated by capture ticks; UI reads via recWatchdogRef. */
+  const [recFlowStalled, setRecFlowStalled] = useState(false)
 
   const recorderRef = useRef<LaneCapture[]>([])
   const capturesRef = useRef<LaneCapture[]>([])
+  /** Watchdogs for the lanes recording this take (samples-flowing signal). */
+  const watchdogsRef = useRef<CaptureWatchdog[]>([])
+  const watchdogRafRef = useRef<number | null>(null)
   const cameraCapturesRef = useRef<CameraCapture[]>([])
   const cameraStreamsRef = useRef<Record<string, MediaStream>>({})
   const streamRef = useRef<MediaStream[]>([])
@@ -451,10 +479,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       return
     }
     let cancelled = false
-    void peekSession(episodeId).then((peek) => {
+    void Promise.all([
+      peekSession(episodeId).catch(() => null),
+      peekRecoverableTakes(episodeId).catch(() => [] as CheckpointMeta[]),
+    ]).then(([peek, takes]) => {
       if (cancelled) return
-      if (peek && (peek.takeCount > 0 || peek.cameraCount > 0)) {
-        setRecover(peek)
+      if (takes.length > 0) setCrashTakes(takes)
+      if ((peek && (peek.takeCount > 0 || peek.cameraCount > 0)) || takes.length > 0) {
+        if (peek) setRecover(peek)
         setSessionStatus('offer')
       } else {
         setSessionStatus('open')
@@ -555,6 +587,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       idleStopRef.current.forEach((fn) => fn())
       abortRef.current?.abort()
       if (recRafRef.current) cancelAnimationFrame(recRafRef.current)
+      if (watchdogRafRef.current) window.clearInterval(watchdogRafRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -681,6 +714,35 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       setRecTally('stopped')
     }
   }, [recording, recTally])
+
+  // Recording watchdog: if no capture lane has delivered samples recently while
+  // live, flag a stall so the UI can warn the host their recorder went silent.
+  useEffect(() => {
+    if (!recording) {
+      setRecFlowStalled(false)
+      if (watchdogRafRef.current) window.clearInterval(watchdogRafRef.current)
+      watchdogRafRef.current = null
+      return
+    }
+    const STALL_MS = 3000
+    const id = window.setInterval(() => {
+      if (!recLiveRef.current) return
+      const dogs = watchdogsRef.current
+      if (dogs.length === 0) return
+      const now = performance.now()
+      // Flowing if ANY lane ticked within the window (a muted guest can be silent).
+      const flowing = dogs.some((d) => {
+        const { lastTickAt } = d.read()
+        return lastTickAt > 0 && now - lastTickAt < STALL_MS
+      })
+      setRecFlowStalled(!flowing)
+    }, 1000)
+    watchdogRafRef.current = id
+    return () => {
+      window.clearInterval(id)
+      watchdogRafRef.current = null
+    }
+  }, [recording])
 
   useEffect(() => {
     if (!recording) {
@@ -884,8 +946,100 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
   }
 
+  /** Lay checkpointed-but-unfinalized takes (crash survivors) onto the timeline. */
+  async function restoreCrashTakes() {
+    if (!episodeId || crashTakes.length === 0) return
+    setBusy('Recovering an in-progress take…')
+    setError(null)
+    try {
+      const recovered = await loadRecoverableTakes(episodeId)
+      const audioTakes = recovered.filter((r) => r.meta.kind !== 'camera')
+      if (audioTakes.length === 0) {
+        setError('No recoverable take data was found')
+        await clearRecoverableTakes(episodeId)
+        setCrashTakes([])
+        setSessionStatus('open')
+        return
+      }
+      pushHistory()
+      const laid: string[] = []
+      for (const { meta, blob } of audioTakes) {
+        let buffer = await bufferFromBlob(blob)
+        if (meta.recTrim > 0.04 && buffer.duration > meta.recTrim + 0.08) {
+          buffer = sliceBuffer(buffer, meta.recTrim, buffer.duration)
+        }
+        const personId = meta.personId
+        const laneId = meta.laneKey
+        setTracks((prev) => {
+          const person = people.find((p) => p.id === personId)
+          const existing = prev.find((t) => t.id === laneId && !t.buffer)
+          const target =
+            existing || emptyTakeForPerson(prev, personId) || prev.find((t) => t.personId === personId && !t.buffer)
+          const syncGroup = newSyncGroupId()
+          if (target) {
+            revokeUrl(target.url)
+            laid.push(target.id)
+            return withListenTake(
+              prev.map((t) =>
+                t.id === target.id
+                  ? {
+                      ...t,
+                      buffer: cloneAudioBuffer(buffer),
+                      url: bufferToUrl(buffer),
+                      offset: meta.offset,
+                      clips: [fullClipForBuffer(buffer, meta.offset, t.fadeIn, t.fadeOut, syncGroup)],
+                      armed: true,
+                      listen: true,
+                    }
+                  : t,
+              ),
+              target.id,
+            )
+          }
+          const take = nextTakeNumber(prev, personId)
+          const made = createEmptyTrack({
+            name: `${person?.name || 'Voice'} · recovered take ${take}`,
+            role: person ? roleForPerson(person) : 'vocal',
+            personId,
+            take,
+            color: person?.color,
+            offset: meta.offset,
+            armed: true,
+            volume: 1,
+            listen: true,
+            clips: [fullClipForBuffer(buffer, meta.offset, 0.05, 0.15, syncGroup)],
+          })
+          made.buffer = cloneAudioBuffer(buffer)
+          made.url = bufferToUrl(buffer)
+          laid.push(made.id)
+          return prev
+            .map((t) => ({ ...t, listen: t.personId === personId && !t.layered ? false : t.listen }))
+            .concat(made)
+        })
+      }
+      setSelectedId(laid[0] || null)
+      seededRef.current = true
+      await clearRecoverableTakes(episodeId)
+      setCrashTakes([])
+      setRecover(null)
+      setSessionStatus('open')
+      setOk(
+        `Recovered ${audioTakes.length} in-progress take${audioTakes.length === 1 ? '' : 's'} from the crashed session — review, then export`,
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not recover the in-progress take')
+      setSessionStatus('open')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   function dismissRecover(discard = false) {
-    if (discard && episodeId) void clearSession(episodeId)
+    if (discard && episodeId) {
+      void clearSession(episodeId)
+      void clearRecoverableTakes(episodeId)
+    }
+    setCrashTakes([])
     setRecover(null)
     setSessionStatus('open')
   }
@@ -1287,6 +1441,15 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       idleStopRef.current = []
       stopStreams(idleStreamRef.current)
       idleStreamRef.current = []
+      // Storage-quota preflight — crash-safe autosave needs room to checkpoint.
+      if (episodeId) {
+        const quota = await checkStorageQuota()
+        if (quota.supported && quota.low) {
+          setError(
+            `Low browser storage — only ${formatBytes(quota.free)} free. Crash-safe autosave may fail on a long take; free disk or download earlier takes.`,
+          )
+        }
+      }
       await sleep(40, ac.signal)
       if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
       const uniqueDevices = jobs.map((j) => j.key)
@@ -1359,13 +1522,42 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
 
       const recTrim = Math.max(0, prerollSec)
+      const captureRate = cueRef.current?.ctx.sampleRate || sampleRateProbe()
+      watchdogsRef.current = []
       const captures = await Promise.all(
         jobs.map(async (job) => {
           const stream = streams.get(job.key)
           if (!stream) {
             throw new Error(`No microphone stream for ${job.sharedNames.join(' + ') || 'this voice'}`)
           }
-          return { job, capture: await startLaneCapture(job.lane.id, stream) }
+          const watchdog = createWatchdog()
+          watchdogsRef.current.push(watchdog)
+          // Crash-safe checkpointing needs a stable episode + lane key.
+          const checkpoint = episodeId
+            ? await makeCheckpointSink({
+                episodeId,
+                laneKey: job.lane.id,
+                kind: 'media-recorder', // refined by startLaneCapture (worklet flips this in the sink meta below)
+                mime: 'audio/webm',
+                sampleRate: captureRate,
+                offset: punch,
+                recTrim,
+                label: job.sharedNames.join(' + ') || 'Voice',
+                personId: job.lane.personId,
+                onError: (err) => {
+                  setError(
+                    err instanceof Error
+                      ? err.message
+                      : 'Crash-safe autosave hit a storage error — the take is still recording.',
+                  )
+                },
+              }).catch(() => undefined)
+            : undefined
+          return {
+            job,
+            checkpoint,
+            capture: await startLaneCapture(job.lane.id, stream, { checkpoint, watchdog }),
+          }
         }),
       )
       capturesRef.current = captures.map((c) => c.capture)
@@ -1383,6 +1575,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         recorderRef.current = []
         capturesRef.current = []
         cameraCapturesRef.current = []
+        watchdogsRef.current = []
         recordingRef.current = false
         recLiveRef.current = false
         setRecording(false)
@@ -1541,6 +1734,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           } else if (laidCams.length) {
             setOk(`Camera file at ${formatClock(punch)}${camNote}`)
           }
+          // Take is safely on the timeline — drop its crash-safe checkpoints.
+          const laidLaneIds = new Set(decoded.map((d) => d.lane.id))
+          await Promise.all(
+            captures
+              .filter((c) => c.checkpoint && laidLaneIds.has(c.job.lane.id))
+              .map((c) => c.checkpoint!.discard().catch(() => {})),
+          )
         } catch (err) {
           setError(err instanceof Error ? err.message : 'Could not decode recording')
         } finally {
@@ -2180,25 +2380,50 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       </div>
 
       <div className="p-4 space-y-4">
-        {recover && sessionStatus === 'offer' && (
+        {(recover || crashTakes.length > 0) && sessionStatus === 'offer' && (
           <div className="rounded-xl border border-[#53D6FF]/40 bg-[#0A1820] px-4 py-3 flex flex-wrap items-center gap-3">
-            <p className="text-sm text-[#F6FAFC] flex-1 min-w-[12rem]">
-              Recover {recover.takeCount} take{recover.takeCount === 1 ? '' : 's'}
-              {recover.cameraCount
-                ? ` + ${recover.cameraCount} camera file${recover.cameraCount === 1 ? '' : 's'}`
-                : ''}{' '}
-              ({formatClock(recover.durationSec)}) saved {new Date(recover.savedAt).toLocaleTimeString()} on this
-              computer.
-            </p>
-            <button type="button" className={primary} onClick={() => void restoreSavedSession()}>
-              Restore
-            </button>
+            {crashTakes.length > 0 && (
+              <p className="text-sm text-[#FFB86B] flex-1 min-w-[12rem] w-full">
+                A previous session ended mid-take. {crashTakes.length} in-progress recording
+                {crashTakes.length === 1 ? '' : 's'} ({crashTakes.map((t) => t.label).join(', ')}) were
+                checkpointed and can be recovered.
+              </p>
+            )}
+            {recover && (
+              <p className="text-sm text-[#F6FAFC] flex-1 min-w-[12rem]">
+                Recover {recover.takeCount} take{recover.takeCount === 1 ? '' : 's'}
+                {recover.cameraCount
+                  ? ` + ${recover.cameraCount} camera file${recover.cameraCount === 1 ? '' : 's'}`
+                  : ''}{' '}
+                ({formatClock(recover.durationSec)}) saved {new Date(recover.savedAt).toLocaleTimeString()} on
+                this computer.
+              </p>
+            )}
+            {crashTakes.length > 0 && (
+              <button type="button" className={primary} onClick={() => void restoreCrashTakes()}>
+                Recover in-progress take
+              </button>
+            )}
+            {recover && (
+              <button type="button" className={primary} onClick={() => void restoreSavedSession()}>
+                Restore
+              </button>
+            )}
             <button type="button" className={btn} onClick={() => dismissRecover(false)}>
               Keep empty
             </button>
             <button type="button" className={btn} onClick={() => dismissRecover(true)}>
               Discard saved
             </button>
+          </div>
+        )}
+
+        {recording && recFlowStalled && (
+          <div className="rounded-xl border border-[#FF7A9A]/60 bg-[#20101A] px-4 py-3">
+            <p className="text-sm text-[#FF7A9A]">
+              No samples are reaching the recorder — the capture may have stalled. Check the mic / guest
+              connection; the last checkpoint is safe on this computer.
+            </p>
           </div>
         )}
 

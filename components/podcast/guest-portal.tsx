@@ -17,6 +17,7 @@ import {
 import {
   describeGuestSession,
   describeGuestTally,
+  describeIceProgress,
   parseTallyPhase,
   type GuestInvitePublic,
   type GuestTallyPhase,
@@ -44,6 +45,7 @@ import {
   type StudioIceConfig,
   makeOffer,
   remoteAudioByRole,
+  restartIceOffer,
 } from '@/lib/podcast/webrtc'
 
 type Phase = 'loading' | 'blocked' | 'lobby' | 'booth'
@@ -76,6 +78,7 @@ export function GuestPortal({
   const [clip, setClip] = useState(false)
   const [hostPeak, setHostPeak] = useState(0)
   const [ice, setIce] = useState<RTCIceConnectionState | ''>('')
+  const [captureFlowing, setCaptureFlowing] = useState<boolean | null>(null)
   const [recording, setRecording] = useState(false)
   const [tally, setTally] = useState<GuestTallyPhase>('waiting')
   const [talkback, setTalkback] = useState(false)
@@ -108,6 +111,14 @@ export function GuestPortal({
   const cueLiveRef = useRef(false)
   const phonesRef = useRef<GuestHeadphoneMix | null>(null)
   const startingPeerRef = useRef(false)
+  // Reconnection state machine (T1): a light ICE restart on the existing peer
+  // first, a full rebuild only if the restart doesn't recover in time.
+  const restartingRef = useRef(false)
+  const restartGraceRef = useRef<number | null>(null)
+  const restartFallbackRef = useRef<number | null>(null)
+  const appliedAnswerRef = useRef<string | null>(null)
+  const seenSignalRef = useRef<Set<number>>(new Set())
+  const captureTickRef = useRef(0)
   mutedRef.current = muted
   muteLockedRef.current = muteLocked
   camLockedRef.current = camLocked
@@ -252,9 +263,65 @@ export function GuestPortal({
     }
   }
 
+  function clearRestartTimers() {
+    if (restartGraceRef.current != null) {
+      window.clearTimeout(restartGraceRef.current)
+      restartGraceRef.current = null
+    }
+    if (restartFallbackRef.current != null) {
+      window.clearTimeout(restartFallbackRef.current)
+      restartFallbackRef.current = null
+    }
+  }
+
+  /**
+   * Lighter-weight recovery than a full rebuild: re-offer with an ICE restart on
+   * the SAME peer (local tracks stay attached, no new m-lines). The admin
+   * re-answers on its existing peer. If ICE hasn't recovered within a few
+   * seconds, fall back to `retryPeer()` (full rebuild on the same invite).
+   */
+  async function attemptIceRestart(peer: RTCPeerConnection) {
+    if (restartingRef.current) return
+    if (peerRef.current !== peer) return
+    restartingRef.current = true
+    setReconnecting(true)
+    setOk('Reconnecting on this invite…')
+    try {
+      const offer = await restartIceOffer(peer)
+      if (!offer) {
+        // Mid-negotiation — can't restart cleanly. Let the fallback rebuild.
+        restartingRef.current = false
+      } else {
+        await pushGuestSignal(token, 'offer', {
+          type: offer.type,
+          sdp: offer.sdp,
+          restart: true,
+        }).catch(() => {})
+      }
+    } catch {
+      restartingRef.current = false
+    }
+    // Arm a single fallback rebuild if the restart doesn't take.
+    if (restartFallbackRef.current == null) {
+      restartFallbackRef.current = window.setTimeout(() => {
+        restartFallbackRef.current = null
+        const p = peerRef.current
+        const recovered =
+          p && (p.iceConnectionState === 'connected' || p.iceConnectionState === 'completed')
+        if (!recovered) {
+          restartingRef.current = false
+          void retryPeer()
+        }
+      }, 4000)
+    }
+  }
+
   async function startPeer() {
     if (startingPeerRef.current) return
     startingPeerRef.current = true
+    clearRestartTimers()
+    restartingRef.current = false
+    appliedAnswerRef.current = null
     try {
       closePeer(peerRef.current, false)
       const cfg = iceCfgRef.current || (await loadStudioIceServers())
@@ -294,6 +361,8 @@ export function GuestPortal({
         stopHostMeterRef.current = meterStream ? attachInputMeter(meterStream, setHostPeak) : null
       }
       const markLive = () => {
+        clearRestartTimers()
+        restartingRef.current = false
         void postGuestSession(token, { action: 'connected' }).catch(() => {})
         if (camStreamRef.current && !camLockedRef.current) {
           void pushGuestSignal(token, 'camera', { on: true }).catch(() => {})
@@ -304,9 +373,25 @@ export function GuestPortal({
       }
       peer.oniceconnectionstatechange = () => {
         setIce(peer.iceConnectionState)
-        if (peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed') markLive()
-        if (peer.iceConnectionState === 'failed') {
+        const state = peer.iceConnectionState
+        if (state === 'connected' || state === 'completed') markLive()
+        // `disconnected` often self-heals — give it a short grace, then try an ICE
+        // restart (keeps local tracks) before any full rebuild.
+        if (state === 'disconnected') {
+          setReconnecting(true)
+          if (restartGraceRef.current == null && !restartingRef.current) {
+            restartGraceRef.current = window.setTimeout(() => {
+              restartGraceRef.current = null
+              if (peerRef.current === peer && peer.iceConnectionState === 'disconnected') {
+                void attemptIceRestart(peer)
+              }
+            }, 1200)
+          }
+        }
+        // `failed` won't recover on its own — restart ICE immediately.
+        if (state === 'failed') {
           setError(iceFailedHint(iceCfgRef.current?.turnConfigured || false))
+          if (peerRef.current === peer) void attemptIceRestart(peer)
         }
       }
       peer.onconnectionstatechange = () => {
@@ -344,8 +429,19 @@ export function GuestPortal({
         if (data.session.recording !== recording) setRecording(data.session.recording)
         for (const signal of data.signals) {
           afterRef.current = Math.max(afterRef.current, signal.id)
+          // Dedupe: the poll can redeliver a signal across overlapping ticks.
+          if (seenSignalRef.current.has(signal.id)) continue
+          seenSignalRef.current.add(signal.id)
           if (signal.kind === 'answer' && signal.payload.sdp && peerRef.current) {
-            await applyAnswer(peerRef.current, signal.payload as unknown as RTCSessionDescriptionInit)
+            const sdp = String(signal.payload.sdp)
+            // Skip a duplicate answer for the offer we already applied.
+            if (appliedAnswerRef.current !== sdp) {
+              const applied = await applyAnswer(
+                peerRef.current,
+                signal.payload as unknown as RTCSessionDescriptionInit,
+              )
+              if (applied) appliedAnswerRef.current = sdp
+            }
           }
           if (signal.kind === 'ice' && peerRef.current) {
             await addIce(peerRef.current, (signal.payload.candidate as RTCIceCandidateInit) || null)
@@ -438,6 +534,44 @@ export function GuestPortal({
     if (audio) audio.muted = true
   }, [talkback])
 
+  // Recording watchdog: surface whether capture samples are actually flowing so a
+  // silently-failed recorder is visible instead of a false "recording" badge.
+  //
+  // INTEGRATION POINT (capture engineer): the authoritative signal is a
+  // sample/chunk tick from the capture engine (LaneCapture). Until that value is
+  // exposed, this proxies flow from the live capturing MediaRecorder (state +
+  // its `ondataavailable` bump via captureTickRef) and the mic track health.
+  // Wire the real tick into captureTickRef.current to make this exact.
+  useEffect(() => {
+    if (!recording) {
+      setCaptureFlowing(null)
+      return
+    }
+    let lastTick = captureTickRef.current
+    const evaluate = () => {
+      const capture = captureRef.current
+      const track = streamRef.current?.getAudioTracks()[0]
+      const micLive = Boolean(track && track.readyState === 'live' && !track.muted)
+      const recorder = capture?.recorder ?? null
+      // MediaRecorder path: `ondataavailable` bumps captureTickRef; compare it.
+      const recorderFlowing = recorder
+        ? recorder.state === 'recording' && captureTickRef.current !== lastTick
+        : capture?.kind === 'worklet'
+          ? micLive
+          : null
+      lastTick = captureTickRef.current
+      if (!capture) {
+        // Recording flagged but no local capture started yet — treat as pending.
+        setCaptureFlowing(null)
+        return
+      }
+      setCaptureFlowing(recorderFlowing == null ? micLive : recorderFlowing && micLive)
+    }
+    evaluate()
+    const id = window.setInterval(evaluate, 1500)
+    return () => window.clearInterval(id)
+  }, [recording])
+
   useEffect(() => {
     phonesRef.current?.setCueVolume(cueVolume)
   }, [cueVolume])
@@ -461,6 +595,18 @@ export function GuestPortal({
       captureStartRef.current = startLaneCapture('guest', stream)
       captureRef.current = await captureStartRef.current
       captureStartRef.current = null
+      // Non-invasive flow tap for the recording watchdog: bump a tick whenever the
+      // MediaRecorder emits a chunk. Chained after the engine's own handler so we
+      // don't disturb capture. Worklet captures have no recorder — the watchdog
+      // falls back to mic-track health for those.
+      const recorder = captureRef.current?.recorder
+      if (recorder) {
+        const prior = recorder.ondataavailable
+        recorder.ondataavailable = (event) => {
+          if (event.data?.size) captureTickRef.current += 1
+          prior?.call(recorder, event)
+        }
+      }
     }
     const cam = camStreamRef.current
     if (cam && !camCaptureRef.current) {
@@ -521,6 +667,8 @@ export function GuestPortal({
   }
 
   function teardown(stopMic: boolean) {
+    clearRestartTimers()
+    restartingRef.current = false
     stopMeterRef.current?.()
     stopHostMeterRef.current?.()
     if (captureRef.current) stopLaneCapture(captureRef.current)
@@ -563,6 +711,15 @@ export function GuestPortal({
     recording,
   })
   const tallyUi = describeGuestTally(tally)
+  const conn = describeIceProgress(ice, { reconnecting })
+  const connToneClass =
+    conn.tone === 'live'
+      ? 'text-[#7CFFB2]'
+      : conn.tone === 'fail'
+        ? 'text-[#FF7A9A]'
+        : conn.tone === 'warn'
+          ? 'text-[#FFB86B]'
+          : 'text-[#A9B8C6]'
   const iceFailed = presence.phase === 'failed'
   const canRetry = presence.phase === 'failed' || presence.phase === 'dropped'
   const tallyToneClass =
@@ -718,8 +875,17 @@ export function GuestPortal({
                         : 'Waiting for the host to record. You do not punch Record from here.'}
                 </p>
               </div>
-              <p className="text-[11px] font-mono text-[#A9B8C6] shrink-0">{ice || 'waiting'}</p>
+              <p className={`text-[11px] font-mono shrink-0 ${connToneClass}`}>{conn.label}</p>
             </div>
+            {recording && captureFlowing === false && (
+              <div className="rounded-xl border border-[#FF7A9A]/70 bg-[#2A1014] px-4 py-2.5 text-[11px] text-[#FFB3C3]">
+                Local backup may not be recording — no samples detected. Check the mic isn’t muted or
+                unplugged and keep this tab focused. Your take could be silent.
+              </div>
+            )}
+            {recording && captureFlowing === true && (
+              <p className="text-[11px] text-[#7CFFB2]">Local backup capturing — samples flowing.</p>
+            )}
             {(iceFailed || presence.phase === 'dropped') && (
               <div className="rounded-xl border border-[#FF7A9A]/70 bg-[#2A1014] px-4 py-3 text-sm text-[#FFB3C3] space-y-2">
                 <p>{iceFailedHint(turnConfigured)}</p>

@@ -102,6 +102,51 @@ export function iceLooksUp(ice?: RTCIceConnectionState | '') {
   return ice === 'connected' || ice === 'completed'
 }
 
+/**
+ * A live-with-host presence that hasn't heartbeat in ~2-3 beats (guest posts one
+ * every 8s). Older than this and the tab is almost certainly gone even though the
+ * peer never fired `failed`. Admin-side only — the guest always knows its own tab
+ * is open, so it never marks itself stale.
+ */
+export const GUEST_STALE_MS = 20_000
+
+export function guestLooksStale(lastSeenAt?: string | null, now = Date.now()) {
+  if (!lastSeenAt) return false
+  const seen = new Date(lastSeenAt).getTime()
+  if (!Number.isFinite(seen)) return false
+  return now - seen > GUEST_STALE_MS
+}
+
+/**
+ * Human connection-state progression for the booth UI, replacing the raw ICE
+ * enum. `reconnecting` covers a `disconnected` drop or an in-flight ICE restart.
+ */
+export function describeIceProgress(
+  ice: RTCIceConnectionState | '',
+  opts: { reconnecting?: boolean } = {},
+): { label: string; tone: GuestUiTone } {
+  if (opts.reconnecting && ice !== 'connected' && ice !== 'completed') {
+    return { label: 'Reconnecting', tone: 'warn' }
+  }
+  switch (ice) {
+    case 'new':
+      return { label: 'Gathering', tone: 'wait' }
+    case 'checking':
+      return { label: 'Checking', tone: 'wait' }
+    case 'connected':
+    case 'completed':
+      return { label: 'Connected', tone: 'live' }
+    case 'disconnected':
+      return { label: 'Reconnecting', tone: 'warn' }
+    case 'failed':
+      return { label: 'Failed', tone: 'fail' }
+    case 'closed':
+      return { label: 'Closed', tone: 'idle' }
+    default:
+      return { label: 'Gathering', tone: 'wait' }
+  }
+}
+
 export function iceLooksDead(ice?: RTCIceConnectionState | '') {
   return ice === 'failed' || ice === 'closed'
 }
@@ -118,6 +163,8 @@ export function describeGuestSession(opts: {
   expired?: boolean
   ice?: RTCIceConnectionState | ''
   recording?: boolean
+  /** Admin-side: guest hasn't heartbeat in ~2-3 beats. Surfaces as "not responding". */
+  stale?: boolean
 }): { phase: GuestUiPhase; label: string; tone: GuestUiTone } {
   const { side, state, revoked, expired, ice } = opts
   if (side === 'admin' && !opts.hasInvite) return { phase: 'none', label: 'No invite', tone: 'idle' }
@@ -125,6 +172,12 @@ export function describeGuestSession(opts: {
   if (expired) return { phase: 'expired', label: 'Expired', tone: 'fail' }
   if (state === 'left' && !iceLooksUp(ice)) {
     return { phase: 'left', label: side === 'admin' ? 'Guest left' : 'You left', tone: 'idle' }
+  }
+
+  // A guest that stopped heartbeating but never fired `failed` (tab closed / put
+  // to sleep) should read as "not responding" instead of a stuck live badge.
+  if (opts.stale && side === 'admin' && state !== 'left') {
+    return { phase: 'dropped', label: 'Guest not responding', tone: 'warn' }
   }
 
   const rec = Boolean(opts.recording || state === 'recording')

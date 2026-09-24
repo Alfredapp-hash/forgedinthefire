@@ -7,6 +7,9 @@ import { createHostFallbackSendMix, type HostFallbackSendMix } from '@/lib/podca
 import {
   describeGuestSession,
   describeGuestTally,
+  describeIceProgress,
+  guestLooksStale,
+  GUEST_STALE_MS,
   type GuestInviteAdmin,
   type GuestTallyPhase,
 } from '@/lib/podcast/guest-types'
@@ -29,6 +32,7 @@ import {
   iceFailedHint,
   loadStudioIceServers,
   programCueSender,
+  reanswerOffer,
   type StudioIceConfig,
 } from '@/lib/podcast/webrtc'
 
@@ -92,6 +96,8 @@ export function GuestInvitePanel({
   const cueToGuestRef = useRef(false)
   const cueStreamRef = useRef<MediaStream | null>(null)
   const fallbackMixRef = useRef<HostFallbackSendMix | null>(null)
+  const seenSignalRef = useRef<Set<number>>(new Set())
+  const [nowTick, setNowTick] = useState(() => Date.now())
   hostRef.current = hostStream
   talkbackRef.current = talkback
   cueToGuestRef.current = cueToGuest
@@ -147,6 +153,9 @@ export function GuestInvitePanel({
         setInvites((prev) => prev.map((i) => (i.id === data.invite.id ? { ...i, ...data.invite } : i)))
         for (const signal of data.signals) {
           afterRef.current = Math.max(afterRef.current, signal.id)
+          // Dedupe redelivered signals across overlapping polls.
+          if (seenSignalRef.current.has(signal.id)) continue
+          seenSignalRef.current.add(signal.id)
           await handleSignal(liveId, signal.kind, signal.payload)
         }
       } catch {
@@ -159,6 +168,14 @@ export function GuestInvitePanel({
       cancelled = true
       window.clearInterval(id)
     }
+  }, [liveId])
+
+  // Tick a clock while an invite is live so staleness (last_seen_at age) is
+  // recomputed on render even when no signals arrive.
+  useEffect(() => {
+    if (!liveId) return
+    const id = window.setInterval(() => setNowTick(Date.now()), 5000)
+    return () => window.clearInterval(id)
   }, [liveId])
 
   function talkbackSource() {
@@ -267,6 +284,21 @@ export function GuestInvitePanel({
 
   async function handleSignal(inviteId: string, kind: string, payload: Record<string, unknown>) {
     if (kind === 'offer' && payload.sdp) {
+      // An ICE-restart offer renegotiates the EXISTING peer (same transceivers,
+      // same remote tracks) so audio recovers without a rebuild. A plain offer —
+      // first connect or after we dropped the peer — builds a fresh one.
+      const isRestart = Boolean(payload.restart) && Boolean(peerRef.current)
+      if (isRestart) {
+        const peer = peerRef.current!
+        const desc = await reanswerOffer(peer, payload as unknown as RTCSessionDescriptionInit)
+        if (desc) {
+          await pushAdminSignal(inviteId, 'answer', { type: desc.type, sdp: desc.sdp })
+          pushHeadphonesToPeer()
+          setReconnecting(false)
+          return
+        }
+        // Re-answer refused (wrong state) — fall through to a full rebuild.
+      }
       const cfg = await readyIce()
       resetPeer(inviteId, cfg.iceServers)
       const peer = peerRef.current
@@ -444,6 +476,7 @@ export function GuestInvitePanel({
       setInvites((prev) => [data.invite, ...prev.filter((i) => i.id !== data.invite.id)])
       setFreshUrl(data.invite.url || null)
       afterRef.current = 0
+      seenSignalRef.current.clear()
       setCopied(false)
       setGuestMuted(false)
       setMuteLocked(false)
@@ -501,6 +534,11 @@ export function GuestInvitePanel({
     }
   }
 
+  // Guest heartbeats every 8s; if last_seen_at is older than ~2-3 beats while the
+  // peer still reads connected, the tab is almost certainly gone. Only meaningful
+  // once the guest has actually been in the booth (not pending / left).
+  const guestActive = Boolean(live) && live?.state !== 'pending' && live?.state !== 'left'
+  const stale = guestActive && guestLooksStale(live?.lastSeenAt, nowTick)
   const presence = describeGuestSession({
     side: 'admin',
     hasInvite: Boolean(live),
@@ -509,7 +547,9 @@ export function GuestInvitePanel({
     expired: live?.expired,
     ice,
     recording: recording || live?.state === 'recording',
+    stale,
   })
+  const conn = describeIceProgress(ice, { reconnecting })
   const liveInvite = Boolean(live) && !live?.revoked && !live?.expired
   const guestInBooth = liveInvite && live?.state !== 'pending' && live?.state !== 'left'
   const canRetry = presence.phase === 'failed' || presence.phase === 'dropped'
@@ -523,13 +563,24 @@ export function GuestInvitePanel({
           {presence.label}
         </span>
         {live?.guestName && <span className="text-xs text-[#F6FAFC]">{live.guestName}</span>}
-        {ice && <span className="text-[11px] font-mono text-[#7C8B97]">{ice}</span>}
+        {ice && (
+          <span className={`text-[11px] font-mono ${TONE_CLASS[conn.tone] || TONE_CLASS.idle}`}>
+            {conn.label}
+          </span>
+        )}
         {liveInvite && (
           <span className={`text-[11px] font-mono ${TONE_CLASS[tally.tone] || TONE_CLASS.idle}`}>
             {tally.label}
           </span>
         )}
       </div>
+      {stale && (
+        <div className="rounded-lg border border-[#FFB86B]/60 bg-[#241A0A] px-3 py-2 text-[11px] text-[#F2D68A]">
+          Guest not responding — no heartbeat for {Math.round(GUEST_STALE_MS / 1000)}s+. Their tab may
+          be closed, asleep, or offline. The peer may still show connected but audio/video could be
+          stale. Try Retry, or ask them to reopen the same invite link.
+        </div>
+      )}
       {live && !live.revoked && !live.expired && (
         <p className="text-[11px] text-[#7C8B97]">
           Mic {muteLocked ? 'host muted' : guestMuted ? 'guest muted' : 'live'}
