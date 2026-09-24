@@ -109,8 +109,9 @@ export default function LoginPage() {
 
     console.log('[Login] Admin access granted, role:', adminUser.role)
 
-    // User is authenticated and is an admin - redirect to admin dashboard
-    router.push('/admin')
+    const redirect = new URLSearchParams(window.location.search).get('redirect')
+    const next = redirect?.startsWith('/admin') ? redirect : '/admin'
+    router.push(next)
     router.refresh()
   }
 
