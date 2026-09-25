@@ -139,6 +139,104 @@
     --input: 210 20% 19%;
     --ring: 191 100% 78%; /* ice blue focus ring */
     --radius: 0.75rem;
+
+    /* ============================================================
+       STUDIO — GarageBand-style additions (Phase 0)
+       Purely additive. Everything above is untouched. These tokens
+       power the podcast studio redesign: track-lane colour coding,
+       real depth/elevation, and rhythm/shape/type helpers. They build
+       ON the Forged Light brand — the forged-blue / ice-blue / heart
+       identity is preserved, and these only add what a DAW needs.
+       ============================================================ */
+
+    /* -- Track-lane hue map --------------------------------------
+       One persistent hue per person/track, GarageBand-style. Host and
+       guest reuse the brand blues so the studio still reads as Forged;
+       cohorts get warm/cool accents that stay legible on graphite. */
+    --lane-host: #53d6ff; /* forged blue  — the host       */
+    --lane-guest: #8debff; /* ice blue     — the guest      */
+    --lane-cohost-1: #ffb86b; /* amber        — cohost 1       */
+    --lane-cohost-2: #a6e3a1; /* green        — cohost 2       */
+    --lane-cohost-3: #bf9af2; /* violet       — cohost 3       */
+    --lane-cohost-4: #ff8fb0; /* pink         — cohost 4       */
+
+    /* Derived lane surfaces, mirrored by lib/podcast/lanes.ts. Kept
+       here so pure-CSS surfaces can reference them too. Lane bg ~8%,
+       clip fill ~22%, border ~40% of the base hue. */
+    --lane-host-bg: rgba(83, 214, 255, 0.08);
+    --lane-host-clip: rgba(83, 214, 255, 0.22);
+    --lane-host-border: rgba(83, 214, 255, 0.4);
+    --lane-guest-bg: rgba(141, 235, 255, 0.08);
+    --lane-guest-clip: rgba(141, 235, 255, 0.22);
+    --lane-guest-border: rgba(141, 235, 255, 0.4);
+    --lane-cohost-1-bg: rgba(255, 184, 107, 0.08);
+    --lane-cohost-1-clip: rgba(255, 184, 107, 0.22);
+    --lane-cohost-1-border: rgba(255, 184, 107, 0.4);
+    --lane-cohost-2-bg: rgba(166, 227, 161, 0.08);
+    --lane-cohost-2-clip: rgba(166, 227, 161, 0.22);
+    --lane-cohost-2-border: rgba(166, 227, 161, 0.4);
+    --lane-cohost-3-bg: rgba(191, 154, 242, 0.08);
+    --lane-cohost-3-clip: rgba(191, 154, 242, 0.22);
+    --lane-cohost-3-border: rgba(191, 154, 242, 0.4);
+    --lane-cohost-4-bg: rgba(255, 143, 176, 0.08);
+    --lane-cohost-4-clip: rgba(255, 143, 176, 0.22);
+    --lane-cohost-4-border: rgba(255, 143, 176, 0.4);
+
+    /* -- Depth system --------------------------------------------
+       Real elevation to sit ALONGSIDE the brand glows (which stay the
+       hero light). Neutral drop shadows give panels physical stacking;
+       the glows above provide the cyan bloom. */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+    /* Cyan glows tuned for the studio (kept at/under 16% alpha, per
+       the brand's "glow never exceeds ~15%" rule). */
+    --glow-subtle: 0 0 12px rgba(83, 214, 255, 0.1);
+    --glow-medium: 0 0 24px rgba(83, 214, 255, 0.13);
+    --glow-strong: 0 0 40px rgba(83, 214, 255, 0.16);
+
+    /* The record moment: a heart-red breathing glow. Used by the
+       RecordButton and the timeline record affordance. */
+    --rec-glow: 0 0 0 1px rgba(255, 91, 115, 0.55),
+      0 0 22px rgba(255, 91, 115, 0.35);
+
+    /* Selection: a 2px cyan rim with a soft bloom. */
+    --highlight-rim: 0 0 0 2px rgba(83, 214, 255, 0.9),
+      0 0 16px rgba(83, 214, 255, 0.28);
+
+    /* Tactile inset for pressable controls (top highlight + inner
+       floor), so buttons and faders read like physical hardware. */
+    --inset-top: inset 0 1px 0 rgba(246, 250, 252, 0.06);
+    --inset-well: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+
+    /* -- Rhythm / shape ------------------------------------------
+       8-pt spacing rhythm + DAW control sizes. */
+    --control-h-touch: 44px; /* comfortable / touch          */
+    --control-h-compact: 36px; /* default toolbar               */
+    --control-h-dense: 28px; /* dense transport / meters      */
+    --radius-control: 8px;
+    --radius-clip: 8px;
+    --radius-panel: 14px;
+    --radius-tile: 12px;
+    --meter-h: 4px;
+    --space-unit: 8px;
+
+    /* -- Type hierarchy (Inter, SF-aligned) ----------------------
+       Exposed as vars so JS/utility layers can read them; utility
+       classes below apply them. */
+    --type-section: 600 16px/1.2 var(--font-inter, Inter, system-ui,
+        sans-serif);
+    --type-section-tracking: 0.18em;
+    --type-column: 500 14px/1.2 var(--font-inter, Inter, system-ui,
+        sans-serif);
+    --type-column-tracking: 0.16em;
+    --type-button: 500 14px/1 var(--font-inter, Inter, system-ui, sans-serif);
+    --type-button-tracking: 0.1em;
+    --type-body: 400 14px/1.5 var(--font-inter, Inter, system-ui, sans-serif);
+    --type-label: 400 12px/1.2 var(--font-inter, Inter, system-ui, sans-serif);
+    --type-label-tracking: 0.16em;
+    --type-timecode-tracking: 0.02em;
   }
 }
 
@@ -717,5 +815,203 @@ html {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================
+   STUDIO — type hierarchy + motion (Phase 0, additive)
+   ============================================================ */
+@layer utilities {
+  /* Type scale — SF-aligned Inter, DAW hierarchy. */
+  .studio-type-section {
+    font: var(--type-section);
+    letter-spacing: var(--type-section-tracking);
+    text-transform: uppercase;
+    color: var(--white);
+  }
+  .studio-type-column {
+    font: var(--type-column);
+    letter-spacing: var(--type-column-tracking);
+    text-transform: uppercase;
+    color: var(--silver);
+  }
+  .studio-type-button {
+    font: var(--type-button);
+    letter-spacing: var(--type-button-tracking);
+  }
+  .studio-type-body {
+    font: var(--type-body);
+    color: var(--body-text);
+  }
+  .studio-type-label {
+    font: var(--type-label);
+    letter-spacing: var(--type-label-tracking);
+    text-transform: uppercase;
+    color: var(--label);
+  }
+  .studio-type-timecode {
+    font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+    font-size: 11px;
+    line-height: 1;
+    letter-spacing: var(--type-timecode-tracking);
+    font-variant-numeric: tabular-nums;
+    color: var(--silver);
+  }
+}
+
+/* The record moment: an armed rim that breathes, and a recording pulse
+   on a ~0.8s heartbeat. Both are stilled for reduced-motion users, who
+   instead get a permanently strong resting rim so state stays legible. */
+@keyframes studioRecArmBreathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(255, 91, 115, 0.45),
+      0 0 14px rgba(255, 91, 115, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(255, 91, 115, 0.85),
+      0 0 26px rgba(255, 91, 115, 0.42);
+  }
+}
+
+@keyframes studioRecPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(255, 91, 115, 0.9),
+      0 0 18px rgba(255, 91, 115, 0.3);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(255, 91, 115, 1),
+      0 0 34px rgba(255, 91, 115, 0.5);
+    transform: scale(1.035);
+  }
+}
+
+/* Studio range inputs — Slider (horizontal) + Fader (vertical). Native
+   <input type=range> styled to the studio: inset well track, forged-blue
+   fill up to the thumb, tactile thumb with a soft glow. */
+.studio-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.studio-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    var(--forged-blue) 0%,
+    var(--forged-blue) var(--studio-slider-fill, 0%),
+    #0a0e13 var(--studio-slider-fill, 0%),
+    #0a0e13 100%
+  );
+  box-shadow: var(--inset-well);
+}
+.studio-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: #0a0e13;
+  box-shadow: var(--inset-well);
+}
+.studio-slider::-moz-range-progress {
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--forged-blue);
+}
+.studio-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -5px;
+  height: 16px;
+  width: 16px;
+  border-radius: 9999px;
+  background: var(--white);
+  border: 1px solid var(--divider-steel);
+  box-shadow: var(--glow-subtle), var(--inset-top);
+  transition: box-shadow 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.studio-slider::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  border-radius: 9999px;
+  background: var(--white);
+  border: 1px solid var(--divider-steel);
+  box-shadow: var(--glow-subtle);
+}
+.studio-slider:hover::-webkit-slider-thumb,
+.studio-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--glow-medium), var(--inset-top);
+}
+
+/* Fader — vertical, with a 0dB reference notch on the track. Uses the
+   writing-mode approach so the native range runs bottom-to-top. */
+.studio-fader {
+  -webkit-appearance: none;
+  appearance: none;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 24px;
+  background: transparent;
+  cursor: pointer;
+}
+.studio-fader::-webkit-slider-runnable-track {
+  width: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to top,
+    var(--forged-blue) 0%,
+    var(--forged-blue) var(--studio-slider-fill, 0%),
+    #0a0e13 var(--studio-slider-fill, 0%),
+    #0a0e13 100%
+  );
+  box-shadow: var(--inset-well);
+}
+.studio-fader::-moz-range-track {
+  width: 6px;
+  border-radius: 9999px;
+  background: #0a0e13;
+  box-shadow: var(--inset-well);
+}
+.studio-fader::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 22px;
+  width: 34px;
+  margin-left: -14px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #232e39, #151b22);
+  border: 1px solid var(--divider-steel);
+  box-shadow: var(--glow-subtle), var(--inset-top);
+}
+.studio-fader::-moz-range-thumb {
+  height: 34px;
+  width: 22px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #232e39, #151b22);
+  border: 1px solid var(--divider-steel);
+  box-shadow: var(--glow-subtle);
+}
+
+.studio-rec-armed {
+  animation: studioRecArmBreathe 2.4s ease-in-out infinite;
+}
+
+.studio-rec-recording {
+  animation: studioRecPulse 0.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-rec-armed {
+    animation: none;
+    box-shadow: 0 0 0 1px rgba(255, 91, 115, 0.75),
+      0 0 22px rgba(255, 91, 115, 0.3);
+  }
+  .studio-rec-recording {
+    animation: none;
+    transform: none;
+    box-shadow: 0 0 0 2px rgba(255, 91, 115, 1),
+      0 0 26px rgba(255, 91, 115, 0.4);
   }
 }

@@ -130,6 +130,22 @@ const config: Config = {
         /** Steel at working heat. Used for the hero's incandescent copy. */
         heat: heatRamp,
 
+        /**
+         * STUDIO track-lane hue map (Phase 0, additive). One persistent
+         * hue per person/track, GarageBand-style. Host/guest reuse the
+         * brand blues so the studio still reads as Forged; cohorts get
+         * warm/cool accents legible on graphite. Mirrored by the
+         * --lane-* tokens in globals.css and lib/podcast/lanes.ts.
+         */
+        lane: {
+          host: FORGED_BLUE,
+          guest: ICE_BLUE,
+          'cohost-1': '#FFB86B',
+          'cohost-2': '#A6E3A1',
+          'cohost-3': '#BF9AF2',
+          'cohost-4': '#FF8FB0',
+        },
+
         // ============================================
         // LEGACY ALIASES — remapped onto Forged Light
         // ============================================
@@ -224,6 +240,22 @@ const config: Config = {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
+        // STUDIO shape tokens (additive).
+        control: 'var(--radius-control)',
+        clip: 'var(--radius-clip)',
+        panel: 'var(--radius-panel)',
+        tile: 'var(--radius-tile)',
+      },
+      // STUDIO control heights + meter (additive).
+      height: {
+        'control-touch': 'var(--control-h-touch)',
+        'control-compact': 'var(--control-h-compact)',
+        'control-dense': 'var(--control-h-dense)',
+        meter: 'var(--meter-h)',
+      },
+      // 8-pt spacing rhythm (additive; keeps Tailwind's own scale).
+      spacing: {
+        unit: 'var(--space-unit)',
       },
       animation: {
         'fade-in': 'fadeIn 0.5s ease-out',
@@ -235,6 +267,10 @@ const config: Config = {
         'ember-float': 'emberFloat 8s ease-in-out infinite',
         'particle-drift': 'particleDrift 26s linear infinite',
         'slow-spin': 'spin 20s linear infinite',
+        // STUDIO record moment (additive). Reduced-motion is handled by
+        // the global override in globals.css.
+        'rec-arm': 'recArmBreathe 2.4s ease-in-out infinite',
+        'rec-pulse': 'recPulse 0.8s ease-in-out infinite',
       },
       keyframes: {
         fadeIn: {
@@ -267,6 +303,29 @@ const config: Config = {
           '12%': { opacity: '0.5' },
           '88%': { opacity: '0.5' },
           '100%': { transform: 'translate3d(14px,-180px,0)', opacity: '0' },
+        },
+        // STUDIO record moment (additive).
+        recArmBreathe: {
+          '0%, 100%': {
+            boxShadow:
+              '0 0 0 1px rgba(255,91,115,0.45), 0 0 14px rgba(255,91,115,0.2)',
+          },
+          '50%': {
+            boxShadow:
+              '0 0 0 1px rgba(255,91,115,0.85), 0 0 26px rgba(255,91,115,0.42)',
+          },
+        },
+        recPulse: {
+          '0%, 100%': {
+            boxShadow:
+              '0 0 0 1px rgba(255,91,115,0.9), 0 0 18px rgba(255,91,115,0.3)',
+            transform: 'scale(1)',
+          },
+          '50%': {
+            boxShadow:
+              '0 0 0 2px rgba(255,91,115,1), 0 0 34px rgba(255,91,115,0.5)',
+            transform: 'scale(1.035)',
+          },
         },
       },
       backgroundImage: {
@@ -301,6 +360,18 @@ const config: Config = {
         'card-hover': '0 0 40px rgba(83,214,255,0.13)',
         soft: '0 0 20px rgba(83,214,255,0.06)',
         'soft-lg': '0 0 40px rgba(83,214,255,0.09)',
+        // STUDIO depth + glows (additive). Real drop shadows for physical
+        // elevation; cyan glows kept at/under 16% alpha.
+        'depth-sm': 'var(--shadow-sm)',
+        'depth-md': 'var(--shadow-md)',
+        'depth-lg': 'var(--shadow-lg)',
+        'glow-subtle': 'var(--glow-subtle)',
+        'glow-medium': 'var(--glow-medium)',
+        'glow-strong': 'var(--glow-strong)',
+        rec: 'var(--rec-glow)',
+        'highlight-rim': 'var(--highlight-rim)',
+        'inset-top': 'var(--inset-top)',
+        'inset-well': 'var(--inset-well)',
       },
       transitionDuration: {
         '400': '400ms',
