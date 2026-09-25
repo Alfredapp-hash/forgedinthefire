@@ -480,13 +480,13 @@ export function EpisodePlan({
                     key={`${ch.start_ms}-${idx}`}
                     className="flex items-center justify-between gap-2 text-sm text-[#B8C4CF]"
                   >
-                    <span>
+                    <span className="min-w-0 break-words">
                       <span className="text-[#8DEBFF]">{formatMs(ch.start_ms)}</span> — {ch.title}
                     </span>
                     <button
                       type="button"
                       onClick={() => onRemoveChapter(idx)}
-                      className="inline-flex items-center gap-1 text-xs text-red-300"
+                      className="inline-flex shrink-0 items-center gap-1 text-xs text-red-300"
                     >
                       <Trash2 size={12} /> Remove
                     </button>

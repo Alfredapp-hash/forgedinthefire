@@ -371,7 +371,20 @@ export function RecordingStudio({
       ) : (
         <>
           {/* Persistent header: identity + stage switcher, always visible across stages. */}
-          <StudioStageBar episode={episode} stage={stage} onStageChange={setStage} />
+          <StudioStageBar
+            episode={episode}
+            stage={stage}
+            onStageChange={setStage}
+            progress={{
+              hasTitle: Boolean(episode.title?.trim()),
+              hasCover: Boolean(episode.cover_url),
+              hasAudio: Boolean(episode.audio_url),
+              hasTranscript: Boolean(episode.transcript),
+              complianceOk: Boolean(compliance?.ok),
+              blockersText,
+              isPublished: episode.status === 'published',
+            }}
+          />
 
           {/* Status control + jump to the standalone episode page, on every stage. */}
           <div className="flex flex-wrap items-center justify-end gap-2">

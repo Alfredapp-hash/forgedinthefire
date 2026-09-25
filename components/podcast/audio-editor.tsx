@@ -128,6 +128,7 @@ import { SfxPad } from '@/components/podcast/sfx-pad'
 import { SessionTimeline } from '@/components/podcast/session-timeline'
 import { GuestInvitePanel } from '@/components/podcast/guest-invite-panel'
 import { RecordingBooth, type BoothParticipant } from '@/components/podcast/recording-booth'
+import { ShortcutsHelpModal } from '@/components/podcast/shortcuts-help-modal'
 import type { GuestTallyPhase } from '@/lib/podcast/guest-types'
 import { CameraClipReview, CameraLane } from '@/components/podcast/camera-lane'
 import { CameraPreview } from '@/components/podcast/camera-preview'
@@ -373,6 +374,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [guestCameraUrl, setGuestCameraUrl] = useState<string | null>(null)
   const [recTally, setRecTally] = useState<GuestTallyPhase>('waiting')
   const [boothOpen, setBoothOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
 
   const selected = useMemo(
     () => tracks.find((t) => t.id === selectedId) || tracks[0] || null,
@@ -902,6 +904,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     const onKey = (event: KeyboardEvent) => {
       const tag = (event.target as HTMLElement | null)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      // Shift+/ (?) opens the keyboard-shortcuts help. Guarded above against typing.
+      if (event.key === '?') {
+        event.preventDefault()
+        setHelpOpen(true)
+        return
+      }
       if (event.code === 'Space') {
         event.preventDefault()
         if (!recording) void togglePlay()
@@ -2934,9 +2942,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         {/* Transport — record arming (record stage) + slim playback (edit stage) */}
         {(showRecord || showEdit) && (
         <div className="sticky top-0 z-20 -mx-4 px-4 py-3 bg-[#0C141C]/95 border-b border-[#1A232C] flex flex-wrap gap-3 items-start">
-          <div className="flex flex-wrap gap-2 items-center flex-1 min-w-[12rem]">
+          <div className="flex flex-wrap gap-x-3 gap-y-2 items-start flex-1 min-w-[12rem]">
           {showRecord && (
-          <>
+          <div className="flex flex-wrap items-start gap-2">
           <button type="button" className={recording ? danger : primary} onClick={() => void toggleRecord()}>
             {recording ? (
               <>
@@ -2983,17 +2991,69 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               </span>
             </button>
           )}
-          <select
-            className={select}
-            value={recMode}
+          <fieldset
+            className="rounded-lg border border-[#27313B] bg-[#0A1016] px-2.5 py-1.5"
             disabled={recording}
-            title={recHint}
-            onChange={(e) => setRecMode(e.target.value as RecMode)}
           >
-            {REC_MODE_META.map((mode) => (
-              <option key={mode.id} value={mode.id}>{mode.label}</option>
-            ))}
-          </select>
+            <legend className="px-1 text-[10px] uppercase tracking-[0.14em] text-[#8DEBFF]">
+              How to record
+            </legend>
+            <div className="flex flex-col gap-1">
+              {PRIMARY_REC_MODES.map((mode) => (
+                <label
+                  key={mode.id}
+                  className={`flex cursor-pointer items-start gap-2 rounded px-1.5 py-0.5 text-xs ${
+                    recMode === mode.value ? 'bg-[#121A22] text-[#F6FAFC]' : 'text-[#B8C4CF]'
+                  } ${recording ? 'cursor-not-allowed opacity-60' : ''}`}
+                  title={mode.hint}
+                >
+                  <input
+                    type="radio"
+                    name="rec-mode"
+                    className="mt-0.5 accent-[#53D6FF]"
+                    checked={recMode === mode.value}
+                    disabled={recording}
+                    onChange={() => setRecMode(mode.value)}
+                  />
+                  <span>
+                    <span className="font-medium">{mode.label}</span>
+                    <span className="block text-[10px] leading-tight text-[#7C8B97]">{mode.blurb}</span>
+                  </span>
+                </label>
+              ))}
+              {ADVANCED_REC_MODES.length > 0 && (
+                <details className="mt-0.5 rounded border border-[#1A232C] bg-[#080C10] px-1.5 py-1">
+                  <summary className="cursor-pointer text-[10px] uppercase tracking-[0.12em] text-[#7C8B97]">
+                    Advanced
+                  </summary>
+                  <div className="mt-1 flex flex-col gap-1">
+                    {ADVANCED_REC_MODES.map((mode) => (
+                      <label
+                        key={mode.id}
+                        className={`flex cursor-pointer items-start gap-2 rounded px-1.5 py-0.5 text-xs ${
+                          recMode === mode.value ? 'bg-[#121A22] text-[#F6FAFC]' : 'text-[#B8C4CF]'
+                        } ${recording ? 'cursor-not-allowed opacity-60' : ''}`}
+                        title={mode.hint}
+                      >
+                        <input
+                          type="radio"
+                          name="rec-mode"
+                          className="mt-0.5 accent-[#53D6FF]"
+                          checked={recMode === mode.value}
+                          disabled={recording}
+                          onChange={() => setRecMode(mode.value)}
+                        />
+                        <span>
+                          <span className="font-medium">{mode.label}</span>
+                          <span className="block text-[10px] leading-tight text-[#7C8B97]">{mode.blurb}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          </fieldset>
           <label className="text-xs text-[#A9B8C6] flex items-center gap-2">
             Preroll
             <select
@@ -3021,12 +3081,15 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               <option value={4}>4</option>
             </select>
           </label>
-          </>
+          </div>
           )}
-          {/* Playback transport — shared by record (monitoring) and edit (review takes). */}
+          {/* Playback transport — shared by record (monitoring) and edit (review takes).
+              On narrow screens this group scrolls sideways so the primary Record / Play
+              buttons above stay reachable instead of piling into a tall stack. */}
+          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
           <button
             type="button"
-            className={btn}
+            className={`${btn} shrink-0`}
             disabled={!onMarkChapter}
             onClick={() => {
               if (onMarkChapter) onMarkChapter(playheadRef.current)
@@ -3039,24 +3102,24 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             {playing ? <Pause size={14} /> : <Play size={14} />}
             {playing ? 'Pause' : 'Play mix'}
           </button>
-          <button type="button" className={btn} disabled={!ready || recording} onClick={() => nudge(-5)}>
+          <button type="button" className={`${btn} shrink-0`} disabled={!ready || recording} onClick={() => nudge(-5)}>
             <SkipBack size={14} /> 5s
           </button>
-          <button type="button" className={btn} disabled={!ready || recording} onClick={() => nudge(5)}>
+          <button type="button" className={`${btn} shrink-0`} disabled={!ready || recording} onClick={() => nudge(5)}>
             5s <SkipForward size={14} />
           </button>
-          <button type="button" className={btn} disabled={!ready} onClick={() => setBound('start')}>
+          <button type="button" className={`${btn} shrink-0`} disabled={!ready} onClick={() => setBound('start')}>
             In
           </button>
-          <button type="button" className={btn} disabled={!ready} onClick={() => setBound('end')}>
+          <button type="button" className={`${btn} shrink-0`} disabled={!ready} onClick={() => setBound('end')}>
             Out
           </button>
-          <button type="button" className={btn} disabled={historyLen === 0} onClick={() => void undo()}>
+          <button type="button" className={`${btn} shrink-0`} disabled={historyLen === 0} onClick={() => void undo()}>
             <Undo2 size={14} /> Undo
           </button>
           {showEdit && (
           <>
-          <label className={btn + ' cursor-pointer'}>
+          <label className={btn + ' shrink-0 cursor-pointer'}>
             Import → selected
             <input
               type="file"
@@ -3065,7 +3128,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               onChange={(e) => void onUploadPick(e.target.files?.[0] || null)}
             />
           </label>
-          <label className={btn + ' cursor-pointer'}>
+          <label className={btn + ' shrink-0 cursor-pointer'}>
             Add music bed
             <input
               type="file"
@@ -3078,7 +3141,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           )}
           <button
             type="button"
-            className={loop ? primary : btn}
+            className={`${loop ? primary : btn} shrink-0`}
             onClick={() => setLoop((v) => !v)}
           >
             Loop region
@@ -3087,13 +3150,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           <>
           <button
             type="button"
-            className={metronome ? primary : btn}
+            className={`${metronome ? primary : btn} shrink-0`}
             onClick={() => setMetronome((v) => !v)}
           >
             Metronome
           </button>
           {metronome && (
-            <label className="text-xs text-[#A9B8C6] flex items-center gap-2">
+            <label className="text-xs text-[#A9B8C6] flex items-center gap-2 shrink-0">
               BPM
               <input
                 type="number"
@@ -3107,6 +3170,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           )}
           </>
           )}
+          <button
+            type="button"
+            className={`${btn} shrink-0`}
+            onClick={() => setHelpOpen(true)}
+            title="Keyboard shortcuts (press ?)"
+            aria-label="Show keyboard shortcuts"
+          >
+            <span aria-hidden="true">?</span> Shortcuts
+          </button>
+          </div>
           </div>
           {showRecord && (Object.keys(cameraStreams).length > 0 ||
             (remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest))) ||
@@ -3699,90 +3772,102 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                         </option>
                       ))}
                     </select>
-                    <select
-                      className={select}
-                      value={person.videoDeviceId || ''}
-                      disabled={recording}
-                      onChange={(e) => void changeCameraDevice(person.id, e.target.value)}
-                      title="Camera for this person"
+                    <div
+                      className="flex flex-wrap items-center gap-1.5 rounded-lg border border-[#1A232C] bg-[#0A1016] px-2 py-1.5"
+                      role="group"
+                      aria-label={`Camera controls for ${person.name}`}
                     >
-                      <option value="">Default camera</option>
-                      {cams.map((cam, idx) => (
-                        <option key={cam.deviceId} value={cam.deviceId}>
-                          {cam.label || `Camera ${idx + 1}`}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      className={cameraStreams[person.id] ? primary : camWarnFor === person.id ? danger : chip}
-                      disabled={recording}
-                      title={
-                        cameraStreams[person.id]
-                          ? 'Turn camera off'
-                          : camWarnFor === person.id
-                            ? `Confirm camera — ~${CAMERA_MB_PER_MIN} MB/min at 720p`
-                            : 'Open a real local camera preview (warns once about file size)'
-                      }
-                      onClick={() => void toggleCamera(person.id)}
-                    >
-                      {cameraStreams[person.id] ? <Video size={12} /> : <VideoOff size={12} />}
-                      {cameraStreams[person.id] ? 'Cam on' : camWarnFor === person.id ? 'Confirm' : 'Cam'}
-                    </button>
-                    <button
-                      type="button"
-                      className={chip}
-                      disabled={recording}
-                      title="Kdenlive-style title clip on the picture clock at the playhead"
-                      onClick={() => addLowerThird(person.id)}
-                    >
-                      Lower third
-                    </button>
-                    <label className={`${chip} cursor-pointer`} title="Import a B-roll movie onto this picture lane">
-                      B-roll
-                      <input
-                        type="file"
-                        accept="video/*,.mp4,.webm,.mov"
-                        className="hidden"
-                        disabled={recording}
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] || null
-                          e.target.value = ''
-                          void importBroll(person.id, file)
-                        }}
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      className={chip}
-                      disabled={recording}
-                      title="OBS-style black flash at the playhead — canvas, not a plugin"
-                      onClick={() => addStinger(person.id, 'playhead')}
-                    >
-                      Stinger
-                    </button>
-                    {cameraClips.some((c) => c.personId === person.id) && (
+                      <span className="mr-0.5 inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#8DEBFF]">
+                        <Video size={11} /> Camera
+                      </span>
                       <button
                         type="button"
-                        className={personAvLinked(person) ? chip : btn}
+                        className={cameraStreams[person.id] ? primary : camWarnFor === person.id ? danger : chip}
+                        disabled={recording}
                         title={
-                          personAvLinked(person)
-                            ? 'Linked: moving a take can nudge this camera. Trim/split/cut stay independent.'
-                            : 'Unlinked: audio and picture edit on their own. Same playhead.'
+                          cameraStreams[person.id]
+                            ? 'Turn camera off'
+                            : camWarnFor === person.id
+                              ? `Confirm camera — ~${CAMERA_MB_PER_MIN} MB/min at 720p`
+                              : 'Turn on a real local camera preview (warns once about file size)'
                         }
-                        onClick={() =>
-                          setPeople((prev) =>
-                            prev.map((p) => (p.id === person.id ? { ...p, avLinked: !personAvLinked(p) } : p)),
-                          )
-                        }
+                        onClick={() => void toggleCamera(person.id)}
                       >
-                        {personAvLinked(person)
-                          ? avBroken(tracks, cameraClips, person)
-                            ? 'Linked · sync off'
-                            : 'Linked'
-                          : 'Unlinked'}
+                        {cameraStreams[person.id] ? <Video size={12} /> : <VideoOff size={12} />}
+                        {cameraStreams[person.id] ? 'Cam on' : camWarnFor === person.id ? 'Confirm' : 'Cam off'}
                       </button>
-                    )}
+                      <select
+                        className={select}
+                        value={person.videoDeviceId || ''}
+                        disabled={recording}
+                        onChange={(e) => void changeCameraDevice(person.id, e.target.value)}
+                        title="Camera device for this person"
+                        aria-label={`Camera device for ${person.name}`}
+                      >
+                        <option value="">Default camera</option>
+                        {cams.map((cam, idx) => (
+                          <option key={cam.deviceId} value={cam.deviceId}>
+                            {cam.label || `Camera ${idx + 1}`}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="mx-0.5 hidden h-4 w-px bg-[#1A232C] sm:inline-block" aria-hidden="true" />
+                      <span className="text-[10px] uppercase tracking-[0.1em] text-[#5C6B77]">Graphics</span>
+                      <button
+                        type="button"
+                        className={chip}
+                        disabled={recording}
+                        title="Add a lower-third title on the picture at the playhead"
+                        onClick={() => addLowerThird(person.id)}
+                      >
+                        Lower third
+                      </button>
+                      <label className={`${chip} cursor-pointer`} title="Import a B-roll clip onto this picture lane">
+                        B-roll
+                        <input
+                          type="file"
+                          accept="video/*,.mp4,.webm,.mov"
+                          className="hidden"
+                          disabled={recording}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] || null
+                            e.target.value = ''
+                            void importBroll(person.id, file)
+                          }}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className={chip}
+                        disabled={recording}
+                        title="Add a black flash (stinger) on the picture at the playhead"
+                        onClick={() => addStinger(person.id, 'playhead')}
+                      >
+                        Stinger
+                      </button>
+                      {cameraClips.some((c) => c.personId === person.id) && (
+                        <button
+                          type="button"
+                          className={personAvLinked(person) ? chip : btn}
+                          title={
+                            personAvLinked(person)
+                              ? 'Linked: moving a take can nudge this camera. Trim/split/cut stay independent.'
+                              : 'Unlinked: audio and picture edit on their own. Same playhead.'
+                          }
+                          onClick={() =>
+                            setPeople((prev) =>
+                              prev.map((p) => (p.id === person.id ? { ...p, avLinked: !personAvLinked(p) } : p)),
+                            )
+                          }
+                        >
+                          {personAvLinked(person)
+                            ? avBroken(tracks, cameraClips, person)
+                              ? 'Linked · sync off'
+                              : 'Linked'
+                            : 'Unlinked'}
+                        </button>
+                      )}
+                    </div>
                     </>
                   ) : null}
                   {person.kind === 'voice' && (
@@ -3850,11 +3935,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                       />
                       <button
                         type="button"
-                        className={mixerTrack.muted ? danger : chip}
-                        title="Mute"
+                        className={personMuted(person.id) ? danger : chip}
+                        aria-pressed={personMuted(person.id)}
+                        title={`Mute ${person.name} — silences them everywhere (booth and mixer)`}
                         onClick={(e) => {
                           e.stopPropagation()
-                          updateTrack(mixerTrack.id, { muted: !mixerTrack.muted })
+                          toggleBoothMute(person.id)
                         }}
                       >
                         M
@@ -4587,6 +4673,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           />
         }
       />
+
+      <ShortcutsHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   )
 }
@@ -4601,3 +4689,49 @@ const danger =
   'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500/90 text-white text-sm font-medium'
 const select =
   'rounded-lg border border-[#27313B] bg-[#151B22] px-2 py-1.5 text-sm text-[#B8C4CF]'
+
+/**
+ * Record-mode choices presented as plain-language radios. The primary three cover
+ * the everyday cases; rarer modes live under Advanced. Each maps to an existing
+ * RecMode value — the recording behavior is unchanged. `hint` is the longer tooltip
+ * text pulled from REC_MODE_META so the labels and behavior never drift apart.
+ */
+type RecModeChoice = { id: string; value: RecMode; label: string; blurb: string; hint: string }
+
+function recModeHint(value: RecMode): string {
+  return REC_MODE_META.find((m) => m.id === value)?.hint || ''
+}
+
+const PRIMARY_REC_MODES: RecModeChoice[] = [
+  {
+    id: 'new-take',
+    value: 'after_mix',
+    label: 'New take',
+    blurb: 'Start after the current mix — the next person comes in.',
+    hint: recModeHint('after_mix'),
+  },
+  {
+    id: 'punch-in',
+    value: 'at_playhead',
+    label: 'Punch in',
+    blurb: 'Drop in right at the playhead while the mix plays in your headphones.',
+    hint: recModeHint('at_playhead'),
+  },
+  {
+    id: 'replace',
+    value: 'after_mine',
+    label: 'Replace',
+    blurb: 'Pick up from your last take — redo a line without a fresh lane.',
+    hint: recModeHint('after_mine'),
+  },
+]
+
+const ADVANCED_REC_MODES: RecModeChoice[] = [
+  {
+    id: 'from-start',
+    value: 'from_start',
+    label: 'From the top',
+    blurb: 'Play the whole mix from 0:00 and lay a new take on its own lane.',
+    hint: recModeHint('from_start'),
+  },
+]
