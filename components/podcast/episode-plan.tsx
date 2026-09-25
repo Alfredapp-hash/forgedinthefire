@@ -1,6 +1,7 @@
 'use client'
 
 import { CheckCircle2, Circle, Mic2, Plus, Trash2 } from 'lucide-react'
+import { Button, Panel } from '@/components/studio-ui'
 import type {
   ContentTopic,
   EpisodeType,
@@ -64,12 +65,13 @@ type Props = {
   toLocalInput: (iso: string | null) => string
 }
 
-const input = 'w-full rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]'
+const input =
+  'w-full rounded-control border border-divider bg-obsidian px-3 py-2 studio-type-body text-white shadow-inset-top transition-[border-color,box-shadow] duration-150 ease-calm focus:border-forged/60 focus:shadow-glow-subtle'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[11px] uppercase tracking-[0.16em] text-[#A9B8C6]">{label}</span>
+      <span className="studio-type-label mb-1.5 block text-silver-label">{label}</span>
       {children}
     </label>
   )
@@ -77,13 +79,13 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function GroupCard({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5">
-      <div className="mb-4">
-        <p className="text-sm font-medium text-[#F6FAFC]">{title}</p>
-        {hint && <p className="mt-0.5 text-[12px] text-[#A9B8C6]">{hint}</p>}
+    <Panel elevation="raised" className="p-6">
+      <div className="mb-5">
+        <p className="studio-type-section !text-[16px]">{title}</p>
+        {hint && <p className="studio-type-body mt-1 text-silver-body">{hint}</p>}
       </div>
       {children}
-    </section>
+    </Panel>
   )
 }
 
@@ -127,18 +129,18 @@ export function EpisodePlan({
   toLocalInput,
 }: Props) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* Pick / create queue */}
-      <section className="space-y-4 rounded-2xl border border-[#27313B] bg-[#151B22] p-5">
+      <Panel elevation="raised" className="space-y-5 p-6">
         <div>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Plan the episode</p>
-          <p className="mt-1 text-sm text-[#B8C4CF]">
+          <p className="studio-type-label text-ice">Plan the episode</p>
+          <p className="studio-type-body mt-1.5 text-silver-body">
             Pick a planned episode or write a new one, then fill in the details below. Everything here follows the
             episode into Record, Edit, and Publish — nothing is hidden until the end.
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1.5">
           {([
             ['planned', 'Planned'],
             ['needs_audio', 'Needs audio'],
@@ -148,8 +150,10 @@ export function EpisodePlan({
               key={id}
               type="button"
               onClick={() => onFilterChange(id)}
-              className={`rounded-lg px-3 py-1.5 text-sm ${
-                filter === id ? 'bg-[#1A232C] text-[#8DEBFF]' : 'text-[#B8C4CF] hover:bg-[#1A232C]'
+              className={`studio-type-button rounded-control px-3 py-1.5 transition-colors duration-150 ease-calm ${
+                filter === id
+                  ? 'bg-surface-raised text-ice shadow-inset-top'
+                  : 'text-silver-body hover:bg-surface-raised hover:text-white'
               }`}
             >
               {label}
@@ -158,9 +162,9 @@ export function EpisodePlan({
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
-          <div className="space-y-3">
+          <div className="space-y-4">
             <label className="block">
-              <span className="mb-1 block text-[11px] uppercase tracking-[0.16em] text-[#A9B8C6]">
+              <span className="studio-type-label mb-1.5 block text-silver-label">
                 Open a planned episode
               </span>
               <select value={selectedId} onChange={(e) => onSelect(e.target.value)} className={input}>
@@ -178,7 +182,7 @@ export function EpisodePlan({
 
             {plannedTopics.length > 0 && (
               <div>
-                <p className="mb-2 text-[11px] uppercase tracking-[0.16em] text-[#A9B8C6]">
+                <p className="studio-type-label mb-2 text-silver-label">
                   Planned topics without an episode
                 </p>
                 <div className="max-h-40 space-y-2 overflow-y-auto">
@@ -188,10 +192,10 @@ export function EpisodePlan({
                       type="button"
                       disabled={creating}
                       onClick={() => onOpenTopic(topic)}
-                      className="w-full rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-left hover:border-[#53D6FF]"
+                      className="w-full rounded-control border border-divider bg-obsidian px-3 py-2.5 text-left shadow-inset-top transition-[border-color,box-shadow] duration-150 ease-calm hover:border-forged/60 hover:shadow-glow-subtle disabled:pointer-events-none disabled:opacity-40"
                     >
-                      <p className="text-sm text-[#F6FAFC]">{topic.title}</p>
-                      <p className="text-[11px] text-[#A9B8C6]">
+                      <p className="studio-type-body text-white">{topic.title}</p>
+                      <p className="studio-type-label mt-0.5 text-silver-label">
                         {topic.status}
                         {topic.scheduled_on ? ` · ${topic.scheduled_on}` : ''}
                         {topic.talking_points?.length ? ` · ${topic.talking_points.length} talking points` : ''}
@@ -203,8 +207,8 @@ export function EpisodePlan({
             )}
           </div>
 
-          <div className="space-y-3 rounded-xl border border-[#27313B] bg-[#05070A] p-4">
-            <p className="text-sm text-[#F6FAFC]">Write a new episode</p>
+          <Panel elevation="flat" className="space-y-3 p-4">
+            <p className="studio-type-column">Write a new episode</p>
             <input
               value={draftTitle}
               onChange={(e) => onDraftTitle(e.target.value)}
@@ -239,18 +243,19 @@ export function EpisodePlan({
                 </option>
               ))}
             </select>
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="touch"
               disabled={creating}
               onClick={onCreate}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#53D6FF] px-4 py-2 text-sm font-medium text-[#061016] disabled:opacity-40"
+              className="w-full"
             >
               <Mic2 size={14} />
               {creating ? 'Opening…' : 'Create & open in studio'}
-            </button>
-          </div>
+            </Button>
+          </Panel>
         </div>
-      </section>
+      </Panel>
 
       {episode && (
         <>
@@ -288,23 +293,27 @@ export function EpisodePlan({
                 </Field>
               </div>
               {linkedTopic && (
-                <div className="rounded-xl border border-[#27313B] bg-[#05070A] p-4 md:col-span-2">
+                <Panel elevation="flat" className="p-4 md:col-span-2">
                   <div className="mb-2 flex items-center justify-between gap-3">
-                    <p className="text-sm text-[#F6FAFC]">Cues from {linkedTopic.title}</p>
-                    <button type="button" onClick={onInsertTalkingPoints} className="text-sm text-[#53D6FF]">
+                    <p className="studio-type-column">Cues from {linkedTopic.title}</p>
+                    <button
+                      type="button"
+                      onClick={onInsertTalkingPoints}
+                      className="studio-type-button text-forged transition-colors hover:text-ice"
+                    >
                       Insert into script
                     </button>
                   </div>
                   {linkedTopic.talking_points?.length ? (
-                    <ol className="list-decimal space-y-1 pl-5 text-sm text-[#B8C4CF]">
+                    <ol className="studio-type-body list-decimal space-y-1 pl-5 text-silver-body">
                       {linkedTopic.talking_points.map((point) => (
                         <li key={point}>{point}</li>
                       ))}
                     </ol>
                   ) : (
-                    <p className="text-sm text-[#A9B8C6]">This topic has no talking points yet.</p>
+                    <p className="studio-type-body text-silver-label">This topic has no talking points yet.</p>
                   )}
-                </div>
+                </Panel>
               )}
               <div className="md:col-span-2">
                 <Field label="Guest bio">
@@ -436,11 +445,12 @@ export function EpisodePlan({
                   />
                 </Field>
               </div>
-              <label className="flex items-center gap-2 text-sm text-[#B8C4CF] md:col-span-2">
+              <label className="studio-type-body flex items-center gap-2 text-silver-body md:col-span-2">
                 <input
                   type="checkbox"
                   checked={Boolean(episode.explicit)}
                   onChange={(e) => onSave({ explicit: e.target.checked })}
+                  className="accent-forged"
                 />
                 Mark episode explicit
               </label>
@@ -450,7 +460,7 @@ export function EpisodePlan({
           {/* Art & chapters */}
           <GroupCard title="Art & chapters" hint="Cover art and chapter markers for players that support them.">
             <Field label="Cover art">
-              <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-[#27313B] px-3 py-2 text-sm text-[#B8C4CF]">
+              <label className="studio-type-button inline-flex cursor-pointer items-center gap-2 rounded-control border border-divider bg-surface-raised px-3 py-2 text-silver shadow-inset-top transition-[border-color,box-shadow] duration-150 ease-calm hover:border-forged/60 hover:shadow-glow-subtle">
                 {uploadingCover ? 'Uploading…' : episode.cover_url ? 'Replace cover' : 'Upload cover'}
                 <input
                   type="file"
@@ -467,26 +477,26 @@ export function EpisodePlan({
                 <img
                   src={episode.cover_url}
                   alt=""
-                  className="mt-2 h-16 w-16 rounded-lg border border-[#27313B] object-cover"
+                  className="mt-2 h-16 w-16 rounded-tile border border-divider object-cover"
                 />
               )}
             </Field>
 
-            <div className="mt-4">
-              <p className="mb-2 text-sm font-medium text-[#F6FAFC]">Chapters</p>
-              <ul className="mb-2 space-y-1">
+            <div className="mt-5">
+              <p className="studio-type-column mb-2.5">Chapters</p>
+              <ul className="mb-3 space-y-1.5">
                 {(episode.chapters || []).map((ch, idx) => (
                   <li
                     key={`${ch.start_ms}-${idx}`}
-                    className="flex items-center justify-between gap-2 text-sm text-[#B8C4CF]"
+                    className="studio-type-body flex items-center justify-between gap-2 text-silver-body"
                   >
                     <span className="min-w-0 break-words">
-                      <span className="text-[#8DEBFF]">{formatMs(ch.start_ms)}</span> — {ch.title}
+                      <span className="studio-type-timecode text-ice">{formatMs(ch.start_ms)}</span> — {ch.title}
                     </span>
                     <button
                       type="button"
                       onClick={() => onRemoveChapter(idx)}
-                      className="inline-flex shrink-0 items-center gap-1 text-xs text-red-300"
+                      className="studio-type-label inline-flex shrink-0 items-center gap-1 text-heart transition-colors hover:brightness-110"
                     >
                       <Trash2 size={12} /> Remove
                     </button>
@@ -506,41 +516,42 @@ export function EpisodePlan({
                   placeholder="Chapter title"
                   className={input}
                 />
-                <button
-                  type="button"
-                  onClick={onAddChapter}
-                  className="inline-flex items-center gap-1 rounded-lg border border-[#27313B] px-3 py-2 text-sm text-[#53D6FF]"
-                >
+                <Button variant="secondary" size="compact" onClick={onAddChapter}>
                   <Plus size={14} /> Add
-                </button>
+                </Button>
               </div>
             </div>
           </GroupCard>
 
           {/* Compliance checklist — surfaced early so problems show up now, not at publish. */}
-          <GroupCard title="Checklist" hint="Fix anything red before you get to Publish.">
+          <GroupCard title="Checklist" hint="Fix anything flagged before you get to Publish.">
             {!complianceOk && blockersText && (
-              <p className="mb-3 text-xs text-red-300">Publish blocked: {blockersText}</p>
+              <p className="studio-type-label mb-4 rounded-control border border-heart/40 bg-heart/10 px-3 py-2 text-heart">
+                Publish blocked · {blockersText}
+              </p>
             )}
             <ul className="grid gap-2 sm:grid-cols-2">
-              {checks.map((item) => (
-                <li
-                  key={item.label}
-                  className={`flex items-center gap-2 text-sm ${
-                    item.required && !item.ok ? 'text-red-300' : 'text-[#B8C4CF]'
-                  }`}
-                >
-                  {item.ok ? (
-                    <CheckCircle2 size={16} className="text-[#53D6FF]" />
-                  ) : (
-                    <Circle size={16} className={item.required ? 'text-red-400' : 'text-[#27313B]'} />
-                  )}
-                  {item.label}
-                  {item.required && !item.ok && (
-                    <span className="text-[10px] uppercase tracking-wide">required</span>
-                  )}
-                </li>
-              ))}
+              {checks.map((item) => {
+                const failing = item.required && !item.ok
+                return (
+                  <li
+                    key={item.label}
+                    className={`studio-type-body flex items-center gap-2.5 rounded-control border px-3 py-2 ${
+                      failing
+                        ? 'border-heart/40 bg-heart/5 text-heart'
+                        : 'border-divider bg-obsidian/40 text-silver-body'
+                    }`}
+                  >
+                    {item.ok ? (
+                      <CheckCircle2 size={16} className="shrink-0 text-forged" />
+                    ) : (
+                      <Circle size={16} className={`shrink-0 ${item.required ? 'text-heart' : 'text-divider'}`} />
+                    )}
+                    <span className="min-w-0 flex-1">{item.label}</span>
+                    {failing && <span className="studio-type-label shrink-0 text-heart">required</span>}
+                  </li>
+                )
+              })}
             </ul>
           </GroupCard>
         </>

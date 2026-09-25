@@ -194,21 +194,34 @@ import {
   BookmarkPlus,
   CopyPlus,
   Headphones,
-  Mic2,
   Minus,
   Pause,
   Play,
   Plus,
+  Repeat,
   Scissors,
   SkipBack,
   SkipForward,
-  Square,
+  SlidersHorizontal,
   Trash2,
   Undo2,
   Video,
   VideoOff,
   VolumeX,
 } from 'lucide-react'
+import {
+  Button,
+  Chip,
+  IconButton,
+  Meter,
+  Panel,
+  RecordButton,
+  SegmentedControl,
+  Slider,
+  laneColor,
+  LANE_IDS,
+  type LaneColor,
+} from '@/components/studio-ui'
 
 type Props = {
   episodeId?: string | null
@@ -375,6 +388,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [recTally, setRecTally] = useState<GuestTallyPhase>('waiting')
   const [boothOpen, setBoothOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
+  /** Progressive disclosure for the lane "smart controls": keeps the default
+   *  edit view calm (Split only) and reveals the advanced tool sections on demand. */
+  const [smartControlsOpen, setSmartControlsOpen] = useState(false)
 
   const selected = useMemo(
     () => tracks.find((t) => t.id === selectedId) || tracks[0] || null,
@@ -513,6 +529,20 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
   const nameFor = useCallback(
     (personId: string, fallback: string) => people.find((p) => p.id === personId)?.name || fallback,
+    [people],
+  )
+
+  // Persistent GarageBand-style hue per person. Host + Guest map to their
+  // canonical lane hues; everyone else takes a stable colour by their order
+  // among the voice people, wrapping the six-lane palette. Presentation only.
+  const laneFor = useCallback(
+    (personId: string): LaneColor => {
+      if (personId === 'host' || personId === 'guest') return laneColor(personId)
+      const voices = people.filter((p) => p.kind === 'voice')
+      const idx = voices.findIndex((p) => p.id === personId)
+      // 0/1 are host/guest — cohorts start at lane index 2.
+      return laneColor(idx < 0 ? 2 : (idx % (LANE_IDS.length - 2)) + 2)
+    },
     [people],
   )
 
@@ -2944,26 +2974,28 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         <div className="sticky top-0 z-20 -mx-4 px-4 py-3 bg-[#0C141C]/95 border-b border-[#1A232C] flex flex-wrap gap-3 items-start">
           <div className="flex flex-wrap gap-x-3 gap-y-2 items-start flex-1 min-w-[12rem]">
           {showRecord && (
-          <div className="flex flex-wrap items-start gap-2">
-          <button type="button" className={recording ? danger : primary} onClick={() => void toggleRecord()}>
-            {recording ? (
-              <>
-                <Square size={14} /> Stop
-              </>
-            ) : (
-              <>
-                <Mic2 size={14} /> Record new take
-              </>
-            )}
-          </button>
-          <button
-            type="button"
-            className={btn}
+          <div className="flex flex-wrap items-center gap-3">
+          {/* Signature record moment — the largest, most tactile control on
+              the transport. Wired to the existing toggle; state is derived. */}
+          <div className="flex flex-col items-center gap-1.5">
+            <RecordButton
+              state={recording ? 'recording' : anyArmed ? 'armed' : 'idle'}
+              size={64}
+              aria-label={recording ? 'Stop recording' : anyArmed ? 'Start recording' : 'Arm a take to record'}
+              onClick={() => void toggleRecord()}
+            />
+            <Chip tone={recording ? 'record' : anyArmed ? 'accent' : 'neutral'} dot>
+              {recording ? `REC ${formatClock(recClock)}` : anyArmed ? 'Armed' : 'Idle'}
+            </Chip>
+          </div>
+          <Button
+            variant="secondary"
+            size="compact"
             onClick={() => setBoothOpen(true)}
             title="Full-screen video booth — live cameras, tally, and per-person mute. Does not interrupt recording."
           >
             <Video size={14} /> Recording Booth
-          </button>
+          </Button>
           {boothParticipants.length > 0 && (
             <button
               type="button"
@@ -2991,69 +3023,21 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               </span>
             </button>
           )}
-          <fieldset
-            className="rounded-lg border border-[#27313B] bg-[#0A1016] px-2.5 py-1.5"
-            disabled={recording}
-          >
-            <legend className="px-1 text-[10px] uppercase tracking-[0.14em] text-[#8DEBFF]">
-              How to record
-            </legend>
-            <div className="flex flex-col gap-1">
-              {PRIMARY_REC_MODES.map((mode) => (
-                <label
-                  key={mode.id}
-                  className={`flex cursor-pointer items-start gap-2 rounded px-1.5 py-0.5 text-xs ${
-                    recMode === mode.value ? 'bg-[#121A22] text-[#F6FAFC]' : 'text-[#B8C4CF]'
-                  } ${recording ? 'cursor-not-allowed opacity-60' : ''}`}
-                  title={mode.hint}
-                >
-                  <input
-                    type="radio"
-                    name="rec-mode"
-                    className="mt-0.5 accent-[#53D6FF]"
-                    checked={recMode === mode.value}
-                    disabled={recording}
-                    onChange={() => setRecMode(mode.value)}
-                  />
-                  <span>
-                    <span className="font-medium">{mode.label}</span>
-                    <span className="block text-[10px] leading-tight text-[#7C8B97]">{mode.blurb}</span>
-                  </span>
-                </label>
-              ))}
-              {ADVANCED_REC_MODES.length > 0 && (
-                <details className="mt-0.5 rounded border border-[#1A232C] bg-[#080C10] px-1.5 py-1">
-                  <summary className="cursor-pointer text-[10px] uppercase tracking-[0.12em] text-[#7C8B97]">
-                    Advanced
-                  </summary>
-                  <div className="mt-1 flex flex-col gap-1">
-                    {ADVANCED_REC_MODES.map((mode) => (
-                      <label
-                        key={mode.id}
-                        className={`flex cursor-pointer items-start gap-2 rounded px-1.5 py-0.5 text-xs ${
-                          recMode === mode.value ? 'bg-[#121A22] text-[#F6FAFC]' : 'text-[#B8C4CF]'
-                        } ${recording ? 'cursor-not-allowed opacity-60' : ''}`}
-                        title={mode.hint}
-                      >
-                        <input
-                          type="radio"
-                          name="rec-mode"
-                          className="mt-0.5 accent-[#53D6FF]"
-                          checked={recMode === mode.value}
-                          disabled={recording}
-                          onChange={() => setRecMode(mode.value)}
-                        />
-                        <span>
-                          <span className="font-medium">{mode.label}</span>
-                          <span className="block text-[10px] leading-tight text-[#7C8B97]">{mode.blurb}</span>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </details>
-              )}
-            </div>
-          </fieldset>
+          <div className={`space-y-1.5 ${recording ? 'pointer-events-none opacity-60' : ''}`}>
+            <p className="studio-type-label text-ice">How to record</p>
+            <SegmentedControl
+              aria-label="How to record"
+              size="compact"
+              value={recMode}
+              onValueChange={(value) => {
+                if (!recording) setRecMode(value)
+              }}
+              options={ALL_REC_MODES.map((mode) => ({ value: mode.value, label: mode.label }))}
+            />
+            <p className="studio-type-label max-w-[22rem] normal-case tracking-normal text-[#7C8B97]">
+              {ALL_REC_MODES.find((m) => m.value === recMode)?.blurb}
+            </p>
+          </div>
           <label className="text-xs text-[#A9B8C6] flex items-center gap-2">
             Preroll
             <select
@@ -3086,37 +3070,64 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           {/* Playback transport — shared by record (monitoring) and edit (review takes).
               On narrow screens this group scrolls sideways so the primary Record / Play
               buttons above stay reachable instead of piling into a tall stack. */}
-          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
-          <button
-            type="button"
-            className={`${btn} shrink-0`}
+          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
+          <IconButton
+            aria-label="Mark a chapter at the playhead (C)"
+            title="Mark a chapter at the playhead (C)"
+            variant="secondary"
+            className="shrink-0"
             disabled={!onMarkChapter}
             onClick={() => {
               if (onMarkChapter) onMarkChapter(playheadRef.current)
             }}
-            title="Mark a chapter at the playhead (C)"
           >
-            <BookmarkPlus size={14} /> Chapter here
-          </button>
-          <button type="button" className={btn} disabled={!ready || recording} onClick={() => togglePlay()}>
+            <BookmarkPlus />
+          </IconButton>
+          <Button
+            variant="secondary"
+            className="shrink-0"
+            disabled={!ready || recording}
+            onClick={() => togglePlay()}
+          >
             {playing ? <Pause size={14} /> : <Play size={14} />}
             {playing ? 'Pause' : 'Play mix'}
-          </button>
-          <button type="button" className={`${btn} shrink-0`} disabled={!ready || recording} onClick={() => nudge(-5)}>
-            <SkipBack size={14} /> 5s
-          </button>
-          <button type="button" className={`${btn} shrink-0`} disabled={!ready || recording} onClick={() => nudge(5)}>
-            5s <SkipForward size={14} />
-          </button>
-          <button type="button" className={`${btn} shrink-0`} disabled={!ready} onClick={() => setBound('start')}>
+          </Button>
+          <IconButton
+            aria-label="Back 5 seconds"
+            title="Back 5 seconds"
+            variant="secondary"
+            className="shrink-0"
+            disabled={!ready || recording}
+            onClick={() => nudge(-5)}
+          >
+            <SkipBack />
+          </IconButton>
+          <IconButton
+            aria-label="Forward 5 seconds"
+            title="Forward 5 seconds"
+            variant="secondary"
+            className="shrink-0"
+            disabled={!ready || recording}
+            onClick={() => nudge(5)}
+          >
+            <SkipForward />
+          </IconButton>
+          <Button variant="secondary" size="dense" className="shrink-0" disabled={!ready} onClick={() => setBound('start')}>
             In
-          </button>
-          <button type="button" className={`${btn} shrink-0`} disabled={!ready} onClick={() => setBound('end')}>
+          </Button>
+          <Button variant="secondary" size="dense" className="shrink-0" disabled={!ready} onClick={() => setBound('end')}>
             Out
-          </button>
-          <button type="button" className={`${btn} shrink-0`} disabled={historyLen === 0} onClick={() => void undo()}>
-            <Undo2 size={14} /> Undo
-          </button>
+          </Button>
+          <IconButton
+            aria-label="Undo"
+            title="Undo"
+            variant="secondary"
+            className="shrink-0"
+            disabled={historyLen === 0}
+            onClick={() => void undo()}
+          >
+            <Undo2 />
+          </IconButton>
           {showEdit && (
           <>
           <label className={btn + ' shrink-0 cursor-pointer'}>
@@ -3139,22 +3150,26 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </label>
           </>
           )}
-          <button
-            type="button"
-            className={`${loop ? primary : btn} shrink-0`}
+          <IconButton
+            aria-label="Loop region"
+            title="Loop region"
+            variant={loop ? 'primary' : 'secondary'}
+            active={loop}
+            className="shrink-0"
             onClick={() => setLoop((v) => !v)}
           >
-            Loop region
-          </button>
+            <Repeat />
+          </IconButton>
           {showRecord && (
           <>
-          <button
-            type="button"
-            className={`${metronome ? primary : btn} shrink-0`}
+          <Button
+            variant={metronome ? 'primary' : 'secondary'}
+            size="compact"
+            className="shrink-0"
             onClick={() => setMetronome((v) => !v)}
           >
             Metronome
-          </button>
+          </Button>
           {metronome && (
             <label className="text-xs text-[#A9B8C6] flex items-center gap-2 shrink-0">
               BPM
@@ -3170,15 +3185,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           )}
           </>
           )}
-          <button
-            type="button"
-            className={`${btn} shrink-0`}
+          <Button
+            variant="secondary"
+            size="compact"
+            className="shrink-0"
             onClick={() => setHelpOpen(true)}
             title="Keyboard shortcuts (press ?)"
             aria-label="Show keyboard shortcuts"
           >
             <span aria-hidden="true">?</span> Shortcuts
-          </button>
+          </Button>
           </div>
           </div>
           {showRecord && (Object.keys(cameraStreams).length > 0 ||
@@ -3427,22 +3443,19 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             <div className="space-y-1.5">
               {Object.keys(inputPeaks).length === 0 && (
                 <div className="flex items-center gap-3">
-                  <div className="h-2 flex-1 rounded-full bg-[#151B22] overflow-hidden">
-                    <div className="h-full bg-[#53D6FF] transition-[width] duration-75" style={{ width: '0%' }} />
-                  </div>
-                  <span className="text-xs font-mono text-[#A9B8C6]">{recording ? `in ${formatClock(recClock)}` : 'idle'}</span>
+                  <Meter level={0} aria-label="Input level" className="flex-1" />
+                  <span className="studio-type-timecode text-silver">{recording ? `in ${formatClock(recClock)}` : 'idle'}</span>
                 </div>
               )}
               {Object.entries(inputPeaks).map(([key, peak]) => (
                 <div key={key} className="flex items-center gap-3">
-                  <span className="w-16 truncate text-[10px] uppercase tracking-wider text-[#7C8B97]">{key}</span>
-                  <div className="h-2 flex-1 rounded-full bg-[#151B22] overflow-hidden">
-                    <div
-                      className={`h-full transition-[width] duration-75 ${clipHolds[key] ? 'bg-[#FF5B73]' : 'bg-[#53D6FF]'}`}
-                      style={{ width: `${Math.min(100, peak * 140)}%` }}
-                    />
-                  </div>
-                  <span className={`text-xs font-mono ${clipHolds[key] ? 'text-[#FF7A9A]' : 'text-[#A9B8C6]'}`}>
+                  <span className="studio-type-label w-16 truncate text-[#7C8B97]">{key}</span>
+                  <Meter
+                    level={Math.min(1, peak * 1.4)}
+                    aria-label={`${key} input level`}
+                    className={clipHolds[key] ? 'shadow-rec' : undefined}
+                  />
+                  <span className={`studio-type-timecode ${clipHolds[key] ? 'text-heart' : 'text-silver'}`}>
                     {clipHolds[key] ? 'CLIP' : recording ? `in ${formatClock(recClock)}` : 'idle'}
                   </span>
                 </div>
@@ -3468,22 +3481,34 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
         {showEdit && (
         <>
-        <div className="rounded-xl border border-[#1A232C] bg-[#080C10] px-3 py-2 space-y-2">
+        <Panel elevation="flat" className="px-3 py-2.5 space-y-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Lane tools — same track</p>
-            <label className="inline-flex items-center gap-1.5 text-[11px] text-[#A9B8C6]">
-              <input type="checkbox" checked={applyRangeAll} onChange={(e) => setApplyRangeAll(e.target.checked)} />
-              Apply range to every track
-            </label>
+            <p className="studio-type-label text-ice">Lane tools — same track</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="studio-type-label inline-flex items-center gap-1.5 normal-case tracking-normal text-[#A9B8C6]">
+                <input type="checkbox" checked={applyRangeAll} onChange={(e) => setApplyRangeAll(e.target.checked)} />
+                Apply range to every track
+              </label>
+              {/* Progressive disclosure — the default view is calm (Split only). */}
+              <Button
+                variant={smartControlsOpen ? 'primary' : 'ghost'}
+                size="dense"
+                aria-expanded={smartControlsOpen}
+                onClick={() => setSmartControlsOpen((v) => !v)}
+                title="Reveal the advanced lane tools (volume, timing, trim, clips)"
+              >
+                <SlidersHorizontal size={13} /> {smartControlsOpen ? 'Hide tools' : 'Smart controls'}
+              </Button>
+            </div>
           </div>
-          <p className="text-[11px] text-[#7C8B97]">
+          <p className="studio-type-label normal-case tracking-normal text-[#7C8B97]">
             Drag on that person's tracks (under their mixer) to select a section. Duck a bed, or Comp a voice take for that range (take 2 for the flub, take 1 for the rest). S splits. Delete cuts a hole.
           </p>
           {/* Split stays prominent as the primary in-lane action. */}
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className={primary}
+            <Button
+              variant="primary"
+              size="compact"
               disabled={!selected?.buffer}
               onClick={() => {
                 if (!selected) return
@@ -3493,26 +3518,27 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               }}
             >
               <Scissors size={12} /> Split
-            </button>
-            <button
-              type="button"
-              className={btn}
+            </Button>
+            <Button
+              variant="secondary"
+              size="compact"
               disabled={!selected?.buffer}
               onClick={() => editRange((t) => splitRange(t, rangeRef.current.start, rangeRef.current.end), 'Split at selection edges')}
             >
               Split selection
-            </button>
+            </Button>
           </div>
+          {smartControlsOpen && (
           <div className="grid gap-1.5 sm:grid-cols-2">
-            <details className="rounded-lg border border-[#1A232C] bg-[#0A1016] px-2.5 py-1.5">
-              <summary className="cursor-pointer text-[11px] uppercase tracking-[0.12em] text-[#8DEBFF]">
+            <details className="rounded-control border border-divider bg-obsidian px-2.5 py-1.5" open>
+              <summary className="studio-type-label cursor-pointer text-ice">
                 Volume &amp; dynamics
               </summary>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <label className="inline-flex items-center gap-2 text-xs text-[#B8C4CF]">
+                <label className="studio-type-label inline-flex items-center gap-2 normal-case tracking-normal text-[#B8C4CF]">
                   Section {Math.round(sectionLevel * 100)}%
-                  <input
-                    type="range"
+                  <Slider
+                    aria-label="Section level"
                     min={0}
                     max={1}
                     step={0.01}
@@ -3521,19 +3547,19 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                     className="w-28"
                   />
                 </label>
-                <button
-                  type="button"
-                  className={btn}
+                <Button
+                  variant="secondary"
+                  size="dense"
                   disabled={!selected?.buffer}
                   onClick={() =>
                     editRange((t) => setVolumeInRange(t, rangeRef.current.start, rangeRef.current.end, sectionLevel), `Section volume ${Math.round(sectionLevel * 100)}% on this lane`)
                   }
                 >
                   Set section volume
-                </button>
-                <button
-                  type="button"
-                  className={btn}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="dense"
                   disabled={!selected?.buffer || !isVoiceRole(selected.role)}
                   onClick={() => {
                     if (!selected) return
@@ -3548,18 +3574,18 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   }}
                 >
                   Comp this take
-                </button>
-                <button
-                  type="button"
-                  className={btn}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="dense"
                   disabled={!selected?.buffer}
                   onClick={() => editRange((t) => setVolumeInRange(t, rangeRef.current.start, rangeRef.current.end, 0), 'Ducked section to silence (automation)')}
                 >
                   <VolumeX size={12} /> Mute section
-                </button>
-                <button
-                  type="button"
-                  className={btn}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="dense"
                   disabled={!selected?.buffer || !(selected.automation || []).length}
                   onClick={() => {
                     if (!selected) return
@@ -3569,17 +3595,17 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   }}
                 >
                   Clear automation
-                </button>
+                </Button>
               </div>
             </details>
-            <details className="rounded-lg border border-[#1A232C] bg-[#0A1016] px-2.5 py-1.5">
-              <summary className="cursor-pointer text-[11px] uppercase tracking-[0.12em] text-[#8DEBFF]">
+            <details className="rounded-control border border-divider bg-obsidian px-2.5 py-1.5">
+              <summary className="studio-type-label cursor-pointer text-ice">
                 Timing
               </summary>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  className={btn}
+                <Button
+                  variant="secondary"
+                  size="dense"
                   disabled={!selected?.buffer}
                   onClick={() => {
                     if (!selected) return
@@ -3589,48 +3615,48 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   }}
                 >
                   Join
-                </button>
+                </Button>
               </div>
             </details>
-            <details className="rounded-lg border border-[#1A232C] bg-[#0A1016] px-2.5 py-1.5">
-              <summary className="cursor-pointer text-[11px] uppercase tracking-[0.12em] text-[#8DEBFF]">
+            <details className="rounded-control border border-divider bg-obsidian px-2.5 py-1.5">
+              <summary className="studio-type-label cursor-pointer text-ice">
                 Trim &amp; delete
               </summary>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  className={btn}
+                <Button
+                  variant="secondary"
+                  size="dense"
                   disabled={!selected?.buffer}
                   onClick={() => editRange((t) => cropToRange(t, rangeRef.current.start, rangeRef.current.end), 'Cropped to selection')}
                 >
                   Crop to selection
-                </button>
-                <button
-                  type="button"
-                  className={btn}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="dense"
                   disabled={!selected?.buffer}
                   onClick={() => editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, false), 'Cut hole (gap stays)')}
                 >
                   Cut hole
-                </button>
-                <button
-                  type="button"
-                  className={btn}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="dense"
                   disabled={!selected?.buffer}
                   onClick={() => editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, true), 'Ripple delete')}
                 >
                   Ripple delete
-                </button>
+                </Button>
               </div>
             </details>
-            <details className="rounded-lg border border-[#1A232C] bg-[#0A1016] px-2.5 py-1.5">
-              <summary className="cursor-pointer text-[11px] uppercase tracking-[0.12em] text-[#8DEBFF]">
+            <details className="rounded-control border border-divider bg-obsidian px-2.5 py-1.5">
+              <summary className="studio-type-label cursor-pointer text-ice">
                 Clips
               </summary>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  className={btn}
+                <Button
+                  variant="secondary"
+                  size="dense"
                   disabled={!selected?.buffer || !selectedClipId}
                   onClick={() => {
                     if (!selected || !selectedClipId) return
@@ -3640,10 +3666,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   }}
                 >
                   Copy clip
-                </button>
-                <button
-                  type="button"
-                  className={btn}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="dense"
                   disabled={!selected?.buffer || !clipClipboardRef.current}
                   onClick={() => {
                     const clip = clipClipboardRef.current
@@ -3654,10 +3680,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   }}
                 >
                   Paste at playhead
-                </button>
-                <button
-                  type="button"
-                  className={btn}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="dense"
                   disabled={!selected?.buffer || !selectedClipId}
                   onClick={() => {
                     if (!selected || !selectedClipId) return
@@ -3667,10 +3693,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   }}
                 >
                   Repeat clip
-                </button>
-                <button
-                  type="button"
-                  className={btn}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="dense"
                   disabled={!selected?.buffer || !selectedClipId}
                   onClick={() => {
                     if (!selected || !selectedClipId) return
@@ -3682,11 +3708,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   }}
                 >
                   Fade clip
-                </button>
+                </Button>
               </div>
             </details>
           </div>
-        </div>
+          )}
+        </Panel>
 
         <SfxPad compact disabled={Boolean(busy) || recording} onDrop={(id) => void dropSfx(id)} />
 
@@ -3728,10 +3755,23 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           {people.map((person) => {
             const lane = tracks.filter((t) => t.personId === person.id).sort((a, b) => a.take - b.take)
             const mixerTrack = lane.find((t) => t.id === selected?.id) || lane.find((t) => t.armed) || lane[0] || null
+            // Persistent lane hue — the whole row wears this person's colour.
+            const lc = person.kind === 'voice' ? laneFor(person.id) : null
             return (
-              <div key={person.id} className="rounded-2xl border border-[#1A232C] bg-[#080C10] p-2.5 space-y-2">
+              <div
+                key={person.id}
+                className="rounded-panel border p-2.5 space-y-2 shadow-depth-sm"
+                style={
+                  lc
+                    ? { background: lc.laneBg, borderColor: lc.border }
+                    : { background: '#080C10', borderColor: '#1A232C' }
+                }
+              >
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="h-3 w-3 rounded-full shrink-0" style={{ background: person.color }} />
+                  <span
+                    className="h-3 w-3 rounded-full shrink-0 ring-2 ring-white/5"
+                    style={{ background: lc?.base ?? person.color }}
+                  />
                   <input
                     value={person.name}
                     onChange={(e) =>
@@ -3900,9 +3940,11 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 </div>
                 {mixerTrack && (
                   <div
-                    className={`rounded-xl border p-2.5 space-y-2 ${
-                      selected?.id === mixerTrack.id ? 'border-[#53D6FF]/60 bg-[#121A22]' : 'border-[#1A232C] bg-[#0A1016]'
-                    }`}
+                    className={`rounded-control border p-2.5 space-y-2 transition-shadow ${
+                      selected?.id === mixerTrack.id
+                        ? 'border-forged/60 bg-surface-raised shadow-highlight-rim'
+                        : 'border-divider bg-obsidian'
+                    } ${personMuted(person.id) ? 'opacity-55' : ''}`}
                     onClick={() => setSelectedId(mixerTrack.id)}
                   >
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -4046,30 +4088,30 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                         <Trash2 size={12} />
                       </button>
                     </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] text-[#A9B8C6]">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 studio-type-label normal-case tracking-normal text-[#A9B8C6]">
                       <label>
                         Vol {mixerTrack.volume.toFixed(2)}
-                        <input
-                          type="range"
+                        <Slider
+                          aria-label={`${mixerTrack.name} volume`}
                           min={0}
                           max={2}
                           step={0.02}
                           value={mixerTrack.volume}
                           onChange={(e) => updateTrack(mixerTrack.id, { volume: Number(e.target.value) })}
-                          className="w-full accent-[#53D6FF]"
+                          className="mt-1 w-full"
                           onClick={(e) => e.stopPropagation()}
                         />
                       </label>
                       <label>
                         Pan {mixerTrack.pan.toFixed(2)}
-                        <input
-                          type="range"
+                        <Slider
+                          aria-label={`${mixerTrack.name} pan`}
                           min={-1}
                           max={1}
                           step={0.05}
                           value={mixerTrack.pan}
                           onChange={(e) => updateTrack(mixerTrack.id, { pan: Number(e.target.value) })}
-                          className="w-full accent-[#53D6FF]"
+                          className="mt-1 w-full"
                           onClick={(e) => e.stopPropagation()}
                         />
                       </label>
@@ -4089,25 +4131,25 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                       </label>
                       <label>
                         Fade {mixerTrack.fadeIn.toFixed(1)}/{mixerTrack.fadeOut.toFixed(1)}s
-                        <div className="flex gap-1">
-                          <input
-                            type="range"
+                        <div className="mt-1 flex gap-1">
+                          <Slider
+                            aria-label={`${mixerTrack.name} fade in`}
                             min={0}
                             max={4}
                             step={0.05}
                             value={mixerTrack.fadeIn}
                             onChange={(e) => updateTrack(mixerTrack.id, { fadeIn: Number(e.target.value) })}
-                            className="w-1/2 accent-[#53D6FF]"
+                            className="w-1/2"
                             onClick={(e) => e.stopPropagation()}
                           />
-                          <input
-                            type="range"
+                          <Slider
+                            aria-label={`${mixerTrack.name} fade out`}
                             min={0}
                             max={4}
                             step={0.05}
                             value={mixerTrack.fadeOut}
                             onChange={(e) => updateTrack(mixerTrack.id, { fadeOut: Number(e.target.value) })}
-                            className="w-1/2 accent-[#53D6FF]"
+                            className="w-1/2"
                             onClick={(e) => e.stopPropagation()}
                           />
                         </div>
@@ -4283,12 +4325,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
         {/* Master bus / playhead */}
         <div>
-          <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF] mb-2">
+          <p className="studio-type-label text-ice mb-2">
             Playhead {formatClock(playhead)} · export {formatClock(range.start)} – {formatClock(range.end)}
           </p>
           <button
             type="button"
-            className="relative w-full h-16 rounded-xl bg-[#05070A] border border-[#1A232C] overflow-hidden"
+            className="relative w-full h-16 rounded-panel bg-obsidian border border-divider overflow-hidden shadow-inset-well"
             onClick={(e) => {
               if (sessionLen <= 0) return
               const rect = e.currentTarget.getBoundingClientRect()
@@ -4297,7 +4339,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             }}
           >
             <div
-              className="absolute inset-y-0 bg-[#53D6FF]/15"
+              className="absolute inset-y-0 bg-forged/15"
               style={{
                 left: sessionLen > 0 ? `${(range.start / sessionLen) * 100}%` : 0,
                 width: sessionLen > 0 ? `${((range.end - range.start) / sessionLen) * 100}%` : 0,
@@ -4305,9 +4347,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             />
             {hasAudio && (
               <div
-                className="absolute top-0 bottom-0 w-0.5 bg-[#8DEBFF]"
+                className="absolute top-0 bottom-0 -ml-[2.5px] w-[5px] rounded-full bg-ice shadow-[0_0_10px_rgba(141,235,255,0.6)]"
                 style={{ left: sessionLen > 0 ? `${(playhead / sessionLen) * 100}%` : 0 }}
-              />
+              >
+                {/* Bold playhead with a grabbable top handle + glow. */}
+                <span className="absolute -top-px left-1/2 h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-ice shadow-[0_0_8px_rgba(141,235,255,0.8)]" />
+              </div>
             )}
             {!hasAudio && (
               <p className="absolute inset-0 flex items-center justify-center text-sm text-[#A9B8C6]">
@@ -4315,53 +4360,53 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               </p>
             )}
           </button>
-          <div className="mt-3 grid sm:grid-cols-4 gap-3 text-xs text-[#A9B8C6]">
+          <div className="mt-3 grid sm:grid-cols-4 gap-3 studio-type-label normal-case tracking-normal text-[#A9B8C6]">
             <label>
               Zoom {zoom}px/s
-              <input
-                type="range"
+              <Slider
+                aria-label="Timeline zoom"
                 min={20}
                 max={200}
                 step={5}
                 value={zoom}
                 onChange={(e) => setZoom(Number(e.target.value))}
-                className="w-full accent-[#53D6FF]"
+                className="mt-1 w-full"
               />
             </label>
             <label>
               Master vol {masterGain.toFixed(2)}
-              <input
-                type="range"
+              <Slider
+                aria-label="Master volume"
                 min={0.2}
                 max={2}
                 step={0.05}
                 value={masterGain}
                 onChange={(e) => setMasterGain(Number(e.target.value))}
-                className="w-full accent-[#53D6FF]"
+                className="mt-1 w-full"
               />
             </label>
             <label>
               Master fade in {masterFadeIn.toFixed(1)}s
-              <input
-                type="range"
+              <Slider
+                aria-label="Master fade in"
                 min={0}
                 max={4}
                 step={0.1}
                 value={masterFadeIn}
                 onChange={(e) => setMasterFadeIn(Number(e.target.value))}
-                className="w-full accent-[#53D6FF]"
+                className="mt-1 w-full"
               />
             </label>
             <label>
               Master fade out {masterFadeOut.toFixed(1)}s
-              <input
-                type="range"
+              <Slider
+                aria-label="Master fade out"
                 min={0}
                 max={4}
                 step={0.1}
                 value={masterFadeOut}
                 onChange={(e) => setMasterFadeOut(Number(e.target.value))}
-                className="w-full accent-[#53D6FF]"
+                className="mt-1 w-full"
               />
             </label>
           </div>
@@ -4369,23 +4414,23 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
         {/* Effects + clip tools */}
         <div>
-          <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF] mb-2">
+          <p className="studio-type-label text-ice mb-2">
             Insert rack {selected ? `· ${selected.name}` : ''} · bypass / wet-dry · not baked in
           </p>
           <div className="flex flex-wrap gap-2">
             {INSERT_FX.map((id) => {
               const fx = EFFECT_META.find((e) => e.id === id)!
               return (
-                <button
+                <Button
                   key={id}
-                  type="button"
+                  variant="secondary"
+                  size="compact"
                   title={fx.hint}
                   disabled={!selected?.buffer || Boolean(busy)}
                   onClick={() => void runEffect(id, 'insert')}
-                  className="px-3 py-2 rounded-lg border border-[#27313B] bg-[#151B22] text-sm text-[#F6FAFC] hover:border-[#53D6FF]/50 disabled:opacity-40"
                 >
                   {fx.label}
-                </button>
+                </Button>
               )
             })}
           </div>
@@ -4410,8 +4455,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   </label>
                   <label className="inline-flex items-center gap-1">
                     wet {slot.wet.toFixed(2)}
-                    <input
-                      type="range"
+                    <Slider
+                      aria-label="Insert wet/dry"
                       min={0}
                       max={1}
                       step={0.05}
@@ -4423,12 +4468,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                         invalidateInsertCache(selected.id)
                         updateTrack(selected.id, { inserts })
                       }}
-                      className="w-20 accent-[#53D6FF]"
+                      className="w-20"
                     />
                   </label>
-                  <button
-                    type="button"
-                    className={chip}
+                  <Button
+                    variant="ghost"
+                    size="dense"
                     onClick={() => {
                       const inserts = (selected.inserts || []).filter((_, i) => i !== idx)
                       invalidateInsertCache(selected.id)
@@ -4436,31 +4481,31 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                     }}
                   >
                     Remove
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
           )}
-          <p className="mt-3 text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Render to take (destructive)</p>
+          <p className="mt-3 studio-type-label text-ice">Render to take (destructive)</p>
           <div className="flex flex-wrap gap-2 mt-2">
             {RENDER_ONLY_FX.map((id) => {
               const fx = EFFECT_META.find((e) => e.id === id)!
               return (
-                <button
+                <Button
                   key={id}
-                  type="button"
+                  variant="secondary"
+                  size="compact"
                   title={fx.hint}
                   disabled={!selected?.buffer || Boolean(busy)}
                   onClick={() => void runEffect(id, 'render')}
-                  className="px-3 py-2 rounded-lg border border-[#27313B] bg-[#151B22] text-sm text-[#F6FAFC] hover:border-[#53D6FF]/50 disabled:opacity-40"
                 >
                   {fx.label}
-                </button>
+                </Button>
               )
             })}
-            <button
-              type="button"
-              className={btn}
+            <Button
+              variant="secondary"
+              size="compact"
               disabled={!selected?.buffer || !(selected.inserts || []).length || Boolean(busy)}
               onClick={async () => {
                 if (!selected?.buffer) return
@@ -4474,64 +4519,65 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               }}
             >
               Render inserts to take
-            </button>
+            </Button>
           </div>
           <div className="flex flex-wrap gap-2 mt-2">
-            <button type="button" className={btn} disabled={!selected?.buffer} onClick={splitSelectedAtPlayhead}>
+            <Button variant="secondary" size="compact" disabled={!selected?.buffer} onClick={splitSelectedAtPlayhead}>
               Split at playhead (same lane)
-            </button>
-            <button type="button" className={btn} disabled={!selected?.buffer} onClick={bounceSelectedToStem}>
+            </Button>
+            <Button variant="secondary" size="compact" disabled={!selected?.buffer} onClick={bounceSelectedToStem}>
               Bounce track → stem
-            </button>
-            <button
-              type="button"
-              className={btn}
+            </Button>
+            <Button
+              variant="secondary"
+              size="compact"
               disabled={!hasAudio || Boolean(busy)}
               onClick={() => void applyMasterBus(['normalize', 'compress', 'limit'], 'keep')}
             >
               Bounce mix (keeps takes)
-            </button>
-            <button
-              type="button"
-              className={btn}
+            </Button>
+            <Button
+              variant="secondary"
+              size="compact"
               disabled={!hasAudio || Boolean(busy)}
               onClick={() => void applyMasterBus(['normalize', 'limit'], 'keep')}
             >
               Normalize + limit (keeps takes)
-            </button>
-            <button
-              type="button"
-              className={btn}
+            </Button>
+            <Button
+              variant="danger"
+              size="compact"
               disabled={!hasAudio || Boolean(busy)}
               onClick={() => void applyMasterBus(['normalize', 'compress', 'limit'], 'replace')}
             >
               Replace session
-            </button>
+            </Button>
           </div>
         </div>
         </>
         )}
 
         {showPublish && !showAll && (
-          <div className="rounded-xl border border-[#1A232C] bg-[#0A1016] px-3 py-2 text-xs text-[#A9B8C6]">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Ready to export</p>
+          <Panel elevation="flat" className="px-3 py-2.5 text-xs text-[#A9B8C6]">
+            <p className="studio-type-label text-ice">Ready to export</p>
             <p className="mt-1">
               {hasAudio
                 ? `Session ${durationLabel}${loudness && Number.isFinite(loudness.lufs) ? ` · ${loudness.lufs.toFixed(1)} LUFS (target ${PODCAST_LUFS})` : ''}${cameraClips.length ? ` · ${cameraClips.length} picture clip${cameraClips.length === 1 ? '' : 's'}` : ''}. ${hasVideo ? 'Use “Export episode” below to save the audio podcast-feed file and download the video, both from one master mix.' : 'Use “Export episode” below to save the audio podcast-feed file.'}`
                 : 'No audio yet — record or import a take in the earlier stages before exporting.'}
             </p>
-          </div>
+          </Panel>
         )}
 
         {showPublish && (
-        <div className="flex flex-col gap-3 pt-1 border-t border-[#27313B]">
+        <div className="flex flex-col gap-3 pt-1 border-t border-divider">
           {/* PRIMARY — one action, both deliverables from one master mix. Always writes
               the audio-only podcast-feed file; also downloads the video when the session
-              has picture. */}
+              has picture. One confident primary action. */}
           <div className="flex flex-col gap-1.5">
-            <button
-              type="button"
-              className={`${primary} w-full sm:w-auto justify-center`}
+            <Button
+              variant="primary"
+              size="touch"
+              className="w-full sm:w-auto"
               disabled={!hasAudio || Boolean(busy)}
               title={
                 hasVideo
@@ -4545,7 +4591,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 : hasVideo
                   ? 'Export episode (audio feed + video)'
                   : 'Export episode (audio feed)'}
-            </button>
+            </Button>
             <p className="text-[11px] text-[#A9B8C6]">
               Always writes <span className="text-[#8DEBFF]">Audio for Apple &amp; Spotify (podcast feed)</span>
               {hasVideo ? (
@@ -4558,77 +4604,78 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               )}
             </p>
             {onPublished && (
-              <button
-                type="button"
-                className={`${primary} w-full sm:w-auto justify-center`}
+              <Button
+                variant="primary"
+                size="touch"
+                className="w-full sm:w-auto"
                 disabled={!hasAudio || Boolean(busy)}
                 title="Runs Export episode, then publishes the audio-only file to your site / RSS. Video (if any) still downloads locally."
                 onClick={() => void exportEpisode(true)}
               >
                 Export episode + publish to site / RSS
-              </button>
+              </Button>
             )}
           </div>
 
           <div className="flex flex-wrap gap-2 items-center">
-          <span className="text-[11px] uppercase tracking-[0.14em] text-[#5E6B78] w-full">Individual files</span>
-          <button
-            type="button"
-            className={btn}
+          <span className="studio-type-label w-full text-[#5E6B78]">Individual files</span>
+          <Button
+            variant="secondary"
+            size="compact"
             disabled={!hasAudio || Boolean(busy)}
             title="Audio-only MP3 podcast-feed file (Apple/Spotify via RSS) — same as the audio half of Export episode."
             onClick={() => void exportAudio('mp3')}
           >
             {busy?.includes('MP3') ? busy : 'Audio only: MP3 (podcast feed)'}
-          </button>
-          <button
-            type="button"
-            className={btn}
+          </Button>
+          <Button
+            variant="secondary"
+            size="compact"
             disabled={!hasAudio || Boolean(busy)}
             title="Audio-only WAV of the master mix."
             onClick={() => void exportAudio('wav')}
           >
             {busy?.includes('WAV') ? busy : 'Audio only: WAV'}
-          </button>
+          </Button>
           <label className="inline-flex items-center gap-1.5 text-xs text-[#A9B8C6]">
             <input type="checkbox" checked={matchLufs} onChange={(e) => setMatchLufs(e.target.checked)} />
             Match {PODCAST_LUFS} LUFS
           </label>
-          <button
-            type="button"
-            className={btn}
+          <Button
+            variant="secondary"
+            size="compact"
             disabled={!hasAudio || Boolean(busy)}
             onClick={() => void downloadStems()}
           >
             {busy?.includes('stems') ? busy : 'Download stems zip'}
-          </button>
-          <button
-            type="button"
-            className={btn}
+          </Button>
+          <Button
+            variant="secondary"
+            size="compact"
             disabled={!cameraClips.length || Boolean(busy)}
             title="Host camera + audio mix, encoded as fast as this computer can. Local file — RSS stays the mix."
             onClick={() => void downloadPicture('a-roll')}
           >
             {busy?.includes('A-roll') ? busy : 'Download A-roll'}
-          </button>
-          <button
-            type="button"
-            className={btn}
+          </Button>
+          <Button
+            variant="secondary"
+            size="compact"
             disabled={!cameraClips.some((c) => c.personId === 'guest') || Boolean(busy)}
             title="Host full frame, guest PIP, encoded as fast as this computer can. Local file — audio_url stays the mix."
             onClick={() => void downloadPicture('pip')}
           >
             {busy?.includes('PIP') ? busy : 'Download PIP'}
-          </button>
-          <button
-            type="button"
-            className={btn}
+          </Button>
+          <Button
+            variant="secondary"
+            size="compact"
             disabled={!cameraClips.length || Boolean(busy)}
             title="Video only: camera timeline muxed with the master mix into one MP4 (WebM fallback). Same as the video half of Export episode. Local deliverable — RSS stays the audio mix."
             onClick={() => void downloadDeliverable()}
           >
             {busy?.includes('MP4') ? busy : 'Video only: MP4 (picture + master mix)'}
-          </button>
+          </Button>
           </div>
         </div>
         )}
@@ -4735,3 +4782,6 @@ const ADVANCED_REC_MODES: RecModeChoice[] = [
     hint: recModeHint('from_start'),
   },
 ]
+
+/** Primary + advanced modes, in one flat list for the segmented control. */
+const ALL_REC_MODES: RecModeChoice[] = [...PRIMARY_REC_MODES, ...ADVANCED_REC_MODES]

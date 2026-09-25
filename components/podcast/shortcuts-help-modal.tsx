@@ -3,6 +3,7 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 
+import { Button, Kbd, Panel } from '@/components/studio-ui'
 import { STUDIO_SHORTCUTS } from '@/lib/podcast/shortcuts'
 
 /** Store that never emits — used only to distinguish server vs client render. */
@@ -49,40 +50,35 @@ export function ShortcutsHelpModal({ open, onClose }: Props): React.JSX.Element 
         e.preventDefault()
         onClose()
       }}
-      className="m-auto w-full max-w-2xl rounded-2xl border border-[#27313B] bg-[#0B0F14] p-0 text-[#F6FAFC] backdrop:bg-[#05070A]/70"
+      className="m-auto w-full max-w-2xl bg-transparent p-0 text-white backdrop:bg-obsidian/70"
     >
-      <div className="flex items-center justify-between gap-4 border-b border-[#27313B] px-5 py-4">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.18em] text-[#8DEBFF]">Studio</p>
-          <h2 className="mt-0.5 text-base font-semibold text-[#F6FAFC]">Keyboard shortcuts</h2>
+      <Panel elevation="floating" className="overflow-hidden">
+        <div className="flex items-center justify-between gap-4 border-b border-divider px-5 py-4">
+          <div>
+            <p className="studio-type-label text-ice">Studio</p>
+            <h2 className="studio-type-section mt-0.5 !text-[18px]">Keyboard shortcuts</h2>
+          </div>
+          <Button variant="secondary" size="compact" onClick={onClose} aria-label="Close shortcuts">
+            Close
+          </Button>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close shortcuts"
-          className="flex h-8 items-center rounded-lg border border-[#27313B] bg-[#05070A] px-3 text-sm text-[#A9B8C6] transition-colors hover:border-[#3A4652] hover:text-[#F6FAFC]"
-        >
-          Close
-        </button>
-      </div>
 
-      <div className="grid gap-x-8 gap-y-6 px-5 py-5 sm:grid-cols-2">
-        {STUDIO_SHORTCUTS.map((group) => (
-          <section key={group.group}>
-            <p className="mb-2 text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">{group.group}</p>
-            <ul className="space-y-1.5">
-              {group.items.map((item) => (
-                <li key={item.keys} className="flex items-center justify-between gap-3 text-sm">
-                  <span className="text-[#A9B8C6]">{item.action}</span>
-                  <kbd className="shrink-0 rounded-md border border-[#27313B] bg-[#05070A] px-2 py-0.5 font-mono text-[11px] text-[#F6FAFC]">
-                    {item.keys}
-                  </kbd>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-      </div>
+        <div className="grid gap-x-8 gap-y-6 px-5 py-5 sm:grid-cols-2">
+          {STUDIO_SHORTCUTS.map((group) => (
+            <section key={group.group}>
+              <p className="studio-type-column mb-2.5 text-ice">{group.group}</p>
+              <ul className="space-y-2">
+                {group.items.map((item) => (
+                  <li key={item.keys} className="flex items-center justify-between gap-3">
+                    <span className="studio-type-body text-silver-body">{item.action}</span>
+                    <Kbd className="shrink-0">{item.keys}</Kbd>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      </Panel>
     </dialog>
   )
 

@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { CheckCircle2, Circle } from 'lucide-react'
+import { Button, Panel } from '@/components/studio-ui'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
 import { StudioStageBar } from '@/components/podcast/studio-stage-bar'
 import { EpisodePlan, type QueueFilter } from '@/components/podcast/episode-plan'
@@ -391,7 +392,7 @@ export function RecordingStudio({
             <select
               value={episode.status}
               onChange={(e) => changeStatus(e.target.value as EpisodeStatus)}
-              className="rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
+              className="studio-type-body rounded-control border border-divider bg-obsidian px-3 py-2 text-white shadow-inset-top transition-[border-color,box-shadow] duration-150 ease-calm focus:border-forged/60 focus:shadow-glow-subtle"
             >
               {EPISODE_PIPELINE.map((status) => (
                 <option key={status} value={status}>{status}</option>
@@ -399,15 +400,15 @@ export function RecordingStudio({
             </select>
             <Link
               href={`/admin/podcast/${episode.id}`}
-              className="rounded-lg border border-[#27313B] px-3 py-2 text-sm text-[#B8C4CF]"
+              className="studio-type-button inline-flex items-center rounded-control border border-divider bg-surface-raised px-3 py-2 text-silver shadow-inset-top transition-[border-color,box-shadow] duration-150 ease-calm hover:border-forged/60 hover:text-white hover:shadow-glow-subtle"
             >
               Episode page
             </Link>
           </div>
 
-          {error && <p className="text-sm text-red-300">{error}</p>}
-          {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
-          {saving && <p className="text-xs text-[#A9B8C6]">Saving…</p>}
+          {error && <p className="studio-type-body text-heart">{error}</p>}
+          {ok && <p className="studio-type-body text-ice">{ok}</p>}
+          {saving && <p className="studio-type-label text-silver-label">Saving…</p>}
 
           {/* Plan stage: queue + all metadata + checklist. */}
           {stage === 'plan' && (
@@ -454,43 +455,51 @@ export function RecordingStudio({
 
           {/* Publish stage: compliance summary + publish CTA, on top of the mounted editor. */}
           {stage === 'publish' && (
-            <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm font-medium text-[#F6FAFC]">Ready to publish?</p>
-                <button
-                  type="button"
+            <Panel elevation="raised" className="p-6">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="studio-type-label text-ice">Publish</p>
+                  <p className="studio-type-section mt-0.5 !text-[16px]">Ready to publish?</p>
+                </div>
+                <Button
+                  variant="primary"
+                  size="touch"
                   onClick={() => void publish()}
                   disabled={episode.status === 'published' || !compliance?.ok}
                   title={blockersText || undefined}
-                  className="rounded-lg bg-[#53D6FF] px-4 py-2 text-sm font-medium text-[#061016] disabled:opacity-40"
                 >
                   {episode.status === 'published' ? 'Live' : 'Publish now'}
-                </button>
+                </Button>
               </div>
               {blockersText && (
-                <p className="mb-3 text-xs text-red-300">Publish blocked: {blockersText}</p>
+                <p className="studio-type-label mb-4 rounded-control border border-heart/40 bg-heart/10 px-3 py-2 text-heart">
+                  Publish blocked · {blockersText}
+                </p>
               )}
               <ul className="grid gap-2 sm:grid-cols-2">
-                {checks.map((item) => (
-                  <li
-                    key={item.label}
-                    className={`flex items-center gap-2 text-sm ${
-                      item.required && !item.ok ? 'text-red-300' : 'text-[#B8C4CF]'
-                    }`}
-                  >
-                    {item.ok ? (
-                      <CheckCircle2 size={16} className="text-[#53D6FF]" />
-                    ) : (
-                      <Circle size={16} className={item.required ? 'text-red-400' : 'text-[#27313B]'} />
-                    )}
-                    {item.label}
-                    {item.required && !item.ok && (
-                      <span className="text-[10px] uppercase tracking-wide">required</span>
-                    )}
-                  </li>
-                ))}
+                {checks.map((item) => {
+                  const failing = item.required && !item.ok
+                  return (
+                    <li
+                      key={item.label}
+                      className={`studio-type-body flex items-center gap-2.5 rounded-control border px-3 py-2 ${
+                        failing
+                          ? 'border-heart/40 bg-heart/5 text-heart'
+                          : 'border-divider bg-obsidian/40 text-silver-body'
+                      }`}
+                    >
+                      {item.ok ? (
+                        <CheckCircle2 size={16} className="shrink-0 text-forged" />
+                      ) : (
+                        <Circle size={16} className={`shrink-0 ${item.required ? 'text-heart' : 'text-divider'}`} />
+                      )}
+                      <span className="min-w-0 flex-1">{item.label}</span>
+                      {failing && <span className="studio-type-label shrink-0 text-heart">required</span>}
+                    </li>
+                  )
+                })}
               </ul>
-            </section>
+            </Panel>
           )}
 
           {/*
@@ -500,7 +509,7 @@ export function RecordingStudio({
             record/edit/publish content from the `stage` prop.
           */}
           <div className={stage === 'plan' ? 'hidden' : ''} aria-hidden={stage === 'plan'}>
-            <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5">
+            <Panel elevation="raised" className="p-5">
               <StagedAudioEditor
                 episodeId={episode.id}
                 audioUrl={episode.audio_url}
@@ -511,7 +520,7 @@ export function RecordingStudio({
                 chapters={episode.chapters}
                 stage={stage}
               />
-            </section>
+            </Panel>
           </div>
         </>
       )}

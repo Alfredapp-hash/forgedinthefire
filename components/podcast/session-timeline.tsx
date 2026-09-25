@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import { formatClock } from '@/lib/podcast/audio'
 import { clipsOf, isVoiceRole, sessionDuration, type SessionPerson, type StudioTrack, type TrackClip } from '@/lib/podcast/multitrack'
+import { laneColor, LANE_IDS, type LaneColor, type LaneId } from '@/lib/podcast/lanes'
 import {
   drawPeakEnvelope,
   peakBucketCount,
@@ -37,6 +38,20 @@ export type SessionTimelineProps = {
   rulerOnly?: boolean
   scrollLeft?: number
   onScrollLeft?: (left: number) => void
+  /** Transport rolling — gently pulses the playhead glow. Visual only; defaults off. */
+  playing?: boolean
+}
+
+/**
+ * Resolve a persistent lane hue for a person. Canonical ids ('host', 'guest',
+ * 'cohost-N') map straight through; any other id falls back to a stable index so
+ * every participant keeps one colour across renders. Visual only — no logic reads this.
+ */
+function laneColorForPerson(personId: string | null | undefined, index: number): LaneColor {
+  if (personId && (LANE_IDS as readonly string[]).includes(personId)) {
+    return laneColor(personId as LaneId)
+  }
+  return laneColor(index)
 }
 
 function subscribeDpr(onStoreChange: () => void) {
@@ -49,14 +64,36 @@ export function useTrackDpr(): number {
   return useSyncExternalStore(subscribeDpr, () => trackDisplayRatio(), () => 1)
 }
 
-export function TimelinePlayhead({ sec, pxPerSec }: { sec: number; pxPerSec: number }) {
+export function TimelinePlayhead({
+  sec,
+  pxPerSec,
+  playing = false,
+}: {
+  sec: number
+  pxPerSec: number
+  /** Gently pulses the glow while transport is rolling. Reduced-motion safe. */
+  playing?: boolean
+}) {
   const dpr = useTrackDpr()
   const hair = snapHairline(sec * pxPerSec, dpr)
+  // Bold 5px stem centred on the snapped hairline, with a soft ice-blue glow.
+  const stem = 5
+  const left = hair.left - (stem - hair.width) / 2
   return (
-    <div
-      className="absolute top-0 bottom-0 z-30 pointer-events-none bg-[#8DEBFF]"
-      style={{ left: hair.left, width: hair.width }}
-    />
+    <div className="absolute top-0 bottom-0 z-30 pointer-events-none" style={{ left, width: stem }}>
+      {/* Grab handle: a rounded ice-blue cap at the top of the stem. */}
+      <span
+        aria-hidden
+        className="absolute -top-0.5 left-1/2 -translate-x-1/2 h-2.5 w-3 rounded-clip bg-ice shadow-glow-medium"
+      />
+      {/* The stem itself — bold, glowing, gently breathing while playing. */}
+      <span
+        aria-hidden
+        className={`absolute inset-y-0 left-0 w-full rounded-full bg-ice shadow-glow-medium ${
+          playing ? 'animate-glow-pulse' : ''
+        }`}
+      />
+    </div>
   )
 }
 
@@ -80,6 +117,7 @@ export function SessionTimeline({
   rulerOnly = false,
   scrollLeft,
   onScrollLeft,
+  playing = false,
 }: SessionTimelineProps) {
   const scopedPeople = personId ? people.filter((p) => p.id === personId) : people
   const scopedTracks = (personId ? tracks.filter((t) => t.personId === personId) : tracks).slice().sort((a, b) => {
@@ -236,7 +274,7 @@ export function SessionTimeline({
       <div className="relative" style={{ width, minHeight: rulerOnly ? rulerH || 24 : 56 }}>
         {showRuler && (
           <div
-            className="sticky top-0 z-10 h-6 border-b border-[#1A232C] bg-[#0C141C]"
+            className="sticky top-0 z-10 h-6 border-b border-divider bg-surface-sunken"
             onPointerDown={onRulerPointerDown}
           >
             {ticks.map(({ t, major }) => {
@@ -244,11 +282,11 @@ export function SessionTimeline({
               return (
                 <span key={t} className="absolute top-0 h-full pointer-events-none" style={{ left }}>
                   <i
-                    className={`absolute top-0 block ${major ? 'h-2 bg-[#3A4652]' : 'h-1 bg-[#27313B]'}`}
+                    className={`absolute top-0 block ${major ? 'h-2 bg-silver-label' : 'h-1 bg-divider'}`}
                     style={{ left: 0, width: 1 }}
                   />
                   {major && (
-                    <span className="absolute top-2.5 text-[10px] leading-none text-[#7C8B97] font-mono" style={{ left: 3 }}>
+                    <span className="studio-type-timecode absolute top-2.5 leading-none text-silver-label" style={{ left: 3 }}>
                       {formatClock(t)}
                     </span>
                   )}
@@ -260,7 +298,7 @@ export function SessionTimeline({
 
         {hasRange && (
           <div
-            className="absolute bottom-0 z-20 pointer-events-none bg-[#53D6FF]/10 border-x border-[#53D6FF]/40"
+            className="absolute bottom-0 z-20 pointer-events-none bg-forged/10 border-x border-forged/40"
             style={{
               top: rulerH,
               left: selBox.left,
@@ -269,21 +307,24 @@ export function SessionTimeline({
           />
         )}
 
-        {rows.map(({ person, lane }) => {
+        {rows.map(({ person, lane }, rowIndex) => {
           const hasComp = Boolean(person && lane.some((t) => isVoiceRole(t.role) && (t.compRanges || []).length > 0))
           const laneCount = Math.max(1, lane.length)
           const topPad = showPersonLabel ? 18 : hasComp ? 8 : 6
+          // Persistent GarageBand-style hue for this lane, keyed to the person.
+          const hue = laneColorForPerson(person?.id, rowIndex)
           return (
             <div
               key={person?.id || 'lane'}
-              className="relative border-t border-[#1A232C]"
-              style={{ height: topPad + laneCount * 52 }}
+              className="relative border-t border-divider"
+              style={{ height: topPad + laneCount * 52, background: hue.laneBg }}
               onPointerDown={lane[0] ? undefined : onEmptyLanePointerDown}
             >
               {showPersonLabel && (
-                <p className="absolute z-20 text-[10px] uppercase tracking-wider text-[#7C8B97]" style={{ left: 8, top: 4 }}>
-                  {person?.name || 'Takes'}
-                </p>
+                <span className="absolute z-20 inline-flex items-center gap-1.5" style={{ left: 8, top: 4 }}>
+                  <span className="h-2 w-2 rounded-full" style={{ background: hue.base }} />
+                  <span className="studio-type-label text-silver-label">{person?.name || 'Takes'}</span>
+                </span>
               )}
               {hasComp && (
                 <div className="absolute left-0 right-0 top-0 z-10" style={{ height: 2 }}>
@@ -298,7 +339,7 @@ export function SessionTimeline({
                             left: bar.left,
                             width: bar.width,
                             height: 2,
-                            background: t.color,
+                            background: hue.base,
                           }}
                           title={`${t.name} · ${formatClock(r.start)}–${formatClock(r.end)}`}
                         />
@@ -320,14 +361,14 @@ export function SessionTimeline({
                     onPointerUp={onBoardPointerUp}
                   >
                     {embedded && (
-                      <span className="absolute z-20 text-[10px] uppercase tracking-wider text-[#7C8B97] pointer-events-none" style={{ left: 8, top: 0 }}>
+                      <span className="studio-type-label absolute z-20 text-silver-label pointer-events-none" style={{ left: 8, top: 0 }}>
                         take {track.take}
                       </span>
                     )}
                     {clips.length === 0 && (
                       <div
-                        className="absolute h-9 rounded border border-dashed border-[#27313B] text-[10px] text-[#7C8B97] px-2 flex items-center"
-                        style={{ left: embedded ? 52 : 8, minWidth: 72, top: 8 }}
+                        className="studio-type-label absolute h-9 rounded-clip border border-dashed px-2 flex items-center text-silver-label"
+                        style={{ left: embedded ? 52 : 8, minWidth: 72, top: 8, borderColor: hue.border }}
                       >
                         empty — arm or record
                       </div>
@@ -337,6 +378,7 @@ export function SessionTimeline({
                         key={clip.id}
                         track={track}
                         clip={clip}
+                        laneColor={hue}
                         pxPerSec={pxPerSec}
                         selected={selectedId === track.id && (selectedClipId === clip.id || !selectedClipId)}
                         dim={
@@ -358,7 +400,7 @@ export function SessionTimeline({
                 )
               })}
               {lane.length === 0 && (
-                <p className="absolute text-[10px] text-[#7C8B97]" style={{ left: 8, top: 8 }}>
+                <p className="studio-type-label absolute text-silver-label normal-case tracking-normal" style={{ left: 8, top: 8 }}>
                   No takes yet — add one, then record.
                 </p>
               )}
@@ -366,30 +408,24 @@ export function SessionTimeline({
           )
         })}
 
-        <TimelinePlayhead sec={playhead} pxPerSec={pxPerSec} />
+        <TimelinePlayhead sec={playhead} pxPerSec={pxPerSec} playing={playing} />
       </div>
     </div>
   )
 
   if (embedded || rulerOnly) {
     return (
-      <div
-        className={
-          rulerOnly
-            ? 'rounded-lg border border-[#1A232C] bg-[#05070A] overflow-hidden'
-            : 'rounded-lg border border-[#1A232C] bg-[#05070A] overflow-hidden'
-        }
-      >
+      <div className="rounded-tile border border-divider bg-obsidian overflow-hidden shadow-depth-sm">
         {board}
       </div>
     )
   }
 
   return (
-    <div className="rounded-xl border border-[#1A232C] bg-[#080C10] overflow-hidden">
+    <div className="rounded-tile border border-divider bg-surface-card overflow-hidden shadow-depth-md">
       <div className="px-3 py-2 flex items-center justify-between gap-2">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Session timeline</p>
-        <p className="text-[11px] font-mono text-[#A9B8C6]">
+        <p className="studio-type-column text-ice">Session timeline</p>
+        <p className="studio-type-timecode text-silver-body">
           {formatClock(playhead)}
           {hasRange ? ` · sel ${formatClock(selStart)}–${formatClock(selEnd)}` : ''}
         </p>
@@ -402,6 +438,7 @@ export function SessionTimeline({
 function Clip({
   track,
   clip,
+  laneColor,
   pxPerSec,
   selected,
   dim,
@@ -413,6 +450,7 @@ function Clip({
 }: {
   track: StudioTrack
   clip: TrackClip
+  laneColor: LaneColor
   pxPerSec: number
   selected: boolean
   dim: boolean
@@ -427,16 +465,17 @@ function Clip({
   return (
     <div
       data-clip={clip.id}
-      className="absolute overflow-hidden"
+      className={`group absolute overflow-hidden rounded-clip transition-shadow transition-transform duration-150 will-change-transform hover:-translate-y-px ${
+        selected ? 'shadow-highlight-rim' : 'shadow-depth-sm hover:shadow-depth-md'
+      }`}
       style={{
         left: box.left,
         width: box.width,
         height: 40,
         top: 0,
-        borderRadius: 6,
-        background: track.color + (dim ? '18' : '33'),
-        border: `1px solid ${selected ? '#8DEBFF' : track.color}`,
-        opacity: !track.buffer && dim ? 0.45 : 1,
+        background: laneColor.clipFill,
+        border: `1px solid ${laneColor.border}`,
+        opacity: !track.buffer && dim ? 0.45 : dim ? 0.7 : 1,
       }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -450,12 +489,12 @@ function Clip({
           duration={clip.duration}
           cssWidth={box.width}
           cssHeight={40}
-          color={track.color}
+          color={laneColor.base}
           dim={dim}
         />
       )}
       <span
-        className="absolute text-[10px] leading-none text-[#F6FAFC] pointer-events-none truncate"
+        className="studio-type-label absolute leading-none text-white pointer-events-none truncate normal-case tracking-normal"
         style={{ left: 6, top: 3, maxWidth: '70%' }}
       >
         {track.name}
@@ -569,7 +608,7 @@ function AutomationLine({
       viewBox={`0 0 ${width} 44`}
       preserveAspectRatio="none"
     >
-      <path d={d} fill="none" stroke="#8DEBFF" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.85" />
+      <path d={d} fill="none" stroke="var(--ice-blue)" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.85" />
     </svg>
   )
 }

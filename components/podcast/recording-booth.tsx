@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 
+import { RecordButton, SegmentedControl } from '@/components/studio-ui'
 import { createActiveSpeakerTracker } from '@/lib/podcast/active-speaker'
 
 import { BoothTile } from './booth-tile'
@@ -144,6 +145,27 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
   const tiles = useMemo(() => participants, [participants])
   const countIn = tally === 'count-in'
 
+  // Stable lane hue per participant, GarageBand-style. Host → lane 0 (forged
+  // blue), the sole guest → lane 1 (ice), and everyone else fans out across
+  // the remaining cohost lanes (2…) by encounter order so each person keeps a
+  // distinct, consistent accent. laneColor() wraps the index for large casts.
+  const laneIndexById = useMemo(() => {
+    const map = new Map<string, number>()
+    let next = 2
+    let guestTaken = false
+    for (const p of participants) {
+      if (p.role === 'host') {
+        map.set(p.id, 0)
+      } else if (p.role === 'guest' && !guestTaken) {
+        map.set(p.id, 1)
+        guestTaken = true
+      } else {
+        map.set(p.id, next++)
+      }
+    }
+    return map
+  }, [participants])
+
   // --- Active-speaker (Auto layout) machinery -------------------------------
   const [layout, setLayout] = useState<BoothLayout>('grid')
   // The MAIN participant id in Auto mode. This is the ONLY value that re-renders
@@ -231,69 +253,50 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
         e.preventDefault()
         onClose()
       }}
-      className="fixed inset-0 m-0 flex h-full max-h-none w-full max-w-none flex-col border-0 bg-[#05070A] p-0 text-[#F6FAFC] backdrop:bg-[#05070A]"
+      className="admin-portal fixed inset-0 m-0 flex h-full max-h-none w-full max-w-none flex-col border-0 bg-obsidian p-0 text-white backdrop:bg-obsidian"
     >
       {/* Top bar */}
-      <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[#27313B] bg-[#0B0F14] px-5 py-3">
+      <header className="flex shrink-0 items-center justify-between gap-4 border-b border-divider bg-gunmetal px-5 py-3">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="hidden text-[11px] uppercase tracking-[0.2em] text-[#A9B8C6] sm:inline">On air</span>
-          <h1 className="truncate text-sm font-medium text-[#F6FAFC] sm:text-base">
+          <span className="studio-type-label hidden text-silver-label sm:inline">On air</span>
+          <h1 className="truncate text-sm font-medium text-white sm:text-base">
             {title || 'Untitled episode'}
           </h1>
         </div>
 
         <div className="flex items-center gap-4">
           {/* Layout toggle: Grid (default) vs Auto (active-speaker). */}
-          <div
-            role="group"
+          <SegmentedControl
             aria-label="Camera layout"
-            className="flex items-center gap-0.5 rounded-lg border border-[#27313B] bg-[#05070A] p-0.5"
-          >
-            <button
-              type="button"
-              onClick={() => setLayout('grid')}
-              aria-pressed={layout === 'grid'}
-              className={`h-7 rounded-md px-3 text-[11px] font-medium uppercase tracking-wider transition-colors ${
-                layout === 'grid'
-                  ? 'bg-[#0d2530] text-[#8DEBFF]'
-                  : 'text-[#A9B8C6] hover:text-[#F6FAFC]'
-              }`}
-            >
-              Grid
-            </button>
-            <button
-              type="button"
-              onClick={() => setLayout('auto')}
-              aria-pressed={layout === 'auto'}
-              title="Active speaker becomes the main camera"
-              className={`h-7 rounded-md px-3 text-[11px] font-medium uppercase tracking-wider transition-colors ${
-                layout === 'auto'
-                  ? 'bg-[#0d2530] text-[#8DEBFF]'
-                  : 'text-[#A9B8C6] hover:text-[#F6FAFC]'
-              }`}
-            >
-              Auto
-            </button>
-          </div>
+            size="dense"
+            value={layout}
+            onValueChange={setLayout}
+            options={[
+              { value: 'grid', label: 'Grid' },
+              { value: 'auto', label: 'Auto' },
+            ]}
+          />
 
           {countIn ? (
             <div className="flex items-center gap-2" aria-live="assertive">
-              <span className="text-[11px] uppercase tracking-[0.2em] text-[#8DEBFF]">Count-in</span>
-              <span className="min-w-[2ch] text-center text-3xl font-semibold tabular-nums text-[#8DEBFF]">
+              <span className="studio-type-label text-ice">Count-in</span>
+              <span className="min-w-[2ch] text-center text-3xl font-semibold tabular-nums text-ice">
                 {countdownSec ?? ''}
               </span>
             </div>
           ) : recording ? (
-            <div className="flex items-center gap-2" aria-live="polite">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#FF5B73] opacity-70" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#FF5B73]" />
-              </span>
-              <span className="text-xs font-semibold uppercase tracking-wider text-[#FF8DA0]">Rec</span>
-              <span className="text-lg font-semibold tabular-nums text-[#F6FAFC]">{mmss(elapsedSec)}</span>
+            <div className="flex items-center gap-3" aria-live="polite">
+              {/* Tactile heartbeat REC affordance — the rim pulses on the
+                  studio record cadence (reduced-motion → static rim). */}
+              <span
+                className="studio-rec-recording flex h-3 w-3 items-center justify-center rounded-full bg-heart"
+                aria-hidden="true"
+              />
+              <span className="studio-type-label text-heart">Rec</span>
+              <span className="studio-type-timecode text-white">{mmss(elapsedSec)}</span>
             </div>
           ) : (
-            <span className="text-xs uppercase tracking-wider text-[#A9B8C6]">
+            <span className="studio-type-label text-silver-label">
               {tally === 'stopped' ? 'Stopped' : 'Standby'}
             </span>
           )}
@@ -303,12 +306,12 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
       {/* Participant stage */}
       <main className="relative min-h-0 flex-1 overflow-hidden p-4">
         {tiles.length === 0 ? (
-          <div className="flex h-full w-full items-center justify-center rounded-xl border border-dashed border-[#27313B] text-sm text-[#A9B8C6]">
+          <div className="studio-type-body flex h-full w-full items-center justify-center rounded-tile border border-dashed border-divider text-silver-label">
             No participants in the booth yet.
           </div>
         ) : layout === 'auto' && mainParticipant ? (
           <div className="relative h-full w-full">
-            {/* MAIN — the active speaker, large. */}
+            {/* MAIN — the active speaker, large, with the cyan glow rim. */}
             <BoothTile
               key={mainParticipant.id}
               id={mainParticipant.id}
@@ -324,6 +327,8 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
               onToggleCamera={onToggleCamera}
               onLevel={handleTileLevel}
               variant="main"
+              laneIndex={laneIndexById.get(mainParticipant.id) ?? 0}
+              active
             />
 
             {/* PIP strip — everyone else, overlaid along the bottom. With just
@@ -333,7 +338,7 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
                 {pipParticipants.map((p) => (
                   <div
                     key={p.id}
-                    className="pointer-events-auto aspect-video w-40 shrink-0 overflow-hidden rounded-lg shadow-lg shadow-black/40 sm:w-48 lg:w-56"
+                    className="pointer-events-auto aspect-video w-40 shrink-0 overflow-hidden rounded-tile shadow-depth-lg sm:w-48 lg:w-56"
                   >
                     <BoothTile
                       id={p.id}
@@ -349,6 +354,7 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
                       onToggleCamera={onToggleCamera}
                       onLevel={handleTileLevel}
                       variant="pip"
+                      laneIndex={laneIndexById.get(p.id) ?? 0}
                     />
                   </div>
                 ))}
@@ -372,6 +378,7 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
                 onToggleMute={onToggleMute}
                 onToggleCamera={onToggleCamera}
                 onLevel={handleTileLevel}
+                laneIndex={laneIndexById.get(p.id) ?? 0}
               />
             ))}
           </div>
@@ -380,26 +387,26 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
 
       {/* Invite panel (revealed above the control bar) */}
       {inviteOpen && invitePanel ? (
-        <div className="shrink-0 border-t border-[#27313B] bg-[#0B0F14] px-5 py-4">
+        <div className="shrink-0 border-t border-divider bg-gunmetal px-5 py-4">
           <div className="mx-auto max-w-3xl">{invitePanel}</div>
         </div>
       ) : null}
 
       {/* Control bar */}
-      <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-[#27313B] bg-[#0B0F14] px-5 py-4">
+      <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-divider bg-gunmetal px-5 py-4">
         <div className="flex items-center gap-2">
           {onToggleTalkback ? (
             <button
               type="button"
               onClick={onToggleTalkback}
               aria-pressed={Boolean(talkbackOn)}
-              className={`flex h-10 items-center gap-2 rounded-lg border px-3.5 text-sm font-medium transition-colors ${
+              className={`studio-type-button flex h-control-compact items-center gap-2 rounded-control border px-3.5 transition-colors ${
                 talkbackOn
-                  ? 'border-[#53D6FF] bg-[#0d2530] text-[#8DEBFF]'
-                  : 'border-[#27313B] bg-[#0B0F14] text-[#A9B8C6] hover:border-[#3A4652] hover:text-[#F6FAFC]'
+                  ? 'border-forged bg-forged/10 text-ice shadow-glow-subtle'
+                  : 'border-divider bg-surface-card text-silver-label hover:border-forged/40 hover:text-white'
               }`}
             >
-              <span className={`h-2 w-2 rounded-full ${talkbackOn ? 'bg-[#53D6FF]' : 'bg-[#3A4652]'}`} />
+              <span className={`h-2 w-2 rounded-full ${talkbackOn ? 'bg-forged' : 'bg-divider'}`} />
               Talkback
             </button>
           ) : null}
@@ -409,10 +416,10 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
               type="button"
               onClick={handleAddGuest}
               aria-expanded={inviteOpen}
-              className={`flex h-10 items-center gap-2 rounded-lg border px-3.5 text-sm font-medium transition-colors ${
+              className={`studio-type-button flex h-control-compact items-center gap-2 rounded-control border px-3.5 transition-colors ${
                 inviteOpen
-                  ? 'border-[#53D6FF] bg-[#0d2530] text-[#8DEBFF]'
-                  : 'border-[#27313B] bg-[#0B0F14] text-[#A9B8C6] hover:border-[#3A4652] hover:text-[#F6FAFC]'
+                  ? 'border-forged bg-forged/10 text-ice shadow-glow-subtle'
+                  : 'border-divider bg-surface-card text-silver-label hover:border-forged/40 hover:text-white'
               }`}
             >
               <span className="text-base leading-none">+</span>
@@ -421,35 +428,25 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
           ) : null}
         </div>
 
-        {/* Primary record / stop */}
-        <button
-          type="button"
-          onClick={onToggleRecord}
-          disabled={!canRecord}
-          aria-label={recording ? 'Stop recording' : 'Start recording'}
-          className={`flex h-12 items-center gap-2.5 rounded-full px-7 text-sm font-semibold uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-            recording
-              ? 'bg-[#FF5B73] text-[#05070A] hover:bg-[#ff7186]'
-              : 'bg-[#53D6FF] text-[#05070A] hover:bg-[#8DEBFF]'
-          }`}
-        >
-          {recording ? (
-            <>
-              <span className="h-3.5 w-3.5 rounded-[2px] bg-[#05070A]" />
-              Stop
-            </>
-          ) : (
-            <>
-              <span className="h-3.5 w-3.5 rounded-full bg-[#05070A]" />
-              Record
-            </>
-          )}
-        </button>
+        {/* Primary record / stop — the signature tactile RecordButton, with a
+            label so the affordance reads clearly in the control bar. */}
+        <div className="flex items-center gap-3">
+          <RecordButton
+            state={recording ? 'recording' : 'idle'}
+            size={52}
+            disabled={!canRecord}
+            aria-label={recording ? 'Stop recording' : 'Start recording'}
+            onClick={onToggleRecord}
+          />
+          <span className="studio-type-button hidden text-silver-label sm:inline">
+            {recording ? 'Stop' : 'Record'}
+          </span>
+        </div>
 
         <button
           type="button"
           onClick={onClose}
-          className="flex h-10 items-center gap-2 rounded-lg border border-[#27313B] bg-[#0B0F14] px-3.5 text-sm font-medium text-[#A9B8C6] transition-colors hover:border-[#3A4652] hover:text-[#F6FAFC]"
+          className="studio-type-button flex h-control-compact items-center gap-2 rounded-control border border-divider bg-surface-card px-3.5 text-silver-label transition-colors hover:border-forged/40 hover:text-white"
         >
           Exit booth
         </button>

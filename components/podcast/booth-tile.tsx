@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { laneColor } from '@/components/studio-ui'
+
 import type { BoothConnection, BoothParticipantRole } from './recording-booth'
 
 /**
@@ -37,10 +39,10 @@ function connectionBadge(connection: BoothConnection): ConnectionBadge | null {
 }
 
 const BADGE_TONE: Record<ConnectionBadge['tone'], string> = {
-  wait: 'border-[#3A4652] bg-[#0B0F14]/80 text-[#8DEBFF]',
+  wait: 'border-forged/40 bg-gunmetal/80 text-ice',
   warn: 'border-[#7A5A1E] bg-[#1A130A]/80 text-[#FFC46B]',
-  fail: 'border-[#7A2733] bg-[#1A0A0E]/80 text-[#FF8DA0]',
-  idle: 'border-[#27313B] bg-[#0B0F14]/80 text-[#A9B8C6]',
+  fail: 'border-heart/60 bg-heart/15 text-heart',
+  idle: 'border-divider bg-gunmetal/80 text-silver-label',
 }
 
 function initials(name: string): string {
@@ -69,6 +71,16 @@ export type BoothTileProps = {
   onLevel?: (id: string, level: number) => void
   /** 'pip' renders a denser tile (smaller placeholder / tighter footer). */
   variant?: 'main' | 'pip'
+  /**
+   * Lane accent index (0 = host, 1 = guest, 2… = cohorts). Drives this
+   * participant's persistent GarageBand-style hue on the name chip / ring.
+   */
+  laneIndex?: number
+  /**
+   * True when this tile is the Auto-layout active speaker (the MAIN slot).
+   * Adds a cyan glow rim + subtle scale so the speaker reads as "live".
+   */
+  active?: boolean
 }
 
 /**
@@ -187,11 +199,16 @@ export function BoothTile({
   onToggleCamera,
   onLevel,
   variant = 'main',
+  laneIndex = 0,
+  active = false,
 }: BoothTileProps): React.JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [videoPlaying, setVideoPlaying] = useState(false)
   const wantsVideo = hasLiveVideo && cameraOn && Boolean(videoStream)
   const meterActive = !muted && Boolean(audioStream)
+  // Persistent GarageBand-style hue for this participant — drives the name
+  // chip accent and the placeholder ring so each person reads consistently.
+  const lane = laneColor(laneIndex)
 
   // Bind the tile's id into the level callback so the parent knows who spoke,
   // without the tile ever re-rendering on level changes (delivered via ref).
@@ -235,9 +252,18 @@ export function BoothTile({
   const showPlaceholder = !wantsVideo || !videoPlaying
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[#27313B] bg-[#05070A]">
+    <div
+      className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-tile border bg-obsidian transition-[box-shadow,transform] duration-200 ease-calm ${
+        active
+          ? 'z-10 scale-[1.02] border-forged/60 shadow-highlight-rim'
+          : muted
+            ? 'border-heart/30 shadow-depth-md'
+            : 'border-divider shadow-depth-md'
+      }`}
+      style={{ willChange: active ? 'transform' : undefined }}
+    >
       {/* Video / placeholder */}
-      <div className="relative min-h-0 flex-1 bg-[#05070A]">
+      <div className="relative min-h-0 flex-1 bg-obsidian">
         {wantsVideo ? (
           <video
             ref={videoRef}
@@ -248,17 +274,22 @@ export function BoothTile({
           />
         ) : null}
         {showPlaceholder ? (
-          <div className="absolute inset-0 flex h-full w-full flex-col items-center justify-center gap-3 bg-gradient-to-b from-[#0B0F14] to-[#05070A]">
+          <div className="absolute inset-0 flex h-full w-full flex-col items-center justify-center gap-3 bg-gradient-to-b from-gunmetal to-obsidian">
             <div
-              className={`flex items-center justify-center rounded-full border border-[#27313B] bg-[#0B0F14] font-semibold tracking-wide text-[#8DEBFF] ${
+              className={`flex items-center justify-center rounded-full border font-semibold tracking-wide ${
                 isPip ? 'h-12 w-12 text-base' : 'h-20 w-20 text-2xl'
               }`}
+              style={{
+                borderColor: lane.border,
+                background: lane.laneBg,
+                color: lane.base,
+              }}
               aria-hidden="true"
             >
               {initials(name)}
             </div>
             {isPip ? null : (
-              <span className="text-[11px] uppercase tracking-[0.18em] text-[#A9B8C6]">Camera off</span>
+              <span className="studio-type-label text-silver-label">Camera off</span>
             )}
           </div>
         ) : null}
@@ -273,20 +304,30 @@ export function BoothTile({
             </span>
           ) : null}
           {muted ? (
-            <span className="rounded-full border border-[#7A2733] bg-[#1A0A0E]/85 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[#FF8DA0]">
+            <span className="flex items-center gap-1 rounded-full border border-heart/60 bg-heart/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-heart">
+              <span className="h-1.5 w-1.5 rounded-full bg-heart" />
               Muted
             </span>
           ) : null}
         </div>
       </div>
 
-      {/* Meter strip */}
-      <div className="px-3 pt-2">
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#0B0F14]">
+      {/* Meter strip — kit-styled tactile well. The fill is driven imperatively
+          by the AnalyserNode via `meterRef` (scaleX), never through React
+          state, so metering stays off the render path. Smooth decay lives in
+          useAudioLevel. */}
+      <div className="px-3 pt-2.5">
+        {/* Decorative level indicator — the value is driven imperatively by the
+            AnalyserNode via scaleX (never React state), so it carries no ARIA
+            role; accessible mic state lives on the mute button below. */}
+        <div
+          aria-hidden="true"
+          className="relative h-2 w-full overflow-hidden rounded-full border border-divider bg-obsidian shadow-inset-well"
+        >
           <div
             ref={meterRef}
             className={`h-full w-full origin-left rounded-full ${
-              muted ? 'bg-[#3A4652]' : 'bg-gradient-to-r from-[#53D6FF] to-[#8DEBFF]'
+              muted ? 'bg-heart/40' : 'bg-gradient-to-r from-forged to-ice'
             }`}
             style={{ transform: 'scaleX(0)', willChange: 'transform' }}
           />
@@ -296,8 +337,21 @@ export function BoothTile({
       {/* Footer: name, role chip, controls */}
       <div className="flex items-center justify-between gap-2 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-medium text-[#F6FAFC]">{name}</span>
-          <span className="shrink-0 rounded-md border border-[#27313B] bg-[#0B0F14] px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-[#A9B8C6]">
+          {/* Lane accent dot — this participant's persistent hue. */}
+          <span
+            className="h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{ background: lane.base }}
+            aria-hidden="true"
+          />
+          <span className="truncate text-sm font-medium text-white">{name}</span>
+          <span
+            className="shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] uppercase tracking-wider"
+            style={{
+              borderColor: lane.border,
+              background: lane.laneBg,
+              color: lane.base,
+            }}
+          >
             {ROLE_LABEL[role]}
           </span>
         </div>
@@ -308,10 +362,10 @@ export function BoothTile({
             aria-pressed={muted}
             aria-label={muted ? `Unmute ${name}` : `Mute ${name}`}
             title={muted ? 'Unmute' : 'Mute'}
-            className={`flex h-8 w-8 items-center justify-center rounded-lg border text-xs transition-colors ${
+            className={`flex h-8 w-8 items-center justify-center rounded-control border transition-colors ${
               muted
-                ? 'border-[#7A2733] bg-[#1A0A0E] text-[#FF8DA0] hover:bg-[#26101499]'
-                : 'border-[#27313B] bg-[#0B0F14] text-[#A9B8C6] hover:border-[#3A4652] hover:text-[#F6FAFC]'
+                ? 'border-heart/60 bg-heart/15 text-heart hover:bg-heart/25'
+                : 'border-divider bg-surface-card text-silver-label hover:border-forged/40 hover:text-white'
             }`}
           >
             {muted ? <MicOffIcon /> : <MicIcon />}
@@ -322,9 +376,9 @@ export function BoothTile({
             aria-pressed={!cameraOn}
             aria-label={cameraOn ? `Turn off ${name} camera` : `Turn on ${name} camera`}
             title={cameraOn ? 'Camera off' : 'Camera on'}
-            className={`flex h-8 w-8 items-center justify-center rounded-lg border text-xs transition-colors ${
+            className={`flex h-8 w-8 items-center justify-center rounded-control border transition-colors ${
               cameraOn
-                ? 'border-[#27313B] bg-[#0B0F14] text-[#A9B8C6] hover:border-[#3A4652] hover:text-[#F6FAFC]'
+                ? 'border-divider bg-surface-card text-silver-label hover:border-forged/40 hover:text-white'
                 : 'border-[#7A5A1E] bg-[#1A130A] text-[#FFC46B] hover:bg-[#241a0c]'
             }`}
           >

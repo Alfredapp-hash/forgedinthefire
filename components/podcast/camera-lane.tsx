@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Scissors } from 'lucide-react'
 import { formatClock } from '@/lib/podcast/audio'
 import { formatDrift, type AvDrift } from '@/lib/podcast/av-sync'
 import {
@@ -23,6 +24,8 @@ import {
 } from '@/lib/podcast/peaks'
 import type { SwitchEDL } from '@/lib/podcast/switch-edl'
 import { TimelinePlayhead, useTrackDpr } from '@/components/podcast/session-timeline'
+import { Button, IconButton } from '@/components/studio-ui'
+import { laneColor, LANE_IDS, type LaneColor, type LaneId } from '@/lib/podcast/lanes'
 
 type Props = {
   clips: CameraClip[]
@@ -67,6 +70,14 @@ type Props = {
   audioForPerson?: (personId: string) => AudioBuffer | null
 }
 
+/** Persistent lane hue for a camera person — canonical ids pass through, else index-stable. */
+function laneColorFor(personId: string | null | undefined, index = 0): LaneColor {
+  if (personId && (LANE_IDS as readonly string[]).includes(personId)) {
+    return laneColor(personId as LaneId)
+  }
+  return laneColor(index)
+}
+
 export function CameraLane({
   clips,
   playhead,
@@ -107,6 +118,8 @@ export function CameraLane({
 }: Props) {
   const boardRef = useRef<HTMLDivElement>(null)
   const width = Math.max(480, Math.round(durationSec * pxPerSec))
+  // Which switch marker is actively being dragged — drives the highlight rim.
+  const [draggingSwitchId, setDraggingSwitchId] = useState<string | null>(null)
   const drag = useRef<
     | { kind: 'move'; clipId: string; startX: number; startOffset: number; moved: boolean }
     | { kind: 'trim'; clipId: string; edge: 'in' | 'out' }
@@ -120,6 +133,7 @@ export function CameraLane({
 
   // Every clip on this lane belongs to the same person; use it as the waveform + cut source.
   const personId = clips[0]?.personId ?? null
+  const laneHue = laneColorFor(personId)
   const waveBuffer = personId && audioForPerson ? audioForPerson(personId) : null
   const switchEnabled = Boolean(onAddSwitch || onMoveSwitch || onRemoveSwitch || onSetSwitchMain)
   const cuts = edl ?? []
@@ -184,6 +198,7 @@ export function CameraLane({
   function onBoardPointerUp(event: React.PointerEvent) {
     const d = drag.current
     drag.current = null
+    if (d?.kind === 'switch') setDraggingSwitchId(null)
     try {
       event.currentTarget.releasePointerCapture(event.pointerId)
     } catch {
@@ -216,16 +231,20 @@ export function CameraLane({
   if (clips.length === 0 && !(markers && markers.length)) return null
 
   return (
-    <div className="rounded-lg border border-[#1A232C] bg-[#05070A] overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-2" style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4 }}>
+    <div className="rounded-tile border border-divider bg-obsidian overflow-hidden shadow-depth-sm">
+      <div
+        className="flex flex-wrap items-center justify-between gap-2"
+        style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, background: laneHue.laneBg }}
+      >
         <div className="flex flex-wrap items-center gap-2">
-          <p className="text-[10px] uppercase tracking-wider text-[#7C8B97]">Camera takes</p>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full" style={{ background: laneHue.base }} />
+            <span className="studio-type-label text-silver-label">Camera takes</span>
+          </span>
           {onLinkedChange && (
-            <button
-              type="button"
-              className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border ${
-                linked ? 'border-[#53D6FF]/50 text-[#8DEBFF]' : 'border-[#27313B] text-[#7C8B97]'
-              }`}
+            <Button
+              size="dense"
+              variant={linked ? 'secondary' : 'ghost'}
               onClick={() => onLinkedChange(!linked)}
               title={
                 linked
@@ -234,31 +253,31 @@ export function CameraLane({
               }
             >
               {linked ? 'Linked' : 'Unlinked'}
-            </button>
+            </Button>
           )}
           {showBroken && drift && (
             <span className="inline-flex items-center gap-1.5">
               <span
-                className="text-[10px] font-mono text-[#FFB86B]"
+                className="studio-type-timecode text-lane-cohost-1"
                 title={`Audio in-point ${formatClock(drift.audioOffset)} vs picture ${formatClock(drift.cameraOffset)}`}
               >
                 Broken sync · {formatDrift(drift.seconds)}
               </span>
               {onSnapSync && (
-                <button
-                  type="button"
-                  className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-[#FFB86B]/50 text-[#FFB86B]"
+                <Button
+                  size="dense"
+                  variant="secondary"
                   onClick={onSnapSync}
                   disabled={disabled}
                   title={`Slide the picture ${formatDrift(drift.seconds)} to the audio in-point (${formatClock(drift.audioOffset)}).`}
                 >
                   Snap to sync
-                </button>
+                </Button>
               )}
             </span>
           )}
         </div>
-        <p className="text-[10px] font-mono text-[#7C8B97]">
+        <p className="studio-type-timecode text-silver-label">
           {clips.length} file{clips.length === 1 ? '' : 's'}
           {selected ? ` · in ${formatClock(cameraSourceStart(selected))}` : ''}
         </p>
@@ -277,7 +296,7 @@ export function CameraLane({
             )}
             {range && range.end - range.start > 0.04 && (
               <div
-                className="absolute top-0 bottom-0 bg-[#53D6FF]/10 pointer-events-none"
+                className="absolute top-0 bottom-0 bg-forged/10 border-x border-forged/40 pointer-events-none"
                 style={{
                   left: snapHairline(range.start * pxPerSec, 1).left,
                   width: Math.max(2, (range.end - range.start) * pxPerSec),
@@ -291,8 +310,8 @@ export function CameraLane({
                 style={{ left: snapHairline(mark.time * pxPerSec, 1).left }}
                 title={`${mark.label} · ${formatClock(mark.time)}`}
               >
-                <div className="h-full w-px bg-[#FFB86B]" />
-                <span className="absolute top-0 left-1 max-w-[7rem] truncate text-[9px] uppercase tracking-wider text-[#FFB86B]">
+                <div className="h-full w-px bg-lane-cohost-1" />
+                <span className="studio-type-label absolute top-0 left-1 max-w-[7rem] truncate text-lane-cohost-1">
                   {mark.label}
                 </span>
               </div>
@@ -300,6 +319,9 @@ export function CameraLane({
             {switchEnabled &&
               cuts.map((ev) => {
                 const hair = snapHairline(ev.atSec * pxPerSec, 1)
+                // The cut takes its colour from the camera it switches TO.
+                const targetHue = laneColorFor(ev.mainId)
+                const isDragging = draggingSwitchId === ev.id
                 return (
                   <div
                     key={ev.id}
@@ -311,53 +333,61 @@ export function CameraLane({
                       role="button"
                       aria-label={`Camera cut to ${nameForMain(ev.mainId)} at ${formatClock(ev.atSec)}`}
                       title={`Cut → ${nameForMain(ev.mainId)} · ${formatClock(ev.atSec)}${ev.reason === 'auto' ? ' · auto' : ''} · drag to move`}
-                      className="absolute top-0 bottom-0 -left-1.5 w-3 cursor-ew-resize"
+                      className="absolute top-0 bottom-0 -left-2 w-4 cursor-ew-resize"
                       onPointerDown={(event) => {
                         if (!onMoveSwitch) return
                         event.stopPropagation()
                         event.currentTarget.setPointerCapture(event.pointerId)
                         drag.current = { kind: 'switch', id: ev.id, moved: false }
+                        setDraggingSwitchId(ev.id)
                       }}
                     >
+                      {/* Cut line in the target camera's hue; auto cuts read softer. */}
                       <div
-                        className={`absolute top-0 bottom-0 left-1.5 w-px ${
-                          ev.reason === 'auto' ? 'bg-[#53D6FF]' : 'bg-[#8DEBFF]'
-                        }`}
+                        className="absolute top-0 bottom-0 left-2 w-px"
+                        style={{ background: targetHue.base, opacity: ev.reason === 'auto' ? 0.55 : 0.9 }}
                       />
-                      <div className="absolute top-1 left-1.5 -translate-x-1/2 h-1.5 w-1.5 rotate-45 bg-[#8DEBFF]" />
+                      {/* Clear diamond marker — filled in the target hue, rimmed while dragged. */}
+                      <div
+                        className={`absolute top-1 left-2 -translate-x-1/2 h-2 w-2 rotate-45 rounded-[1px] border transition-shadow ${
+                          isDragging ? 'shadow-highlight-rim' : ''
+                        }`}
+                        style={{ background: targetHue.clipFill, borderColor: targetHue.base }}
+                      />
                     </div>
                     {/* Retarget picker + delete — appear on hover to keep the lane clean. */}
-                    <div className="absolute top-0 left-2 z-40 hidden group-hover:flex items-center gap-1 rounded border border-[#27313B] bg-[#0B1219] px-1 py-0.5 shadow">
+                    <div className="absolute top-0 left-2.5 z-40 hidden group-hover:flex items-center gap-1 rounded-clip border border-divider bg-surface-card px-1 py-0.5 shadow-depth-md">
                       {onSetSwitchMain && pickList.length > 0 ? (
                         <select
                           aria-label="Cut main camera"
                           value={ev.mainId}
                           disabled={disabled}
-                          className="bg-transparent text-[10px] text-[#8DEBFF] outline-none"
+                          className="studio-type-label bg-transparent text-ice outline-none normal-case tracking-normal"
                           onPointerDown={(e) => e.stopPropagation()}
                           onChange={(e) => onSetSwitchMain(ev.id, e.target.value)}
                         >
                           {pickList.map((p) => (
-                            <option key={p.id} value={p.id} className="bg-[#0B1219] text-[#F6FAFC]">
+                            <option key={p.id} value={p.id} className="bg-surface-card text-white">
                               {p.name}
                             </option>
                           ))}
                         </select>
                       ) : (
-                        <span className="text-[10px] text-[#8DEBFF]">{nameForMain(ev.mainId)}</span>
+                        <span className="studio-type-label text-ice normal-case tracking-normal">{nameForMain(ev.mainId)}</span>
                       )}
                       {onRemoveSwitch && (
-                        <button
-                          type="button"
+                        <IconButton
                           aria-label="Delete camera cut"
-                          className="text-[10px] leading-none text-[#FF8080] px-0.5"
+                          variant="ghost"
+                          size="dense"
+                          className="!h-5 !w-5 text-heart"
                           disabled={disabled}
                           onPointerDown={(e) => e.stopPropagation()}
                           onClick={() => onRemoveSwitch(ev.id)}
                           title="Remove this cut"
                         >
-                          ✕
-                        </button>
+                          <span aria-hidden className="text-[11px] leading-none">✕</span>
+                        </IconButton>
                       )}
                     </div>
                   </div>
@@ -369,15 +399,35 @@ export function CameraLane({
               const kind = cameraKind(clip)
               const kindLabel =
                 kind === 'title' ? 'title' : kind === 'broll' ? 'b-roll' : kind === 'stinger' ? 'sting' : 'cam'
+              // Camera clips wear the lane hue; overlays keep their meaning colours.
               const clipColor =
-                kind === 'title' ? '#8DEBFF' : kind === 'broll' ? '#FFB86B' : kind === 'stinger' ? '#F6FAFC' : color
+                kind === 'title'
+                  ? 'var(--ice-blue)'
+                  : kind === 'broll'
+                    ? 'var(--lane-cohost-1)'
+                    : kind === 'stinger'
+                      ? 'var(--white)'
+                      : laneHue.base
+              const clipFill =
+                kind === 'camera'
+                  ? laneHue.clipFill
+                  : `color-mix(in srgb, ${clipColor} 22%, transparent)`
+              // Concrete hex for the canvas sprocket paint (CSS vars don't resolve there).
+              const sprocketColor =
+                kind === 'title'
+                  ? laneColor('guest').base
+                  : kind === 'broll'
+                    ? laneColor('cohost-1').base
+                    : kind === 'stinger'
+                      ? '#F6FAFC'
+                      : laneHue.base
               return (
                 <div
                   key={clip.id}
                   data-cam-clip={clip.id}
                   title={`${kindLabel} ${formatClock(clip.offset)}–${formatClock(cameraClipEnd(clip))} · in ${formatClock(cameraSourceStart(clip))} · ${formatBytes(clip.bytes)}${clip.muted ? ' · muted' : ''}${clip.fadeIn || clip.fadeOut ? ` · fade ${clip.fadeIn || 0}/${clip.fadeOut || 0}` : ''}`}
-                  className={`absolute text-left text-[10px] leading-none font-mono truncate ${
-                    isSelected ? 'text-[#F6FAFC]' : 'text-[#B8C4CF]'
+                  className={`studio-type-timecode absolute text-left leading-none truncate rounded-clip transition-shadow ${
+                    isSelected ? 'text-white shadow-highlight-rim' : 'text-silver-body shadow-depth-sm'
                   } ${clip.muted ? 'opacity-40' : ''}`}
                   style={{
                     top: 6,
@@ -386,9 +436,8 @@ export function CameraLane({
                     width: box.width,
                     paddingLeft: 6,
                     paddingRight: 6,
-                    borderRadius: 4,
-                    border: `1px solid ${isSelected ? '#53D6FF' : '#27313B'}`,
-                    background: `${clipColor}22`,
+                    border: `1px solid ${isSelected ? 'transparent' : clipColor}`,
+                    background: clipFill,
                   }}
                   onPointerDown={(event) => {
                     event.stopPropagation()
@@ -403,7 +452,7 @@ export function CameraLane({
                     }
                   }}
                 >
-                  <FilmSprockets color={clipColor} />
+                  <FilmSprockets color={sprocketColor} />
                   <span className="relative z-10">
                     {kind === 'title'
                       ? clip.label || 'title'
@@ -448,97 +497,98 @@ export function CameraLane({
         </div>
       )}
       {(onSplit || onCutHole || onSlip || onLinkedChange || switchEnabled) && clips.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 border-t border-[#1A232C] px-2 py-1.5">
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-divider px-2 py-1.5">
           {onSplit && (
-            <button
-              type="button"
-              className={snipBtn}
+            <Button
+              size="dense"
+              variant="primary"
               disabled={disabled || !selected}
               onClick={onSplit}
               title="Snip the selected picture clip at the playhead (V)."
             >
-              ✂ Snip at playhead
-            </button>
+              <Scissors size={12} aria-hidden />
+              Snip at playhead
+            </Button>
           )}
           {switchEnabled && onAddSwitch && (
-            <button
-              type="button"
-              className={cutBtn}
+            <Button
+              size="dense"
+              variant="secondary"
               disabled={disabled || !defaultMainId}
               onClick={() => onAddSwitch(snapCutTime(playhead), defaultMainId)}
               title="Drop a camera-switch cut at the playhead. Drag it to move; hover to retarget or delete."
             >
               + Add cut
-            </button>
+            </Button>
           )}
-          <button type="button" className={toolBtn} disabled={disabled || !selected} onClick={onSplit}>
+          <Button size="dense" variant="ghost" disabled={disabled || !selected} onClick={onSplit}>
             Split
-          </button>
-          <button type="button" className={toolBtn} disabled={disabled || !selected} onClick={() => onTrimEdge?.('in')}>
+          </Button>
+          <Button size="dense" variant="ghost" disabled={disabled || !selected} onClick={() => onTrimEdge?.('in')}>
             Trim in
-          </button>
-          <button type="button" className={toolBtn} disabled={disabled || !selected} onClick={() => onTrimEdge?.('out')}>
+          </Button>
+          <Button size="dense" variant="ghost" disabled={disabled || !selected} onClick={() => onTrimEdge?.('out')}>
             Trim out
-          </button>
-          <button type="button" className={toolBtn} disabled={disabled} onClick={() => onCutHole?.(false)}>
+          </Button>
+          <Button size="dense" variant="ghost" disabled={disabled} onClick={() => onCutHole?.(false)}>
             Cut hole
-          </button>
-          <button type="button" className={toolBtn} disabled={disabled} onClick={() => onCutHole?.(true)}>
+          </Button>
+          <Button size="dense" variant="ghost" disabled={disabled} onClick={() => onCutHole?.(true)}>
             Ripple
-          </button>
-          <button type="button" className={toolBtn} disabled={disabled || !selected} onClick={() => onSlip?.(-0.1)}>
+          </Button>
+          <Button size="dense" variant="ghost" disabled={disabled || !selected} onClick={() => onSlip?.(-0.1)}>
             Slip −
-          </button>
-          <button type="button" className={toolBtn} disabled={disabled || !selected} onClick={() => onSlip?.(0.1)}>
+          </Button>
+          <Button size="dense" variant="ghost" disabled={disabled || !selected} onClick={() => onSlip?.(0.1)}>
             Slip +
-          </button>
-          <button type="button" className={toolBtn} disabled={disabled || !selected} onClick={onMute}>
+          </Button>
+          <Button size="dense" variant="ghost" disabled={disabled || !selected} onClick={onMute}>
             {selected?.muted ? 'Unmute' : 'Mute'}
-          </button>
-          <button type="button" className={toolBtn} disabled={disabled} onClick={onJoin}>
+          </Button>
+          <Button size="dense" variant="ghost" disabled={disabled} onClick={onJoin}>
             Join
-          </button>
-          <button
-            type="button"
-            className={toolBtn}
+          </Button>
+          <Button
+            size="dense"
+            variant="ghost"
             disabled={disabled || !selected}
             onClick={onDissolve}
             title="Overlap the next clip and fade — Kdenlive / MLT dissolve. Picture only."
           >
             Dissolve
-          </button>
+          </Button>
           {onStinger && (
             <>
-              <button
-                type="button"
-                className={toolBtn}
+              <Button
+                size="dense"
+                variant="ghost"
                 disabled={disabled}
                 onClick={() => onStinger('playhead')}
                 title="OBS-style black flash at the playhead — canvas, not a plugin."
               >
                 Stinger
-              </button>
-              <button
-                type="button"
-                className={toolBtn}
+              </Button>
+              <Button
+                size="dense"
+                variant="ghost"
                 disabled={disabled || !selected}
                 onClick={() => onStinger('cut')}
                 title="Black flash at the selected clip’s out-point (between clips)."
               >
                 Sting cut
-              </button>
-              <button
-                type="button"
-                className={toolBtn}
+              </Button>
+              <Button
+                size="dense"
+                variant="ghost"
                 disabled={disabled || !markers?.length}
                 onClick={() => onStinger('chapters')}
                 title="Black flash at each chapter marker."
               >
                 Sting chapters
-              </button>
+              </Button>
             </>
           )}
-          <p className="text-[10px] text-[#7C8B97] ml-1">
+          <p className="studio-type-label text-silver-label normal-case tracking-normal ml-1">
             Picture only — audio stays on the voice lanes. V splits. J / K / L is the playhead.
             {switchEnabled ? ' Cut markers drag on the lane; hover a cut to retarget or delete.' : ''}
           </p>
@@ -547,15 +597,6 @@ export function CameraLane({
     </div>
   )
 }
-
-const toolBtn =
-  'inline-flex items-center px-2 py-0.5 rounded border border-[#27313B] text-[10px] uppercase tracking-wider text-[#B8C4CF] disabled:opacity-40'
-
-const snipBtn =
-  'inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[#53D6FF]/60 bg-[#53D6FF]/10 text-[10px] uppercase tracking-wider text-[#8DEBFF] disabled:opacity-40'
-
-const cutBtn =
-  'inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[#8DEBFF]/50 text-[10px] uppercase tracking-wider text-[#8DEBFF] disabled:opacity-40'
 
 const WAVE_TILE_CSS = 2048
 
