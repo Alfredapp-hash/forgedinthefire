@@ -2731,7 +2731,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </div>
           {(Object.keys(cameraStreams).length > 0 ||
             (remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest))) ||
-            cameraClips.length > 0) && (
+            cameraClips.length > 0) ? (
             <div className="flex items-start gap-2 shrink-0">
               {cameraStreams.host ? (
                 <div className="space-y-1">
@@ -2842,6 +2842,23 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   }}
                 />
               </div>
+            </div>
+          ) : (
+            <div className="flex shrink-0 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[#27313B] bg-[#0B0F14] px-6 py-8 text-center">
+              <VideoOff size={20} className="text-[#4A5A68]" />
+              <p className="max-w-[220px] text-xs text-[#7C8B97]">
+                No camera yet — recording &amp; playback video appears here once a camera is on or a
+                take has picture.
+              </p>
+              <button
+                type="button"
+                className={primary}
+                disabled={recording}
+                onClick={() => void toggleCamera('host')}
+                title="Open a local camera preview (warns once about file size)"
+              >
+                <Video size={12} /> Turn on camera
+              </button>
             </div>
           )}
         </div>
