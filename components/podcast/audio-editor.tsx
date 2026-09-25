@@ -388,6 +388,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   )
 
   const hasAudio = tracks.some((t) => Boolean(t.buffer))
+  // A recording "has video" when any camera/picture clip exists on the picture lane
+  // (live-captured camera takes, imported footage, or recorded picture). This gates
+  // the video half of the combined "Export episode" action.
+  const hasVideo = cameraClips.length > 0
   const sessionLen = Math.max(sessionDuration(tracks), pictureEnd(cameraClips))
   const ready = hasAudio
   const anyArmed = tracks.some((t) => t.armed)
@@ -2494,25 +2498,26 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
    * mixed master audio the audio export uses. MP4 (H.264/AAC) preferred; WebM fallback.
    * Local download only — never touches episode.audio_url / the RSS mix.
    */
-  async function downloadDeliverable() {
+  async function downloadDeliverable(prebuiltMaster?: AudioBuffer, manageBusy = true) {
     const host = cameraClips.filter((c) => c.personId === 'host')
     const guest = cameraClips.filter((c) => c.personId === 'guest')
     if (host.length === 0 && guest.length === 0) {
       setError('Record or import a camera file first — the MP4 deliverable needs picture')
-      return
+      return false
     }
     const mode: PictureMode = guest.length > 0 ? 'pip' : 'a-roll'
-    setBusy('Encoding MP4 (picture + master mix)…')
-    setError(null)
-    setOk(null)
+    if (manageBusy) {
+      setBusy('Encoding MP4 (picture + master mix)…')
+      setError(null)
+      setOk(null)
+    }
     try {
-      // Reuse the audio-export mixdown so the video carries the identical master mix.
-      const prepared = await tracksWithInserts(tracks)
-      let master = mixdownTracks(prepared)
-      master = applyGainAndFades(master, masterGain, masterFadeIn, masterFadeOut)
-      if (matchLufs) {
-        master = applyGainAndFades(master, gainForTargetLufs(measureLoudness(master).lufs, PODCAST_LUFS), 0, 0)
-      }
+      // Reuse the audio-export master so the video carries the identical master mix.
+      // When the combined "Export episode" action supplies `prebuiltMaster`, we mux
+      // the exact same buffer that produced the podcast-feed file; standalone use
+      // rebuilds it here through the shared `buildMasterMix` so both paths match
+      // (mixdown → gain/fades → −LUFS match → limiter).
+      const master = prebuiltMaster ?? (await buildMasterMix(false))
       const overlays = cameraClips.filter((c) => cameraLayer(c) === 'overlay')
       // EDL-aware export: group base (non-overlay) camera clips by participant so the
       // MP4 follows the edited cuts. renderCameraDeliverable ignores edl/sources when
@@ -2553,16 +2558,74 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       a.download = out.filename
       a.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 4000)
-      setOk(
-        out.realtime
-          ? `Downloaded ${out.ext.toUpperCase()} (realtime encode) — public RSS is still the audio mix`
-          : `Downloaded ${out.ext.toUpperCase()} deliverable — public RSS is still the audio mix`,
-      )
+      if (manageBusy) {
+        setOk(
+          out.realtime
+            ? `Downloaded ${out.ext.toUpperCase()} (realtime encode) — public RSS is still the audio mix`
+            : `Downloaded ${out.ext.toUpperCase()} deliverable — public RSS is still the audio mix`,
+        )
+      }
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : 'MP4 deliverable failed')
+      return false
     } finally {
-      setBusy(null)
+      if (manageBusy) setBusy(null)
     }
+  }
+
+  /**
+   * Combined "Export episode" — one action, both deliverables from ONE master mix.
+   *
+   * 1. Builds the finished master AudioBuffer ONCE via `buildMasterMix` (full session,
+   *    no range scope) so the audio in the video is byte-identical to the feed audio.
+   * 2. ALWAYS produces the audio-only podcast-feed file (Apple/Spotify via RSS) by
+   *    encoding that master and handing it to `onExported` → episode.audio_url. This
+   *    is the priority: it runs first and is never blocked by the video step.
+   * 3. WHEN the session has picture (`hasVideo`), ALSO muxes that same master with the
+   *    edited camera timeline (following the switch EDL when present) into an MP4 for
+   *    YouTube/social and downloads it. If the video encode fails, the audio file is
+   *    already delivered and we only surface the video error.
+   *
+   * RSS/publish logic is untouched: the audio-only file remains the feed enclosure;
+   * the video is a local download only.
+   */
+  async function exportEpisode(thenPublish = false) {
+    if (!hasAudio) {
+      setError('Nothing to export — record or import onto a track first')
+      return
+    }
+    setError(null)
+    setOk(null)
+    const notes: string[] = []
+    let master: AudioBuffer
+    try {
+      setBusy('Building master mix (shared by audio + video)…')
+      master = await buildMasterMix(false)
+    } catch (err) {
+      setBusy(null)
+      setError(err instanceof Error ? err.message : 'Could not build the master mix')
+      return
+    }
+
+    // Part 1 — audio-only podcast-feed file. Priority deliverable; runs first.
+    setBusy(thenPublish ? 'Saving audio for Apple & Spotify + publishing…' : 'Saving audio for Apple & Spotify (podcast feed)…')
+    const audioOk = await exportAudio('mp3', thenPublish, master, false)
+    notes.push(audioOk ? 'Audio for Apple & Spotify saved to the feed' : 'Audio export failed')
+
+    // Part 2 — video for YouTube & social. Only when the session has picture. A video
+    // failure must NOT block or undo the podcast-feed file already delivered above.
+    if (hasVideo) {
+      setBusy('Encoding video for YouTube & social (picture + master mix)…')
+      const videoOk = await downloadDeliverable(master, false)
+      notes.push(videoOk ? 'Video for YouTube & social downloaded' : 'Video encode failed — audio feed file is unaffected')
+    } else {
+      notes.push('No picture in this session — video step skipped')
+    }
+
+    setBusy(null)
+    // Success line summarizes both parts; `setError` from a failed part still shows.
+    setOk(notes.join(' · '))
   }
 
   async function downloadStems() {
@@ -2600,29 +2663,55 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
   }
 
-  async function exportAudio(kind: 'wav' | 'mp3', thenPublish = false) {
+  /**
+   * Build the finished, delivery-ready **master mix** exactly as the audio export
+   * bakes it: mixdown → master gain/fades → optional −LUFS match → limiter. This is
+   * the single source of truth for BOTH deliverables — the audio-only podcast-feed
+   * file and the muxed video — so the audio in the video is byte-identical to the
+   * audio the RSS enclosure carries. Pass `scopeToRange` to honor a selected range
+   * (only used by the standalone audio export; the combined "Export episode" action
+   * always renders the full session so both files share one buffer).
+   */
+  async function buildMasterMix(scopeToRange: boolean): Promise<AudioBuffer> {
+    const prepared = await tracksWithInserts(tracks)
+    const mixedRaw =
+      scopeToRange && range.end > range.start + 0.05 && range.end < sessionLen - 0.05
+        ? mixdownTracks(prepared, { startSec: range.start, endSec: range.end })
+        : mixdownTracks(prepared)
+    let mixed = applyGainAndFades(mixedRaw, masterGain, masterFadeIn, masterFadeOut)
+    if (matchLufs) {
+      const loud = measureLoudness(mixed)
+      mixed = applyGainAndFades(mixed, gainForTargetLufs(loud.lufs, PODCAST_LUFS), 0, 0)
+    }
+    return applyEffect(mixed, 'limit')
+  }
+
+  /**
+   * Encode + deliver the audio-only podcast-feed file (Apple/Spotify/RSS enclosure).
+   * When `prebuiltMaster` is supplied (combined "Export episode" flow) the mix is not
+   * rebuilt — the exact buffer that also feeds the video encoder is encoded here, so
+   * the two deliverables carry identical audio. `manageBusy=false` lets the combined
+   * action own the busy/status text across both parts.
+   */
+  async function exportAudio(
+    kind: 'wav' | 'mp3',
+    thenPublish = false,
+    prebuiltMaster?: AudioBuffer,
+    manageBusy = true,
+  ) {
     if (!hasAudio) {
       setError('Nothing to export — record or import onto a track first')
       return
     }
-    setBusy(thenPublish ? 'Mixing, saving & preparing publish…' : kind === 'wav' ? 'Mixing WAV…' : 'Mixing MP3…')
-    setError(null)
-    setOk(null)
+    if (manageBusy) {
+      setBusy(thenPublish ? 'Mixing, saving & preparing publish…' : kind === 'wav' ? 'Mixing WAV…' : 'Mixing MP3…')
+      setError(null)
+      setOk(null)
+    }
     try {
-      const prepared = await tracksWithInserts(tracks)
-      const mixedRaw =
-        range.end > range.start + 0.05 && range.end < sessionLen - 0.05
-          ? mixdownTracks(prepared, {
-              startSec: range.start,
-              endSec: range.end,
-            })
-          : mixdownTracks(prepared)
-      let mixed = applyGainAndFades(mixedRaw, masterGain, masterFadeIn, masterFadeOut)
-      if (matchLufs) {
-        const loud = measureLoudness(mixed)
-        mixed = applyGainAndFades(mixed, gainForTargetLufs(loud.lufs, PODCAST_LUFS), 0, 0)
-      }
-      mixed = await applyEffect(mixed, 'limit')
+      // Reuse the shared master when the combined action already built it; otherwise
+      // build one here (honoring a selected range for the standalone audio export).
+      const mixed = prebuiltMaster ?? (await buildMasterMix(true))
       const after = measureLoudness(mixed)
       if (Number.isFinite(after.lufs)) setLoudness({ lufs: after.lufs, peakDb: after.peakDb })
       const blob = kind === 'wav' ? encodeWav(mixed) : await encodeMp3(mixed)
@@ -2683,12 +2772,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       if (warnings.length) {
         setError(`Saved, but check before publish: ${warnings.join(' · ')}`)
       }
-      setOk(thenPublish ? 'Mix saved to site host' : `Saved ${ext.toUpperCase()} mix to episode`)
+      if (manageBusy) {
+        setOk(thenPublish ? 'Mix saved to site host' : `Saved ${ext.toUpperCase()} mix to episode`)
+      }
       if (thenPublish && onPublished) await onPublished()
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Export failed')
+      return false
     } finally {
-      setBusy(null)
+      if (manageBusy) setBusy(null)
     }
   }
 
@@ -4338,40 +4431,79 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Ready to export</p>
             <p className="mt-1">
               {hasAudio
-                ? `Session ${durationLabel}${loudness && Number.isFinite(loudness.lufs) ? ` · ${loudness.lufs.toFixed(1)} LUFS (target ${PODCAST_LUFS})` : ''}${cameraClips.length ? ` · ${cameraClips.length} picture clip${cameraClips.length === 1 ? '' : 's'}` : ''}. Save the mix below, then use the Publish action above.`
+                ? `Session ${durationLabel}${loudness && Number.isFinite(loudness.lufs) ? ` · ${loudness.lufs.toFixed(1)} LUFS (target ${PODCAST_LUFS})` : ''}${cameraClips.length ? ` · ${cameraClips.length} picture clip${cameraClips.length === 1 ? '' : 's'}` : ''}. ${hasVideo ? 'Use “Export episode” below to save the audio podcast-feed file and download the video, both from one master mix.' : 'Use “Export episode” below to save the audio podcast-feed file.'}`
                 : 'No audio yet — record or import a take in the earlier stages before exporting.'}
             </p>
           </div>
         )}
 
         {showPublish && (
-        <div className="flex flex-wrap gap-2 pt-1 border-t border-[#27313B]">
+        <div className="flex flex-col gap-3 pt-1 border-t border-[#27313B]">
+          {/* PRIMARY — one action, both deliverables from one master mix. Always writes
+              the audio-only podcast-feed file; also downloads the video when the session
+              has picture. */}
+          <div className="flex flex-col gap-1.5">
+            <button
+              type="button"
+              className={`${primary} w-full sm:w-auto justify-center`}
+              disabled={!hasAudio || Boolean(busy)}
+              title={
+                hasVideo
+                  ? 'One action: saves the audio-only podcast-feed file (Apple/Spotify via RSS) AND downloads the video (picture + the same master mix) for YouTube/social.'
+                  : 'Saves the audio-only podcast-feed file (Apple/Spotify via RSS). No picture in this session, so no video is produced.'
+              }
+              onClick={() => void exportEpisode()}
+            >
+              {busy && !busy.includes('stems') && !busy.includes('A-roll') && !busy.includes('PIP')
+                ? busy
+                : hasVideo
+                  ? 'Export episode (audio feed + video)'
+                  : 'Export episode (audio feed)'}
+            </button>
+            <p className="text-[11px] text-[#A9B8C6]">
+              Always writes <span className="text-[#8DEBFF]">Audio for Apple &amp; Spotify (podcast feed)</span>
+              {hasVideo ? (
+                <>
+                  {' '}and also downloads <span className="text-[#8DEBFF]">Video for YouTube &amp; social</span> — both from
+                  one master mix, so the audio matches exactly. Video is a local download; RSS stays the audio file.
+                </>
+              ) : (
+                ' — audio only. Add a camera take to also get a video file.'
+              )}
+            </p>
+            {onPublished && (
+              <button
+                type="button"
+                className={`${primary} w-full sm:w-auto justify-center`}
+                disabled={!hasAudio || Boolean(busy)}
+                title="Runs Export episode, then publishes the audio-only file to your site / RSS. Video (if any) still downloads locally."
+                onClick={() => void exportEpisode(true)}
+              >
+                Export episode + publish to site / RSS
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2 items-center">
+          <span className="text-[11px] uppercase tracking-[0.14em] text-[#5E6B78] w-full">Individual files</span>
           <button
             type="button"
-            className={primary}
+            className={btn}
             disabled={!hasAudio || Boolean(busy)}
+            title="Audio-only MP3 podcast-feed file (Apple/Spotify via RSS) — same as the audio half of Export episode."
             onClick={() => void exportAudio('mp3')}
           >
-            {busy?.includes('MP3') ? busy : 'Save mix MP3 (hosted)'}
+            {busy?.includes('MP3') ? busy : 'Audio only: MP3 (podcast feed)'}
           </button>
           <button
             type="button"
             className={btn}
             disabled={!hasAudio || Boolean(busy)}
+            title="Audio-only WAV of the master mix."
             onClick={() => void exportAudio('wav')}
           >
-            {busy?.includes('WAV') ? busy : 'Save mix WAV'}
+            {busy?.includes('WAV') ? busy : 'Audio only: WAV'}
           </button>
-          {onPublished && (
-            <button
-              type="button"
-              className={primary}
-              disabled={!hasAudio || Boolean(busy)}
-              onClick={() => void exportAudio('mp3', true)}
-            >
-              Save mix + publish to site / RSS
-            </button>
-          )}
           <label className="inline-flex items-center gap-1.5 text-xs text-[#A9B8C6]">
             <input type="checkbox" checked={matchLufs} onChange={(e) => setMatchLufs(e.target.checked)} />
             Match {PODCAST_LUFS} LUFS
@@ -4404,13 +4536,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </button>
           <button
             type="button"
-            className={primary}
+            className={btn}
             disabled={!cameraClips.length || Boolean(busy)}
-            title="Camera timeline muxed with the master mix into one MP4 (WebM fallback). Local deliverable — RSS stays the audio mix."
+            title="Video only: camera timeline muxed with the master mix into one MP4 (WebM fallback). Same as the video half of Export episode. Local deliverable — RSS stays the audio mix."
             onClick={() => void downloadDeliverable()}
           >
-            {busy?.includes('MP4') ? busy : 'Download MP4 (picture + master mix)'}
+            {busy?.includes('MP4') ? busy : 'Video only: MP4 (picture + master mix)'}
           </button>
+          </div>
         </div>
         )}
 

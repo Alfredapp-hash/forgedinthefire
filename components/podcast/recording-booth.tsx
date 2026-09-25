@@ -128,11 +128,7 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        closeRef.current()
-        return
-      }
+      // Esc is handled by the <dialog>'s native cancel event (see onCancel).
       if ((e.key === 'r' || e.key === 'R') && !e.metaKey && !e.ctrlKey && !e.altKey) {
         if (isTypingTarget(e.target)) return
         e.preventDefault()
@@ -217,14 +213,25 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
   const pipParticipants =
     mainParticipant !== null ? tiles.filter((p) => p.id !== mainParticipant.id) : []
 
+  // Drive the native modal so the booth sits in the browser top layer (above
+  // native <select> popups and everything else) and the page behind goes inert.
+  const dialogRef = useRef<HTMLDialogElement | null>(null)
+  useEffect(() => {
+    const dlg = dialogRef.current
+    if (open && mounted && dlg && !dlg.open) dlg.showModal()
+  }, [open, mounted])
+
   if (!open || !mounted) return null
 
   const overlay = (
-    <div
-      role="dialog"
-      aria-modal="true"
+    <dialog
+      ref={dialogRef}
       aria-label={title ? `Recording booth — ${title}` : 'Recording booth'}
-      className="fixed inset-0 z-[9999] flex flex-col bg-[#05070A] text-[#F6FAFC]"
+      onCancel={(e) => {
+        e.preventDefault()
+        onClose()
+      }}
+      className="fixed inset-0 m-0 flex h-full max-h-none w-full max-w-none flex-col border-0 bg-[#05070A] p-0 text-[#F6FAFC] backdrop:bg-[#05070A]"
     >
       {/* Top bar */}
       <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[#27313B] bg-[#0B0F14] px-5 py-3">
@@ -447,7 +454,7 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
           Exit booth
         </button>
       </footer>
-    </div>
+    </dialog>
   )
 
   return createPortal(overlay, document.body)
