@@ -126,6 +126,7 @@ import { renderSfx, SFX_META, type SfxId } from '@/lib/podcast/sfx'
 import { SfxPad } from '@/components/podcast/sfx-pad'
 import { SessionTimeline } from '@/components/podcast/session-timeline'
 import { GuestInvitePanel } from '@/components/podcast/guest-invite-panel'
+import { RecordingBooth, type BoothParticipant } from '@/components/podcast/recording-booth'
 import type { GuestTallyPhase } from '@/lib/podcast/guest-types'
 import { CameraClipReview, CameraLane } from '@/components/podcast/camera-lane'
 import { CameraPreview } from '@/components/podcast/camera-preview'
@@ -346,6 +347,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [guestTakeUrl, setGuestTakeUrl] = useState<string | null>(null)
   const [guestCameraUrl, setGuestCameraUrl] = useState<string | null>(null)
   const [recTally, setRecTally] = useState<GuestTallyPhase>('waiting')
+  const [boothOpen, setBoothOpen] = useState(false)
 
   const selected = useMemo(
     () => tracks.find((t) => t.id === selectedId) || tracks[0] || null,
@@ -452,6 +454,88 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const updateTrack = useCallback((id: string, patch: Partial<StudioTrack>) => {
     setTracks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)))
   }, [])
+
+  // Booth per-person mute: flips `muted` on that person's audible (listen) take,
+  // falling back to their armed take, then their first take. This is the only
+  // per-person mute surface the editor exposes (mute lives on StudioTrack, not
+  // on a live mic), so we mute every take that person owns to keep it decisive.
+  const toggleBoothMute = useCallback((personId: string) => {
+    setTracks((prev) => {
+      const owned = prev.filter((t) => t.personId === personId)
+      if (owned.length === 0) return prev
+      const anchor = owned.find((t) => t.listen) || owned.find((t) => t.armed) || owned[0]
+      const nextMuted = !anchor.muted
+      return prev.map((t) => (t.personId === personId ? { ...t, muted: nextMuted } : t))
+    })
+  }, [])
+
+  // Reflect the anchor-take mute state back to the booth so its per-tile mute
+  // toggle stays in sync with the mixer.
+  const personMuted = useCallback(
+    (personId: string) => {
+      const owned = tracks.filter((t) => t.personId === personId)
+      const anchor = owned.find((t) => t.listen) || owned.find((t) => t.armed) || owned[0]
+      return Boolean(anchor?.muted)
+    },
+    [tracks],
+  )
+
+  const nameFor = useCallback(
+    (personId: string, fallback: string) => people.find((p) => p.id === personId)?.name || fallback,
+    [people],
+  )
+
+  const boothParticipants = useMemo<BoothParticipant[]>(() => {
+    const guestLive = Boolean(remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest)))
+    const list: BoothParticipant[] = []
+
+    // Host — always part of the session and anchors the booth.
+    const hostCam = cameraStreams.host ?? null
+    list.push({
+      id: 'host',
+      name: nameFor('host', 'Host'),
+      role: 'host',
+      videoStream: hostCam,
+      audioStream: hostTalkStream,
+      hasLiveVideo: Boolean(hostCam),
+      muted: personMuted('host'),
+      cameraOn: Boolean(hostCam),
+      connection: 'connected',
+    })
+
+    // Remote guest — only when a peer stream is actually present.
+    if (remoteGuest) {
+      list.push({
+        id: 'guest',
+        name: nameFor('guest', 'Guest'),
+        role: 'guest',
+        videoStream: guestLive ? remoteGuest : null,
+        audioStream: remoteGuest,
+        hasLiveVideo: guestLive,
+        muted: personMuted('guest'),
+        cameraOn: guestLive,
+        connection: guestLive ? 'connected' : 'linking',
+      })
+    }
+
+    // Any other local cameras (co-hosts in the room) — skip host/guest keys.
+    for (const [personId, stream] of Object.entries(cameraStreams)) {
+      if (personId === 'host' || personId === 'guest') continue
+      list.push({
+        id: personId,
+        name: nameFor(personId, 'Co-host'),
+        role: 'cohost',
+        videoStream: stream,
+        audioStream: stream,
+        hasLiveVideo: streamHasLiveVideo(stream),
+        muted: personMuted(personId),
+        cameraOn: Boolean(stream),
+        connection: 'connected',
+      })
+    }
+
+    return list
+  }, [cameraStreams, hostTalkStream, remoteGuest, remoteGuestVideo, personMuted, nameFor])
 
   const assignBufferToTrack = useCallback(
     (id: string, buffer: AudioBuffer, label?: string) => {
@@ -2615,6 +2699,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               </>
             )}
           </button>
+          <button
+            type="button"
+            className={btn}
+            onClick={() => setBoothOpen(true)}
+            title="Full-screen video booth — live cameras, tally, and per-person mute. Does not interrupt recording."
+          >
+            <Video size={14} /> Recording Booth
+          </button>
           <select
             className={select}
             value={recMode}
@@ -4074,6 +4166,36 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           Podcasters, and Amazon Music — submit that URL once; new published mixes appear automatically.
         </p>
       </div>
+
+      <RecordingBooth
+        open={boothOpen}
+        onClose={() => setBoothOpen(false)}
+        title={title}
+        participants={boothParticipants}
+        recording={recording}
+        tally={recTally === 'waiting' ? 'idle' : recTally}
+        countdownSec={recTally === 'count-in' ? countInBeats : null}
+        elapsedSec={recClock}
+        canRecord
+        onToggleRecord={() => void toggleRecord()}
+        onToggleMute={toggleBoothMute}
+        onToggleCamera={(id) => void toggleCamera(id)}
+        invitePanel={
+          <GuestInvitePanel
+            episodeId={episodeId}
+            recording={recording}
+            recTally={recTally}
+            hostStream={hostTalkStream}
+            cueStream={guestCueStream}
+            onCueToGuest={setCueToGuest}
+            onRemoteStream={onRemoteGuestStream}
+            onRemoteVideo={setRemoteGuestVideo}
+            onGuestName={onRemoteGuestName}
+            onTakeUrl={setGuestTakeUrl}
+            onCameraUrl={setGuestCameraUrl}
+          />
+        }
+      />
     </div>
   )
 }
