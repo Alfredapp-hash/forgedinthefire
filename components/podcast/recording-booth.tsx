@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 
+import { createActiveSpeakerTracker } from '@/lib/podcast/active-speaker'
+
 import { BoothTile } from './booth-tile'
+
+type BoothLayout = 'grid' | 'auto'
 
 export type BoothParticipantRole = 'host' | 'cohost' | 'guest'
 export type BoothConnection = 'connected' | 'linking' | 'dropped' | 'failed' | 'offline' | null
@@ -144,6 +148,75 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
   const tiles = useMemo(() => participants, [participants])
   const countIn = tally === 'count-in'
 
+  // --- Active-speaker (Auto layout) machinery -------------------------------
+  const [layout, setLayout] = useState<BoothLayout>('grid')
+  // The MAIN participant id in Auto mode. This is the ONLY value that re-renders
+  // the booth as people talk — it flips at most a few times a second thanks to
+  // the tracker's hold/release debounce, never per audio frame.
+  const [activeId, setActiveId] = useState<string | null>(null)
+
+  // Latest level per participant, written by tiles via onLevel (a ref sink, so
+  // tile callbacks never trigger a React render here).
+  const levelsRef = useRef<Map<string, number>>(new Map())
+  const trackerRef = useRef(createActiveSpeakerTracker())
+  const activeIdRef = useRef<string | null>(null)
+
+  const handleTileLevel = useCallback((id: string, level: number) => {
+    levelsRef.current.set(id, level)
+  }, [])
+
+  // Drive the tracker only while Auto is engaged and the booth is open. A single
+  // shared loop samples the collected levels ~20/s, advances the deterministic
+  // tracker, and commits a state change only when the MAIN id actually flips.
+  const autoActive = open && layout === 'auto'
+  useEffect(() => {
+    if (!autoActive) return
+    const tracker = trackerRef.current
+    // Start from a clean decision each time Auto is (re)engaged. We reset the
+    // tracker + refs here but let the RAF loop below commit the first React
+    // state — never calling setState synchronously in the effect body.
+    tracker.reset()
+    activeIdRef.current = null
+
+    let raf = 0
+    let lastTick = 0
+    let primed = false
+    const TICK_MS = 50 // ~20 evaluations/sec — plenty for hold/release timing
+    const loop = (now: number) => {
+      if (now - lastTick >= TICK_MS) {
+        lastTick = now
+        const samples = Array.from(levelsRef.current, ([id, level]) => ({ id, level }))
+        const next = tracker.update(samples, now)
+        // Commit when the MAIN flips, and once on the first tick to clear any
+        // stale id carried over from a previous Auto session.
+        if (next !== activeIdRef.current || !primed) {
+          primed = true
+          activeIdRef.current = next
+          setActiveId(next)
+        }
+      }
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [autoActive])
+
+  // Drop stale level entries when participants leave so a departed id can never
+  // be picked as MAIN.
+  useEffect(() => {
+    const live = new Set(participants.map((p) => p.id))
+    for (const id of levelsRef.current.keys()) {
+      if (!live.has(id)) levelsRef.current.delete(id)
+    }
+  }, [participants])
+
+  // Resolve the MAIN participant, falling back to the first tile so Auto always
+  // has something on the big slot (e.g. before anyone has spoken, or a lone host).
+  const mainParticipant =
+    tiles.find((p) => p.id === activeId) ?? tiles[0] ?? null
+  const pipParticipants =
+    mainParticipant !== null ? tiles.filter((p) => p.id !== mainParticipant.id) : []
+
   if (!open || !mounted) return null
 
   const overlay = (
@@ -163,6 +236,39 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
         </div>
 
         <div className="flex items-center gap-4">
+          {/* Layout toggle: Grid (default) vs Auto (active-speaker). */}
+          <div
+            role="group"
+            aria-label="Camera layout"
+            className="flex items-center gap-0.5 rounded-lg border border-[#27313B] bg-[#05070A] p-0.5"
+          >
+            <button
+              type="button"
+              onClick={() => setLayout('grid')}
+              aria-pressed={layout === 'grid'}
+              className={`h-7 rounded-md px-3 text-[11px] font-medium uppercase tracking-wider transition-colors ${
+                layout === 'grid'
+                  ? 'bg-[#0d2530] text-[#8DEBFF]'
+                  : 'text-[#A9B8C6] hover:text-[#F6FAFC]'
+              }`}
+            >
+              Grid
+            </button>
+            <button
+              type="button"
+              onClick={() => setLayout('auto')}
+              aria-pressed={layout === 'auto'}
+              title="Active speaker becomes the main camera"
+              className={`h-7 rounded-md px-3 text-[11px] font-medium uppercase tracking-wider transition-colors ${
+                layout === 'auto'
+                  ? 'bg-[#0d2530] text-[#8DEBFF]'
+                  : 'text-[#A9B8C6] hover:text-[#F6FAFC]'
+              }`}
+            >
+              Auto
+            </button>
+          </div>
+
           {countIn ? (
             <div className="flex items-center gap-2" aria-live="assertive">
               <span className="text-[11px] uppercase tracking-[0.2em] text-[#8DEBFF]">Count-in</span>
@@ -187,11 +293,60 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
         </div>
       </header>
 
-      {/* Participant grid */}
-      <main className="min-h-0 flex-1 overflow-hidden p-4">
+      {/* Participant stage */}
+      <main className="relative min-h-0 flex-1 overflow-hidden p-4">
         {tiles.length === 0 ? (
           <div className="flex h-full w-full items-center justify-center rounded-xl border border-dashed border-[#27313B] text-sm text-[#A9B8C6]">
             No participants in the booth yet.
+          </div>
+        ) : layout === 'auto' && mainParticipant ? (
+          <div className="relative h-full w-full">
+            {/* MAIN — the active speaker, large. */}
+            <BoothTile
+              key={mainParticipant.id}
+              id={mainParticipant.id}
+              name={mainParticipant.name}
+              role={mainParticipant.role}
+              videoStream={mainParticipant.videoStream}
+              audioStream={mainParticipant.audioStream}
+              hasLiveVideo={mainParticipant.hasLiveVideo}
+              muted={mainParticipant.muted}
+              cameraOn={mainParticipant.cameraOn}
+              connection={mainParticipant.connection}
+              onToggleMute={onToggleMute}
+              onToggleCamera={onToggleCamera}
+              onLevel={handleTileLevel}
+              variant="main"
+            />
+
+            {/* PIP strip — everyone else, overlaid along the bottom. With just
+                the host, this is empty and the MAIN fills the stage. */}
+            {pipParticipants.length > 0 ? (
+              <div className="pointer-events-none absolute inset-x-3 bottom-3 flex justify-end gap-3">
+                {pipParticipants.map((p) => (
+                  <div
+                    key={p.id}
+                    className="pointer-events-auto aspect-video w-40 shrink-0 overflow-hidden rounded-lg shadow-lg shadow-black/40 sm:w-48 lg:w-56"
+                  >
+                    <BoothTile
+                      id={p.id}
+                      name={p.name}
+                      role={p.role}
+                      videoStream={p.videoStream}
+                      audioStream={p.audioStream}
+                      hasLiveVideo={p.hasLiveVideo}
+                      muted={p.muted}
+                      cameraOn={p.cameraOn}
+                      connection={p.connection}
+                      onToggleMute={onToggleMute}
+                      onToggleCamera={onToggleCamera}
+                      onLevel={handleTileLevel}
+                      variant="pip"
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className={`grid h-full w-full gap-4 ${gridClass(tiles.length)}`}>
@@ -209,6 +364,7 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
                 connection={p.connection}
                 onToggleMute={onToggleMute}
                 onToggleCamera={onToggleCamera}
+                onLevel={handleTileLevel}
               />
             ))}
           </div>

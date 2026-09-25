@@ -13,6 +13,7 @@ import {
   normalizeCameraClip,
   type CameraClip,
 } from '@/lib/podcast/camera'
+import { mainAt, type SwitchEDL } from '@/lib/podcast/switch-edl'
 
 export type PictureMode = 'a-roll' | 'pip'
 
@@ -828,12 +829,34 @@ export async function renderCameraDeliverable(opts: {
   /** The finished, mixed program audio. AudioBuffer = fast/offline; MediaStream = live 1× capture. */
   master: AudioBuffer | MediaStream
   mode?: PictureMode
+  /**
+   * Optional switch edit-decision-list. When present (and `sources` given), the export
+   * follows the EDL — MAIN fills the frame, others are PIP, swapping at each cut.
+   * Undefined/empty → the classic host/guest single/PIP behavior below.
+   */
+  edl?: SwitchEDL
+  /** Per-participant camera sources for EDL-aware export. Ignored without `edl`. */
+  sources?: EdlSource[]
+  /** MAIN before the first EDL cut. Defaults to the first participant in `sources`. */
+  fallbackId?: string
   /** Program length when master is a MediaStream (seconds). Ignored for AudioBuffer. */
   durationSec?: number
   /** Filename stem; extension is appended based on the chosen container. Default 'podcast-program'. */
   fileStem?: string
   onProgress?: (ratio: number, info?: { realtime: boolean }) => void
 }): Promise<CameraDeliverable> {
+  // EDL-aware path — delegate to the compositor, which itself degrades gracefully.
+  if (opts.edl && opts.edl.length > 0 && opts.sources && opts.sources.length > 0) {
+    return renderEdlDeliverable({
+      edl: opts.edl,
+      sources: opts.sources,
+      fallbackId: opts.fallbackId,
+      master: opts.master,
+      durationSec: opts.durationSec,
+      fileStem: opts.fileStem,
+      onProgress: opts.onProgress,
+    })
+  }
   const host = asClipList(opts.host)
   const guest = asClipList(opts.guest)
   if (host.length === 0 && guest.length === 0) {
@@ -877,4 +900,307 @@ export async function renderCameraDeliverable(opts: {
     onProgress: opts.onProgress,
   })
   return { blob, ext, mime: blob.type, realtime: true, filename: `${stem}.${ext}` }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Switch-EDL compositor: "main fills the frame + others are PIP tiles", MAIN
+ * swaps at each EDL cut with a short cross-fade. This is a *composition* over the
+ * raw per-participant camera sources — the underlying files are never rewritten.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Cross-fade window (seconds) applied on each side of an EDL cut. */
+const SWITCH_CROSSFADE = 0.25
+
+/** One participant's camera source for the EDL compositor. */
+export type EdlSource = {
+  /** Participant / camera id — must match CameraSwitchEvent.mainId. */
+  participantId: string
+  /** The camera clip(s) that make up this participant's continuous feed. */
+  clips: CameraClip | CameraClip[]
+}
+
+/** Layout of the PIP strip of non-main participants. */
+type PipRect = { x: number; y: number; w: number; h: number }
+
+/**
+ * Lay non-main participants out as a vertical PIP strip down the right edge, newest
+ * cameras on top. Deterministic given the participant order.
+ */
+function pipRects(count: number): PipRect[] {
+  if (count <= 0) return []
+  const max = Math.min(count, 4)
+  const pipW = Math.round(WIDTH * 0.22)
+  const pipH = Math.round(pipW * (HEIGHT / WIDTH))
+  const pad = 20
+  const gap = 14
+  const rects: PipRect[] = []
+  for (let i = 0; i < max; i++) {
+    rects.push({
+      x: WIDTH - pipW - pad,
+      y: pad + i * (pipH + gap),
+      w: pipW,
+      h: pipH,
+    })
+  }
+  return rects
+}
+
+/** Blend factor at `sec` for a cut at `atSec`: 0 just before, 1 after the fade. */
+function switchMix(sec: number, atSec: number): number {
+  const dt = sec - atSec
+  if (dt <= -SWITCH_CROSSFADE) return 0
+  if (dt >= SWITCH_CROSSFADE) return 1
+  return (dt + SWITCH_CROSSFADE) / (2 * SWITCH_CROSSFADE)
+}
+
+/** The EDL cut whose fade window straddles `sec`, if any (sorted EDL). */
+function activeFade(edl: SwitchEDL, sec: number): { atSec: number; mainId: string } | null {
+  for (const ev of edl) {
+    if (Math.abs(sec - ev.atSec) < SWITCH_CROSSFADE) return { atSec: ev.atSec, mainId: ev.mainId }
+  }
+  return null
+}
+
+/** Paint one participant's frame stack covering the given box (main or a PIP tile). */
+function paintParticipantBox(
+  ctx: CanvasRenderingContext2D,
+  stack: TimedPaint[],
+  alpha: number,
+  rect: PipRect,
+  border: boolean,
+) {
+  if (alpha <= 0 || stack.length === 0) return
+  ctx.save()
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha))
+  if (border) {
+    ctx.fillStyle = '#0C141C'
+    ctx.fillRect(rect.x - 4, rect.y - 4, rect.w + 8, rect.h + 8)
+  }
+  paintStack(ctx, stack, rect.x, rect.y, rect.w, rect.h)
+  ctx.restore()
+}
+
+/**
+ * Paint one program frame from the EDL: the participant that is MAIN at `sec` fills the
+ * frame; every other participant with picture at this time is a PIP tile. At a cut the
+ * outgoing and incoming MAIN cross-fade over the full frame.
+ */
+function paintEdlFrame(
+  ctx: CanvasRenderingContext2D,
+  sec: number,
+  edl: SwitchEDL,
+  fallbackId: string,
+  order: string[],
+  stacks: Map<string, TimedPaint[]>,
+) {
+  ctx.save()
+  ctx.fillStyle = '#05070A'
+  ctx.fillRect(0, 0, WIDTH, HEIGHT)
+
+  const currentMain = mainAt(edl, sec, fallbackId)
+  const fade = activeFade(edl, sec)
+  const mix = fade ? switchMix(sec, fade.atSec) : 1
+  const prevMain = fade ? mainAt(edl, fade.atSec - SWITCH_CROSSFADE - 1e-6, fallbackId) : currentMain
+  const full: PipRect = { x: 0, y: 0, w: WIDTH, h: HEIGHT }
+
+  const stackOf = (id: string) => stacks.get(id)?.filter((l) => l.opacity > 0) || []
+
+  // MAIN (full frame) — cross-fade prevMain → currentMain at a cut.
+  if (fade && prevMain !== currentMain) {
+    paintParticipantBox(ctx, stackOf(prevMain), 1 - mix, full, false)
+    paintParticipantBox(ctx, stackOf(currentMain), mix, full, false)
+  } else {
+    paintParticipantBox(ctx, stackOf(currentMain), 1, full, false)
+  }
+
+  // PIP strip — every other participant that has picture right now.
+  const others = order.filter((id) => id !== currentMain && stackOf(id).length > 0)
+  const rects = pipRects(others.length)
+  others.slice(0, rects.length).forEach((id, i) => {
+    // The incoming MAIN fades OUT of its PIP tile as it fades INTO the full frame.
+    const tileAlpha = fade && id === currentMain ? 1 - mix : 1
+    paintParticipantBox(ctx, stackOf(id), tileAlpha, rects[i], true)
+  })
+  ctx.restore()
+}
+
+function edlSpan(audioDur: number, all: CameraClip[]) {
+  return Math.max(audioDur, ...all.map((c) => cameraClipEnd(c)), 0.5)
+}
+
+/**
+ * Faster-than-realtime EDL render via WebCodecs/mediabunny. One decoded painter per
+ * participant; each frame queries every painter at the session time, then paints
+ * main + PIP per the EDL.
+ */
+async function renderFastEdlPicture(opts: {
+  edl: SwitchEDL
+  fallbackId: string
+  order: string[]
+  clipsByParticipant: Map<string, CameraClip[]>
+  audio: AudioBuffer
+  prefer?: 'mp4' | 'webm'
+  onProgress?: (ratio: number, info?: { realtime: boolean }) => void
+}): Promise<{ blob: Blob; ext: 'mp4' | 'webm' }> {
+  const mb = await import('mediabunny')
+  const plan = await pickEncodePlan(opts.prefer)
+  if (!plan) throw new Error('This browser cannot encode a picture mix faster than realtime')
+
+  const canvas = document.createElement('canvas')
+  canvas.width = WIDTH
+  canvas.height = HEIGHT
+  const ctx = canvas.getContext('2d', { alpha: false })
+  if (!ctx) throw new Error('Could not open a 2D canvas')
+
+  const allClips: CameraClip[] = []
+  const painters = new Map<string, FramePainter>()
+  for (const id of opts.order) {
+    const clips = (opts.clipsByParticipant.get(id) || []).map(normalizeCameraClip)
+    allClips.push(...clips)
+    const painter = await openClipSetPainter(clips)
+    if (painter) painters.set(id, painter)
+  }
+
+  const duration = Math.max(edlSpan(opts.audio.duration, allClips), FRAME)
+  const frames = Math.max(1, Math.round(duration * FPS))
+
+  const target = new mb.BufferTarget()
+  const output = new mb.Output({ format: plan.format, target })
+  const videoSource = new mb.CanvasSource(canvas, {
+    codec: plan.video,
+    quality: plan.quality,
+    latencyMode: 'quality',
+    keyFrameInterval: 2,
+  })
+  const audioSource = new mb.AudioBufferSource({ codec: plan.audio, quality: plan.quality })
+  output.addVideoTrack(videoSource)
+  output.addAudioTrack(audioSource)
+  await output.start()
+  await audioSource.add(opts.audio)
+  audioSource.close()
+
+  let finished = false
+  try {
+    for (let i = 0; i < frames; i++) {
+      const t = i * FRAME
+      const stacks = new Map<string, TimedPaint[]>()
+      for (const [id, painter] of painters) stacks.set(id, await painter.at(t))
+      paintEdlFrame(ctx, t, opts.edl, opts.fallbackId, opts.order, stacks)
+      await videoSource.add(t, FRAME, { keyFrame: i === 0 || i % (FPS * 2) === 0 })
+      if (i % 12 === 0) {
+        opts.onProgress?.(i / frames, { realtime: false })
+        await yieldUi()
+      }
+    }
+    videoSource.close()
+    await output.finalize()
+    finished = true
+  } finally {
+    painters.forEach((p) => p.close())
+    if (!finished) {
+      try {
+        await output.cancel()
+      } catch {
+        /* encoder already dead */
+      }
+    }
+  }
+
+  const buffer = target.buffer
+  if (!buffer || buffer.byteLength < 64) throw new Error('Picture encoder produced an empty file')
+  return { blob: new Blob([buffer], { type: plan.mime }), ext: plan.ext }
+}
+
+function normalizeEdlSources(sources: EdlSource[]) {
+  const clipsByParticipant = new Map<string, CameraClip[]>()
+  const order: string[] = []
+  for (const src of sources) {
+    const clips = asClipList(src.clips)
+    if (!order.includes(src.participantId)) order.push(src.participantId)
+    const prior = clipsByParticipant.get(src.participantId) || []
+    clipsByParticipant.set(src.participantId, [...prior, ...clips])
+  }
+  return { clipsByParticipant, order }
+}
+
+/**
+ * EDL-aware program deliverable. Given a `SwitchEDL`, per-participant camera sources,
+ * and the master mix, renders the composited program where the MAIN camera fills the
+ * frame and the other participants are PIP tiles, swapping MAIN at each EDL cut.
+ *
+ * Non-destructive: the raw per-camera video is never rewritten — this is a composition.
+ *
+ * Graceful fallback: an empty/undefined `edl` OR fewer than two participant sources
+ * degrades to the existing single/PIP path via {@link renderCameraDeliverable}, so the
+ * current behavior (and program monitor) is untouched.
+ *
+ * Usage:
+ *   const out = await renderEdlDeliverable({ edl, sources, master })
+ *   const a = document.createElement('a'); a.href = URL.createObjectURL(out.blob)
+ *   a.download = out.filename; a.click()
+ */
+export async function renderEdlDeliverable(opts: {
+  /** The movable switch decisions. Empty/undefined → falls back to non-EDL render. */
+  edl?: SwitchEDL
+  /** Per-participant camera sources, in the order PIP tiles should stack. */
+  sources: EdlSource[]
+  /** MAIN before the first cut. Defaults to the first participant. */
+  fallbackId?: string
+  /** The finished, mixed program audio. AudioBuffer = fast/offline; MediaStream = live 1×. */
+  master: AudioBuffer | MediaStream
+  /** Program length when master is a MediaStream (seconds). Ignored for AudioBuffer. */
+  durationSec?: number
+  /** Filename stem; extension is appended. Default 'podcast-program'. */
+  fileStem?: string
+  onProgress?: (ratio: number, info?: { realtime: boolean }) => void
+}): Promise<CameraDeliverable> {
+  const { clipsByParticipant, order } = normalizeEdlSources(opts.sources)
+  const fallbackId = opts.fallbackId && order.includes(opts.fallbackId) ? opts.fallbackId : order[0]
+  const edl = opts.edl || []
+
+  // Graceful fallback: no meaningful EDL, or not enough participants to switch.
+  const masterIsBuffer = !(opts.master instanceof MediaStream)
+  const canFastEdl =
+    masterIsBuffer && typeof VideoEncoder !== 'undefined' && typeof AudioEncoder !== 'undefined'
+  if (edl.length === 0 || order.length < 2 || !canFastEdl) {
+    const first = order[0] ? clipsByParticipant.get(order[0]) || null : null
+    const second = order[1] ? clipsByParticipant.get(order[1]) || null : null
+    return renderCameraDeliverable({
+      host: first,
+      guest: second,
+      master: opts.master,
+      mode: second && second.length > 0 ? 'pip' : 'a-roll',
+      durationSec: opts.durationSec,
+      fileStem: opts.fileStem,
+      onProgress: opts.onProgress,
+    })
+  }
+
+  const stem = (opts.fileStem || 'podcast-program').replace(/[^\w.-]+/g, '-')
+  try {
+    opts.onProgress?.(0, { realtime: false })
+    const { blob, ext } = await renderFastEdlPicture({
+      edl,
+      fallbackId,
+      order,
+      clipsByParticipant,
+      audio: opts.master as AudioBuffer,
+      prefer: 'mp4',
+      onProgress: opts.onProgress,
+    })
+    return { blob, ext, mime: blob.type, realtime: false, filename: `${stem}.${ext}` }
+  } catch {
+    // EDL fast path failed → fall back to the existing single/PIP deliverable.
+    const first = order[0] ? clipsByParticipant.get(order[0]) || null : null
+    const second = order[1] ? clipsByParticipant.get(order[1]) || null : null
+    return renderCameraDeliverable({
+      host: first,
+      guest: second,
+      master: opts.master,
+      mode: second && second.length > 0 ? 'pip' : 'a-roll',
+      durationSec: opts.durationSec,
+      fileStem: opts.fileStem,
+      onProgress: opts.onProgress,
+    })
+  }
 }

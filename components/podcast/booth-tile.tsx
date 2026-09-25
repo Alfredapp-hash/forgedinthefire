@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { BoothConnection, BoothParticipantRole } from './recording-booth'
 
@@ -62,11 +62,36 @@ export type BoothTileProps = {
   connection?: BoothConnection
   onToggleMute: (id: string) => void
   onToggleCamera: (id: string) => void
+  /**
+   * Optional live-level sink (0..1), throttled to ~12/s. Lets a parent feed an
+   * active-speaker tracker. Fires via a ref, so it never re-renders this tile.
+   */
+  onLevel?: (id: string, level: number) => void
+  /** 'pip' renders a denser tile (smaller placeholder / tighter footer). */
+  variant?: 'main' | 'pip'
 }
 
-/** Live RMS/peak meter driven off its own AnalyserNode, cleaned up on unmount. */
-function useAudioLevel(stream: MediaStream | null, active: boolean): React.RefObject<HTMLDivElement | null> {
+/**
+ * Live RMS/peak meter driven off its own AnalyserNode, cleaned up on unmount.
+ *
+ * `onLevel` (optional) receives the smoothed 0..1 level, throttled to ~12/s, so
+ * a parent can drive an active-speaker tracker. It is intentionally a plain
+ * number pushed through a ref-stable callback — it never triggers a React
+ * re-render of this tile (the meter itself is driven purely via `style`).
+ */
+function useAudioLevel(
+  stream: MediaStream | null,
+  active: boolean,
+  onLevel?: (level: number) => void,
+): React.RefObject<HTMLDivElement | null> {
   const barRef = useRef<HTMLDivElement | null>(null)
+
+  // Keep the latest callback in a ref so changing it never restarts the audio
+  // graph (which would tear down and rebuild the AudioContext every render).
+  const onLevelRef = useRef(onLevel)
+  useEffect(() => {
+    onLevelRef.current = onLevel
+  }, [onLevel])
 
   useEffect(() => {
     // Captured for the cleanup closure — the ref may point elsewhere by then.
@@ -74,11 +99,13 @@ function useAudioLevel(stream: MediaStream | null, active: boolean): React.RefOb
     if (!bar) return
     if (!stream || !active) {
       bar.style.transform = 'scaleX(0)'
+      onLevelRef.current?.(0)
       return
     }
     const tracks = stream.getAudioTracks()
     if (tracks.length === 0) {
       bar.style.transform = 'scaleX(0)'
+      onLevelRef.current?.(0)
       return
     }
 
@@ -96,6 +123,10 @@ function useAudioLevel(stream: MediaStream | null, active: boolean): React.RefOb
     const data = new Float32Array(analyser.fftSize)
     let raf = 0
     let level = 0
+    // Throttle upward level reporting to ~12/s (every ~83ms) so we drive the
+    // parent's active-speaker tracker without a callback on every single frame.
+    let lastReport = 0
+    const REPORT_INTERVAL_MS = 83
 
     const tick = () => {
       analyser.getFloatTimeDomainData(data)
@@ -113,6 +144,12 @@ function useAudioLevel(stream: MediaStream | null, active: boolean): React.RefOb
       level = target > level ? target : level * 0.82 + target * 0.18
       const el = barRef.current
       if (el) el.style.transform = `scaleX(${level.toFixed(3)})`
+
+      const now = performance.now()
+      if (now - lastReport >= REPORT_INTERVAL_MS) {
+        lastReport = now
+        onLevelRef.current?.(level)
+      }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
@@ -129,6 +166,7 @@ function useAudioLevel(stream: MediaStream | null, active: boolean): React.RefOb
         /* closing a context that never started can reject on some browsers */
       })
       bar.style.transform = 'scaleX(0)'
+      onLevelRef.current?.(0)
     }
   }, [stream, active])
 
@@ -147,12 +185,24 @@ export function BoothTile({
   connection,
   onToggleMute,
   onToggleCamera,
+  onLevel,
+  variant = 'main',
 }: BoothTileProps): React.JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [videoPlaying, setVideoPlaying] = useState(false)
   const wantsVideo = hasLiveVideo && cameraOn && Boolean(videoStream)
   const meterActive = !muted && Boolean(audioStream)
-  const meterRef = useAudioLevel(audioStream, meterActive)
+
+  // Bind the tile's id into the level callback so the parent knows who spoke,
+  // without the tile ever re-rendering on level changes (delivered via ref).
+  const onTileLevel = useCallback(
+    (level: number) => {
+      onLevel?.(id, level)
+    },
+    [onLevel, id],
+  )
+  const meterRef = useAudioLevel(audioStream, meterActive, onTileLevel)
+  const isPip = variant === 'pip'
 
   // Bind the stream and attempt playback. `videoPlaying` gates only the overlay
   // (never whether the <video> renders), so the state update here reflects an
@@ -200,12 +250,16 @@ export function BoothTile({
         {showPlaceholder ? (
           <div className="absolute inset-0 flex h-full w-full flex-col items-center justify-center gap-3 bg-gradient-to-b from-[#0B0F14] to-[#05070A]">
             <div
-              className="flex h-20 w-20 items-center justify-center rounded-full border border-[#27313B] bg-[#0B0F14] text-2xl font-semibold tracking-wide text-[#8DEBFF]"
+              className={`flex items-center justify-center rounded-full border border-[#27313B] bg-[#0B0F14] font-semibold tracking-wide text-[#8DEBFF] ${
+                isPip ? 'h-12 w-12 text-base' : 'h-20 w-20 text-2xl'
+              }`}
               aria-hidden="true"
             >
               {initials(name)}
             </div>
-            <span className="text-[11px] uppercase tracking-[0.18em] text-[#A9B8C6]">Camera off</span>
+            {isPip ? null : (
+              <span className="text-[11px] uppercase tracking-[0.18em] text-[#A9B8C6]">Camera off</span>
+            )}
           </div>
         ) : null}
 
