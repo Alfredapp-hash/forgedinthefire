@@ -13,7 +13,15 @@ import {
   type PictureKeyframe,
   type StingerStyle,
 } from '@/lib/podcast/camera'
-import { snapHairline, snapSpan, trackDisplayRatio } from '@/lib/podcast/peaks'
+import {
+  drawPeakEnvelope,
+  peakBucketCount,
+  peakEnvelopeSlice,
+  snapHairline,
+  snapSpan,
+  trackDisplayRatio,
+} from '@/lib/podcast/peaks'
+import type { SwitchEDL } from '@/lib/podcast/switch-edl'
 import { TimelinePlayhead, useTrackDpr } from '@/components/podcast/session-timeline'
 
 type Props = {
@@ -47,6 +55,16 @@ type Props = {
   onStinger?: (where: 'playhead' | 'cut' | 'chapters') => void
   markers?: { time: number; label: string }[]
   disabled?: boolean
+  /** Camera-switch decisions (movable, non-destructive) drawn as vertical cuts on the lane. */
+  edl?: SwitchEDL
+  /** Options for a marker's "main camera" picker + the default main for a new cut. */
+  switchParticipants?: { id: string; name: string }[]
+  onAddSwitch?: (atSec: number, mainId: string) => void
+  onMoveSwitch?: (id: string, toSec: number) => void
+  onRemoveSwitch?: (id: string) => void
+  onSetSwitchMain?: (id: string, mainId: string) => void
+  /** Waveform source drawn under this person's video lane. Null degrades to bare clips. */
+  audioForPerson?: (personId: string) => AudioBuffer | null
 }
 
 export function CameraLane({
@@ -79,18 +97,55 @@ export function CameraLane({
   onStinger,
   markers,
   disabled,
+  edl,
+  switchParticipants,
+  onAddSwitch,
+  onMoveSwitch,
+  onRemoveSwitch,
+  onSetSwitchMain,
+  audioForPerson,
 }: Props) {
   const boardRef = useRef<HTMLDivElement>(null)
   const width = Math.max(480, Math.round(durationSec * pxPerSec))
   const drag = useRef<
     | { kind: 'move'; clipId: string; startX: number; startOffset: number; moved: boolean }
     | { kind: 'trim'; clipId: string; edge: 'in' | 'out' }
+    | { kind: 'switch'; id: string; moved: boolean }
     | { kind: 'range'; anchor: number }
     | { kind: 'seek' }
     | null
   >(null)
   const selected = clips.find((c) => c.id === selectedId) || null
   const showBroken = Boolean(broken && linked)
+
+  // Every clip on this lane belongs to the same person; use it as the waveform + cut source.
+  const personId = clips[0]?.personId ?? null
+  const waveBuffer = personId && audioForPerson ? audioForPerson(personId) : null
+  const switchEnabled = Boolean(onAddSwitch || onMoveSwitch || onRemoveSwitch || onSetSwitchMain)
+  const cuts = edl ?? []
+  const pickList = switchParticipants ?? []
+  const defaultMainId = pickList[0]?.id ?? personId ?? ''
+
+  /** Snap a raw session time to the playhead or a nearby cut when within ~6px. */
+  function snapCutTime(sec: number, ignoreId?: string): number {
+    const tol = 6 / pxPerSec
+    if (Math.abs(sec - playhead) <= tol) return playhead
+    let best = sec
+    let bestGap = tol
+    for (const ev of cuts) {
+      if (ev.id === ignoreId) continue
+      const gap = Math.abs(ev.atSec - sec)
+      if (gap < bestGap) {
+        bestGap = gap
+        best = ev.atSec
+      }
+    }
+    return Math.max(0, best)
+  }
+
+  function nameForMain(id: string): string {
+    return pickList.find((p) => p.id === id)?.name ?? id
+  }
 
   useEffect(() => {
     const el = boardRef.current
@@ -115,6 +170,9 @@ export function CameraLane({
       onMoveClip?.(d.clipId, Math.max(0, d.startOffset + delta))
     } else if (d.kind === 'trim') {
       onTrimClip?.(d.clipId, d.edge, t)
+    } else if (d.kind === 'switch') {
+      d.moved = true
+      onMoveSwitch?.(d.id, snapCutTime(t, d.id))
     } else if (d.kind === 'range') {
       onRange?.(Math.min(d.anchor, t), Math.max(d.anchor, t))
       onPlayhead?.(t)
@@ -214,6 +272,9 @@ export function CameraLane({
           onPointerUp={onBoardPointerUp}
         >
           <div className="relative" style={{ width, height: 40 }} onPointerDown={onEmptyPointerDown}>
+            {waveBuffer && (
+              <LaneWaveform buffer={waveBuffer} cssWidth={width} cssHeight={40} color={color} />
+            )}
             {range && range.end - range.start > 0.04 && (
               <div
                 className="absolute top-0 bottom-0 bg-[#53D6FF]/10 pointer-events-none"
@@ -236,6 +297,72 @@ export function CameraLane({
                 </span>
               </div>
             ))}
+            {switchEnabled &&
+              cuts.map((ev) => {
+                const hair = snapHairline(ev.atSec * pxPerSec, 1)
+                return (
+                  <div
+                    key={ev.id}
+                    className="absolute top-0 bottom-0 z-30 group"
+                    style={{ left: hair.left, width: 0 }}
+                  >
+                    {/* Drag body: a slim hit area centered on the cut line. */}
+                    <div
+                      role="button"
+                      aria-label={`Camera cut to ${nameForMain(ev.mainId)} at ${formatClock(ev.atSec)}`}
+                      title={`Cut → ${nameForMain(ev.mainId)} · ${formatClock(ev.atSec)}${ev.reason === 'auto' ? ' · auto' : ''} · drag to move`}
+                      className="absolute top-0 bottom-0 -left-1.5 w-3 cursor-ew-resize"
+                      onPointerDown={(event) => {
+                        if (!onMoveSwitch) return
+                        event.stopPropagation()
+                        event.currentTarget.setPointerCapture(event.pointerId)
+                        drag.current = { kind: 'switch', id: ev.id, moved: false }
+                      }}
+                    >
+                      <div
+                        className={`absolute top-0 bottom-0 left-1.5 w-px ${
+                          ev.reason === 'auto' ? 'bg-[#53D6FF]' : 'bg-[#8DEBFF]'
+                        }`}
+                      />
+                      <div className="absolute top-1 left-1.5 -translate-x-1/2 h-1.5 w-1.5 rotate-45 bg-[#8DEBFF]" />
+                    </div>
+                    {/* Retarget picker + delete — appear on hover to keep the lane clean. */}
+                    <div className="absolute top-0 left-2 z-40 hidden group-hover:flex items-center gap-1 rounded border border-[#27313B] bg-[#0B1219] px-1 py-0.5 shadow">
+                      {onSetSwitchMain && pickList.length > 0 ? (
+                        <select
+                          aria-label="Cut main camera"
+                          value={ev.mainId}
+                          disabled={disabled}
+                          className="bg-transparent text-[10px] text-[#8DEBFF] outline-none"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onChange={(e) => onSetSwitchMain(ev.id, e.target.value)}
+                        >
+                          {pickList.map((p) => (
+                            <option key={p.id} value={p.id} className="bg-[#0B1219] text-[#F6FAFC]">
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-[10px] text-[#8DEBFF]">{nameForMain(ev.mainId)}</span>
+                      )}
+                      {onRemoveSwitch && (
+                        <button
+                          type="button"
+                          aria-label="Delete camera cut"
+                          className="text-[10px] leading-none text-[#FF8080] px-0.5"
+                          disabled={disabled}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={() => onRemoveSwitch(ev.id)}
+                          title="Remove this cut"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
             {clips.map((clip) => {
               const isSelected = selectedId === clip.id
               const box = snapSpan(clip.offset * pxPerSec, cameraClipEnd(clip) * pxPerSec, 28)
@@ -320,8 +447,30 @@ export function CameraLane({
           </div>
         </div>
       )}
-      {(onSplit || onCutHole || onSlip || onLinkedChange) && clips.length > 0 && (
+      {(onSplit || onCutHole || onSlip || onLinkedChange || switchEnabled) && clips.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 border-t border-[#1A232C] px-2 py-1.5">
+          {onSplit && (
+            <button
+              type="button"
+              className={snipBtn}
+              disabled={disabled || !selected}
+              onClick={onSplit}
+              title="Snip the selected picture clip at the playhead (V)."
+            >
+              ✂ Snip at playhead
+            </button>
+          )}
+          {switchEnabled && onAddSwitch && (
+            <button
+              type="button"
+              className={cutBtn}
+              disabled={disabled || !defaultMainId}
+              onClick={() => onAddSwitch(snapCutTime(playhead), defaultMainId)}
+              title="Drop a camera-switch cut at the playhead. Drag it to move; hover to retarget or delete."
+            >
+              + Add cut
+            </button>
+          )}
           <button type="button" className={toolBtn} disabled={disabled || !selected} onClick={onSplit}>
             Split
           </button>
@@ -391,6 +540,7 @@ export function CameraLane({
           )}
           <p className="text-[10px] text-[#7C8B97] ml-1">
             Picture only — audio stays on the voice lanes. V splits. J / K / L is the playhead.
+            {switchEnabled ? ' Cut markers drag on the lane; hover a cut to retarget or delete.' : ''}
           </p>
         </div>
       )}
@@ -400,6 +550,78 @@ export function CameraLane({
 
 const toolBtn =
   'inline-flex items-center px-2 py-0.5 rounded border border-[#27313B] text-[10px] uppercase tracking-wider text-[#B8C4CF] disabled:opacity-40'
+
+const snipBtn =
+  'inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[#53D6FF]/60 bg-[#53D6FF]/10 text-[10px] uppercase tracking-wider text-[#8DEBFF] disabled:opacity-40'
+
+const cutBtn =
+  'inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[#8DEBFF]/50 text-[10px] uppercase tracking-wider text-[#8DEBFF] disabled:opacity-40'
+
+const WAVE_TILE_CSS = 2048
+
+/**
+ * Per-lane waveform background aligned to the full timeline (t=0..durationSec at pxPerSec).
+ * Tiled retina canvases; envelopes are cached in the shared peaks WeakMap, so panning /
+ * re-rendering never recomputes them. Degrades to nothing when there is no buffer.
+ */
+function LaneWaveform({
+  buffer,
+  cssWidth,
+  cssHeight,
+  color,
+}: {
+  buffer: AudioBuffer
+  cssWidth: number
+  cssHeight: number
+  color: string
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const dpr = useTrackDpr()
+  const width = Math.max(1, Math.round(cssWidth))
+  const height = Math.max(1, Math.round(cssHeight))
+
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current
+    if (!wrap) return
+    const buckets = peakBucketCount(width, dpr)
+    // Whole file across the whole lane — same time scale as the clips above it.
+    const peaks = peakEnvelopeSlice(buffer, 0, buffer.duration, buckets)
+    const tileCount = Math.max(1, Math.ceil(width / WAVE_TILE_CSS))
+
+    while (wrap.childElementCount < tileCount) {
+      const canvas = document.createElement('canvas')
+      canvas.setAttribute('aria-hidden', 'true')
+      canvas.style.display = 'block'
+      canvas.style.position = 'absolute'
+      canvas.style.top = '0'
+      canvas.style.pointerEvents = 'none'
+      canvas.style.setProperty('image-rendering', 'pixelated')
+      wrap.appendChild(canvas)
+    }
+    while (wrap.childElementCount > tileCount) wrap.lastElementChild?.remove()
+
+    for (let t = 0; t < tileCount; t++) {
+      const canvas = wrap.children[t] as HTMLCanvasElement
+      const left = t * WAVE_TILE_CSS
+      const tw = Math.min(WAVE_TILE_CSS, width - left)
+      const bw = Math.max(1, Math.round(tw * dpr))
+      const bh = Math.max(1, Math.round(height * dpr))
+      canvas.style.left = `${left}px`
+      canvas.style.width = `${tw}px`
+      canvas.style.height = `${height}px`
+      if (canvas.width !== bw) canvas.width = bw
+      if (canvas.height !== bh) canvas.height = bh
+      const ctx = canvas.getContext('2d', { alpha: true })
+      if (!ctx) continue
+      const start = Math.floor((left / width) * peaks.length)
+      const end = Math.max(start + 1, Math.round(((left + tw) / width) * peaks.length))
+      // dim=true → recessed background strip so clips + cuts stay legible on top.
+      drawPeakEnvelope(ctx, peaks.subarray(start, Math.min(peaks.length, end)), bw, bh, color, true)
+    }
+  }, [buffer, width, height, color, dpr])
+
+  return <div ref={wrapRef} className="absolute inset-0 z-0 pointer-events-none opacity-70" />
+}
 
 function FilmSprockets({ color }: { color: string }) {
   const dpr = useTrackDpr()

@@ -4,6 +4,7 @@ import { encodeWav } from '@/lib/podcast/audio'
 import { cameraKind, normalizeCameraClip, type CameraClip } from '@/lib/podcast/camera'
 import { bufferFromBlob } from '@/lib/podcast/effects'
 import type { SessionPerson, StudioTrack } from '@/lib/podcast/multitrack'
+import type { SwitchEDL } from '@/lib/podcast/switch-edl'
 
 const DB_NAME = 'forged-podcast-room'
 /** v3 adds crash-safe checkpoint stores for in-progress (unfinalized) takes. */
@@ -76,6 +77,8 @@ type StoredSession = {
   people: SessionPerson[]
   tracks: StoredTrack[]
   cameras?: StoredCameraClip[]
+  /** Camera-switch edit-decision-list captured live / edited on the lane. */
+  switchEdl?: SwitchEDL
 }
 
 function openDb(): Promise<IDBDatabase> {
@@ -217,6 +220,7 @@ export async function saveSession(
   people: SessionPerson[],
   tracks: StudioTrack[],
   cameras: CameraClip[] = [],
+  switchEdl: SwitchEDL = [],
 ): Promise<void> {
   if (!episodeId || typeof indexedDB === 'undefined') return
   const withAudio = tracks.filter((t) => t.buffer)
@@ -250,6 +254,9 @@ export async function saveSession(
     people,
     tracks: stored,
     cameras: packedCams,
+    // Cheap plain-JSON array of cuts — persisted regardless of the camera-file quota
+    // fallback below so edited/auto-captured switches survive a reload.
+    switchEdl: Array.isArray(switchEdl) ? switchEdl : [],
   }
 
   try {
@@ -274,7 +281,12 @@ export async function saveSession(
 
 export async function loadSession(
   episodeId: string,
-): Promise<{ people: SessionPerson[]; tracks: StudioTrack[]; cameras: CameraClip[] } | null> {
+): Promise<{
+  people: SessionPerson[]
+  tracks: StudioTrack[]
+  cameras: CameraClip[]
+  switchEdl: SwitchEDL
+} | null> {
   if (!episodeId || typeof indexedDB === 'undefined') return null
   const row = await idbGet(episodeId)
   if (!row) return null
@@ -338,7 +350,12 @@ export async function loadSession(
     )
   }
 
-  return { people: row.people, tracks, cameras }
+  return {
+    people: row.people,
+    tracks,
+    cameras,
+    switchEdl: Array.isArray(row.switchEdl) ? row.switchEdl : [],
+  }
 }
 
 export async function clearSession(episodeId: string): Promise<void> {

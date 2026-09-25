@@ -177,6 +177,15 @@ import {
   personAvLinked,
   snapCamerasToAudio,
 } from '@/lib/podcast/av-sync'
+import { createActiveSpeakerTracker } from '@/lib/podcast/active-speaker'
+import {
+  addSwitch,
+  dedupeEdl,
+  moveSwitch,
+  removeSwitch,
+  setSwitchMain,
+  type SwitchEDL,
+} from '@/lib/podcast/switch-edl'
 
 const REMOTE_GUEST_KEY = 'remote:guest'
 import {
@@ -280,6 +289,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [cams, setCams] = useState<MediaDeviceInfo[]>([])
   const [cameraStreams, setCameraStreams] = useState<Record<string, MediaStream>>({})
   const [cameraClips, setCameraClips] = useState<CameraClip[]>([])
+  /** Live-captured + hand-edited camera-switch cuts (MAIN follows the talker). */
+  const [switchEdl, setSwitchEdl] = useState<SwitchEDL>([])
   const [selectedCamClipId, setSelectedCamClipId] = useState<string | null>(null)
   const [pictureMode, setPictureMode] = useState<PictureMode>('a-roll')
   const [pvwScene, setPvwScene] = useState<PictureScene>('host')
@@ -333,6 +344,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   // offset we shift an uploaded guest take by so it lines up with the host punch.
   const recPunchEpochRef = useRef(0)
   const stopMeterRef = useRef<Array<() => void>>([])
+  /** Teardown callbacks for the live active-speaker analysers + sampling loop. */
+  const speakerTrackerStopRef = useRef<Array<() => void>>([])
   const recRafRef = useRef<number | null>(null)
   const playheadRef = useRef(0)
   const playRafRef = useRef<number | null>(null)
@@ -645,12 +658,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     if (!episodeId || recording || sessionStatus !== 'open') return
     if (!tracks.some((t) => t.buffer)) return
     const t = window.setTimeout(() => {
-      void saveSession(episodeId, people, tracks, cameraClips).catch((err) => {
+      void saveSession(episodeId, people, tracks, cameraClips, switchEdl).catch((err) => {
         setError(err instanceof Error ? err.message : 'Could not autosave takes on this computer')
       })
     }, 1600)
     return () => window.clearTimeout(t)
-  }, [episodeId, people, tracks, cameraClips, recording, sessionStatus])
+  }, [episodeId, people, tracks, cameraClips, switchEdl, recording, sessionStatus])
 
   useEffect(() => {
     return () => {
@@ -688,6 +701,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       })
       cueRef.current?.stop()
       stopMeterRef.current.forEach((fn) => fn())
+      speakerTrackerStopRef.current.forEach((fn) => fn())
       idleStopRef.current.forEach((fn) => fn())
       abortRef.current?.abort()
       if (recRafRef.current) cancelAnimationFrame(recRafRef.current)
@@ -1031,6 +1045,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       setPeople(saved.people)
       setTracks(ensurePersonLanes(saved.tracks, saved.people))
       setCameraClips(saved.cameras.map(normalizeCameraClip))
+      setSwitchEdl(saved.switchEdl || [])
       setSelectedCamClipId(saved.cameras[0]?.id || null)
       setSelectedId(saved.tracks.find((t) => t.armed)?.id || saved.tracks.find((t) => t.buffer)?.id || null)
       seededRef.current = true
@@ -1895,6 +1910,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       }
       recLiveRef.current = true
       recStartedAtRef.current = performance.now()
+      // Start capturing active-speaker switches now that the session clock anchor
+      // (recStartedAtRef) is set — atSec below is measured off the same anchor as
+      // the record clock, so cuts land on the timeline where the talker flips.
+      startSwitchCapture(
+        jobs
+          .map((job) => ({ id: job.lane.personId, stream: streams.get(job.key) }))
+          .filter((p): p is { id: string; stream: MediaStream } => Boolean(p.stream)),
+      )
       const camCount = cameraCapturesRef.current.length
       const punchKind = captures.some((c) => c.capture.kind === 'worklet')
         ? ' · AudioWorklet punch'
@@ -1928,6 +1951,86 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     publishGuestCue(mixRef.current)
     stopMeterRef.current.forEach((fn) => fn())
     stopMeterRef.current = []
+    stopSwitchCapture()
+  }
+
+  /**
+   * Capture live active-speaker switches into the EDL while recording.
+   *
+   * A lightweight AnalyserNode meters each participant that can be MAIN (host mic,
+   * remote guest audio, any local camera-audio lane). A few times a second we read
+   * their peak levels and feed them — with the *monotonic* performance.now() clock —
+   * to the active-speaker tracker. When the tracker's MAIN flips, we append a switch
+   * at the current session-clock time (punch + elapsed) with reason 'auto'. The EDL
+   * op keeps it sorted/deterministic; we dedupe consecutive same-main cuts on stop.
+   */
+  function startSwitchCapture(participantStreams: Array<{ id: string; stream: MediaStream }>) {
+    stopSwitchCapture()
+    const metered = participantStreams.filter((p) => p.stream.getAudioTracks().length > 0)
+    if (metered.length === 0) return
+
+    let ctx: AudioContext
+    try {
+      ctx = new AudioContext()
+    } catch {
+      return
+    }
+    const analysers: Array<{ id: string; analyser: AnalyserNode; data: Uint8Array<ArrayBuffer> }> = []
+    for (const { id, stream } of metered) {
+      try {
+        const src = ctx.createMediaStreamSource(stream)
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 512
+        src.connect(analyser)
+        analysers.push({ id, analyser, data: new Uint8Array(new ArrayBuffer(analyser.fftSize)) })
+      } catch {
+        /* a stream without a usable audio track is simply skipped */
+      }
+    }
+    if (analysers.length === 0) {
+      void ctx.close()
+      return
+    }
+
+    const tracker = createActiveSpeakerTracker()
+    // Seed the tracker with whatever is currently MAIN so the first live flip
+    // (not the initial adoption) produces the first captured cut.
+    let lastMain: string | null = null
+    const SAMPLE_MS = 120 // ~8 Hz — comfortably faster than the tracker's holdMs.
+    const interval = window.setInterval(() => {
+      if (!recLiveRef.current) return
+      const samples = analysers.map(({ id, analyser, data }) => {
+        analyser.getByteTimeDomainData(data)
+        let peak = 0
+        for (let i = 0; i < data.length; i++) peak = Math.max(peak, Math.abs(data[i] - 128) / 128)
+        return { id, level: peak }
+      })
+      const main = tracker.update(samples, performance.now())
+      if (main && main !== lastMain) {
+        lastMain = main
+        const atSec = punchRef.current + Math.max(0, (performance.now() - recStartedAtRef.current) / 1000)
+        setSwitchEdl((edl) => addSwitch(edl, { atSec, mainId: main, reason: 'auto' }))
+      }
+    }, SAMPLE_MS)
+
+    speakerTrackerStopRef.current.push(() => {
+      window.clearInterval(interval)
+      void ctx.close()
+    })
+  }
+
+  function stopSwitchCapture() {
+    const fns = speakerTrackerStopRef.current
+    speakerTrackerStopRef.current = []
+    fns.forEach((fn) => {
+      try {
+        fn()
+      } catch {
+        /* teardown is best-effort */
+      }
+    })
+    // Collapse any no-op consecutive same-main cuts the live pass may have left.
+    setSwitchEdl((edl) => (edl.length ? dedupeEdl(edl) : edl))
   }
 
   async function onUploadPick(file: File | null) {
@@ -2399,11 +2502,30 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         master = applyGainAndFades(master, gainForTargetLufs(measureLoudness(master).lufs, PODCAST_LUFS), 0, 0)
       }
       const overlays = cameraClips.filter((c) => cameraLayer(c) === 'overlay')
+      // EDL-aware export: group base (non-overlay) camera clips by participant so the
+      // MP4 follows the edited cuts. renderCameraDeliverable ignores edl/sources when
+      // the EDL is empty or fewer than two participants have picture, degrading to the
+      // classic host/guest single/PIP path — so the audio-only export is unaffected.
+      const baseClips = cameraClips.filter((c) => cameraLayer(c) !== 'overlay')
+      const sourcesByPerson = new Map<string, CameraClip[]>()
+      for (const clip of baseClips) {
+        const list = sourcesByPerson.get(clip.personId)
+        if (list) list.push(clip)
+        else sourcesByPerson.set(clip.personId, [clip])
+      }
+      const sources = [...sourcesByPerson.entries()].map(([participantId, clips]) => ({
+        participantId,
+        clips,
+      }))
+      const fallbackId = host.length ? 'host' : guest[0]?.personId
       const out = await renderCameraDeliverable({
         host: [...(host.length ? host : cameraClips.filter((c) => c.personId === guest[0]?.personId)), ...overlays],
         guest: mode === 'pip' ? guest : null,
         master,
         mode,
+        edl: switchEdl,
+        sources,
+        fallbackId,
         fileStem: `${slugFile(title)}-program`,
         onProgress: (ratio, info) => {
           setBusy(
@@ -2563,6 +2685,25 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const rmsDb = meter ? dbFromLinear(meter.rms) : null
   const recHint = REC_MODE_META.find((m) => m.id === recMode)?.hint
   const boardDuration = Math.max(30, playhead + 8, sessionLen) + 4
+
+  // Participants that can be MAIN in a camera switch — the voice people (each owns a
+  // camera lane). mainId matches the EDL's CameraSwitchEvent.mainId / personId.
+  const switchParticipants = useMemo(
+    () => people.filter((p) => p.kind === 'voice').map((p) => ({ id: p.id, name: p.name })),
+    [people],
+  )
+
+  // Waveform source for the camera lane: a person's audible (listen) take buffer,
+  // falling back to their armed take, then their first take with audio.
+  const audioForPerson = useCallback(
+    (personId: string): AudioBuffer | null => {
+      const owned = tracks.filter((t) => t.personId === personId && t.buffer)
+      const anchor =
+        owned.find((t) => t.listen) || owned.find((t) => t.armed) || owned[0]
+      return anchor?.buffer ?? null
+    },
+    [tracks],
+  )
   const timelineBoard = {
     people,
     tracks,
@@ -3798,6 +3939,15 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                     }}
                     onStinger={(where) => addStinger(person.id, where)}
                     markers={pictureMarkers}
+                    edl={switchEdl}
+                    switchParticipants={switchParticipants}
+                    onAddSwitch={(atSec, mainId) =>
+                      setSwitchEdl((e) => addSwitch(e, { atSec, mainId, reason: 'manual' }))
+                    }
+                    onMoveSwitch={(id, toSec) => setSwitchEdl((e) => moveSwitch(e, id, toSec))}
+                    onRemoveSwitch={(id) => setSwitchEdl((e) => removeSwitch(e, id))}
+                    onSetSwitchMain={(id, mainId) => setSwitchEdl((e) => setSwitchMain(e, id, mainId))}
+                    audioForPerson={audioForPerson}
                   />
                 )}
                 {person.kind === 'voice' &&
