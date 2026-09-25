@@ -112,6 +112,7 @@ import {
   type PictureScene,
 } from '@/lib/podcast/picture'
 import type { PodcastChapter } from '@/lib/studio/types'
+import { type StudioStage } from '@/lib/podcast/stage'
 import { applyFollowTalker } from '@/lib/podcast/auto-mix'
 import {
   gainForTargetLufs,
@@ -216,6 +217,10 @@ type Props = {
   onPublished?: () => Promise<void>
   onMarkChapter?: (seconds: number) => void
   chapters?: PodcastChapter[]
+  /** Current studio workflow stage. When omitted, every section renders (legacy
+   *  behavior). When set, sections are gated by stage — but the component and all
+   *  its state/effects stay mounted, so a live recording survives stage switches. */
+  stage?: StudioStage
 }
 
 type Snapshot = {
@@ -248,7 +253,14 @@ function snapshotTracks(tracks: StudioTrack[]): StudioTrack[] {
   }))
 }
 
-export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters }: Props) {
+export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage }: Props) {
+  // Stage gating. `stage == null` keeps legacy behavior (show everything). These
+  // are presentational only — nothing below unmounts on a stage switch, so a live
+  // recording, its checkpoints, and all editor state persist across stages.
+  const showAll = stage == null
+  const showRecord = showAll || stage === 'record'
+  const showEdit = showAll || stage === 'edit'
+  const showPublish = showAll || stage === 'publish'
   const [tracks, setTracks] = useState<StudioTrack[]>(() => defaultSessionTracks())
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
@@ -2764,7 +2776,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       </div>
 
       <div className="p-4 space-y-4">
-        {(recover || crashTakes.length > 0) && sessionStatus === 'offer' && (
+        {showRecord && (recover || crashTakes.length > 0) && sessionStatus === 'offer' && (
           <div className="rounded-xl border border-[#53D6FF]/40 bg-[#0A1820] px-4 py-3 flex flex-wrap items-center gap-3">
             {crashTakes.length > 0 && (
               <p className="text-sm text-[#FFB86B] flex-1 min-w-[12rem] w-full">
@@ -2802,7 +2814,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </div>
         )}
 
-        {recording && recFlowStalled && (
+        {showRecord && recording && recFlowStalled && (
           <div className="rounded-xl border border-[#FF7A9A]/60 bg-[#20101A] px-4 py-3">
             <p className="text-sm text-[#FF7A9A]">
               No samples are reaching the recorder — the capture may have stalled. Check the mic / guest
@@ -2811,7 +2823,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </div>
         )}
 
-        {camWarnFor && (
+        {showRecord && camWarnFor && (
           <div className="rounded-xl border border-[#FFB86B]/50 bg-[#20180C] px-4 py-3 flex flex-wrap items-center gap-3">
             <p className="text-sm text-[#F6FAFC] flex-1 min-w-[12rem]">
               {CAMERA_ARM_WARNING}
@@ -2826,9 +2838,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </div>
         )}
 
-        {/* Transport */}
+        {/* Transport — record arming (record stage) + slim playback (edit stage) */}
+        {(showRecord || showEdit) && (
         <div className="sticky top-0 z-20 -mx-4 px-4 py-3 bg-[#0C141C]/95 border-b border-[#1A232C] flex flex-wrap gap-3 items-start">
           <div className="flex flex-wrap gap-2 items-center flex-1 min-w-[12rem]">
+          {showRecord && (
+          <>
           <button type="button" className={recording ? danger : primary} onClick={() => void toggleRecord()}>
             {recording ? (
               <>
@@ -2848,6 +2863,33 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           >
             <Video size={14} /> Recording Booth
           </button>
+          {boothParticipants.length > 0 && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#27313B] bg-[#0A1016] px-2 py-1 hover:border-[#53D6FF]/50"
+              onClick={() => setBoothOpen(true)}
+              title="Open the booth — click to see everyone full-screen"
+            >
+              <span className="flex -space-x-1.5">
+                {boothParticipants.slice(0, 4).map((p) => (
+                  <span
+                    key={p.id}
+                    className={`inline-flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-semibold text-[#061016] ${
+                      recording && p.hasLiveVideo ? 'border-[#FF5B73]' : 'border-[#0A1016]'
+                    }`}
+                    style={{ background: people.find((per) => per.id === p.id)?.color || '#53D6FF' }}
+                    title={p.name}
+                  >
+                    {(p.name || '?').trim().charAt(0).toUpperCase() || '?'}
+                  </span>
+                ))}
+              </span>
+              <span className="text-[11px] text-[#B8C4CF]">
+                {boothParticipants.length} in booth
+                {boothParticipants.length > 4 ? ` +${boothParticipants.length - 4}` : ''}
+              </span>
+            </button>
+          )}
           <select
             className={select}
             value={recMode}
@@ -2886,6 +2928,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               <option value={4}>4</option>
             </select>
           </label>
+          </>
+          )}
+          {/* Playback transport — shared by record (monitoring) and edit (review takes). */}
           <button
             type="button"
             className={btn}
@@ -2916,6 +2961,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           <button type="button" className={btn} disabled={historyLen === 0} onClick={() => void undo()}>
             <Undo2 size={14} /> Undo
           </button>
+          {showEdit && (
+          <>
           <label className={btn + ' cursor-pointer'}>
             Import → selected
             <input
@@ -2934,6 +2981,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               onChange={(e) => void onImportBed(e.target.files?.[0] || null)}
             />
           </label>
+          </>
+          )}
           <button
             type="button"
             className={loop ? primary : btn}
@@ -2941,6 +2990,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           >
             Loop region
           </button>
+          {showRecord && (
+          <>
           <button
             type="button"
             className={metronome ? primary : btn}
@@ -2961,8 +3012,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               />
             </label>
           )}
+          </>
+          )}
           </div>
-          {(Object.keys(cameraStreams).length > 0 ||
+          {showRecord && (Object.keys(cameraStreams).length > 0 ||
             (remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest))) ||
             cameraClips.length > 0) ? (
             <div className="flex items-start gap-2 shrink-0">
@@ -3095,7 +3148,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             </div>
           )}
         </div>
+        )}
 
+        {showRecord && (
+        <>
         <GuestInvitePanel
           episodeId={episodeId}
           recording={recording}
@@ -3241,7 +3297,11 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             </p>
           )}
         </div>
+        </>
+        )}
 
+        {showEdit && (
+        <>
         <div className="rounded-xl border border-[#1A232C] bg-[#080C10] px-3 py-2 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Lane tools — same track</p>
@@ -3253,58 +3313,11 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           <p className="text-[11px] text-[#7C8B97]">
             Drag on that person's tracks (under their mixer) to select a section. Duck a bed, or Comp a voice take for that range (take 2 for the flub, take 1 for the rest). S splits. Delete cuts a hole.
           </p>
+          {/* Split stays prominent as the primary in-lane action. */}
           <div className="flex flex-wrap items-center gap-2">
-            <label className="inline-flex items-center gap-2 text-xs text-[#B8C4CF]">
-              Section {Math.round(sectionLevel * 100)}%
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={sectionLevel}
-                onChange={(e) => setSectionLevel(Number(e.target.value))}
-                className="w-28"
-              />
-            </label>
             <button
               type="button"
-              className={btn}
-              disabled={!selected?.buffer}
-              onClick={() =>
-                editRange((t) => setVolumeInRange(t, rangeRef.current.start, rangeRef.current.end, sectionLevel), `Section volume ${Math.round(sectionLevel * 100)}% on this lane`)
-              }
-            >
-              Set section volume
-            </button>
-            <button
-              type="button"
-              className={btn}
-              disabled={!selected?.buffer || !isVoiceRole(selected.role)}
-              onClick={() => {
-                if (!selected) return
-                const cur = rangeRef.current
-                if (cur.end - cur.start < 0.05) {
-                  setError('Drag a range, then Comp this take')
-                  return
-                }
-                pushHistory()
-                setTracks((prev) => assignCompRange(prev, selected.id, cur.start, cur.end))
-                setOk(`${selected.name} covers ${formatClock(cur.start)}–${formatClock(cur.end)}`)
-              }}
-            >
-              Comp this take
-            </button>
-            <button
-              type="button"
-              className={btn}
-              disabled={!selected?.buffer}
-              onClick={() => editRange((t) => setVolumeInRange(t, rangeRef.current.start, rangeRef.current.end, 0), 'Ducked section to silence (automation)')}
-            >
-              <VolumeX size={12} /> Mute section
-            </button>
-            <button
-              type="button"
-              className={btn}
+              className={primary}
               disabled={!selected?.buffer}
               onClick={() => {
                 if (!selected) return
@@ -3323,111 +3336,189 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             >
               Split selection
             </button>
-            <button
-              type="button"
-              className={btn}
-              disabled={!selected?.buffer}
-              onClick={() => editRange((t) => cropToRange(t, rangeRef.current.start, rangeRef.current.end), 'Cropped to selection')}
-            >
-              Crop to selection
-            </button>
-            <button
-              type="button"
-              className={btn}
-              disabled={!selected?.buffer}
-              onClick={() => editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, false), 'Cut hole (gap stays)')}
-            >
-              Cut hole
-            </button>
-            <button
-              type="button"
-              className={btn}
-              disabled={!selected?.buffer}
-              onClick={() => editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, true), 'Ripple delete')}
-            >
-              Ripple delete
-            </button>
-            <button
-              type="button"
-              className={btn}
-              disabled={!selected?.buffer}
-              onClick={() => {
-                if (!selected) return
-                pushHistory()
-                setTracks((prev) => mapTrack(prev, selected.id, (t) => joinAdjacentClips(t, playheadRef.current)))
-                setOk('Joined adjacent clips')
-              }}
-            >
-              Join
-            </button>
-            <button
-              type="button"
-              className={btn}
-              disabled={!selected?.buffer || !selectedClipId}
-              onClick={() => {
-                if (!selected || !selectedClipId) return
-                const clip = clipsOf(selected).find((c) => c.id === selectedClipId) || clipsOf(selected)[0]
-                if (clip) clipClipboardRef.current = { ...clip }
-                setOk('Copied clip')
-              }}
-            >
-              Copy clip
-            </button>
-            <button
-              type="button"
-              className={btn}
-              disabled={!selected?.buffer || !clipClipboardRef.current}
-              onClick={() => {
-                const clip = clipClipboardRef.current
-                if (!selected || !clip) return
-                pushHistory()
-                setTracks((prev) => mapTrack(prev, selected.id, (t) => pasteClip(t, clip, playheadRef.current)))
-                setOk('Pasted clip at playhead')
-              }}
-            >
-              Paste at playhead
-            </button>
-            <button
-              type="button"
-              className={btn}
-              disabled={!selected?.buffer || !selectedClipId}
-              onClick={() => {
-                if (!selected || !selectedClipId) return
-                pushHistory()
-                setTracks((prev) => mapTrack(prev, selected.id, (t) => duplicateClipAt(t, selectedClipId)))
-                setOk('Repeated clip after itself')
-              }}
-            >
-              Repeat clip
-            </button>
-            <button
-              type="button"
-              className={btn}
-              disabled={!selected?.buffer || !selectedClipId}
-              onClick={() => {
-                if (!selected || !selectedClipId) return
-                pushHistory()
-                setTracks((prev) =>
-                  mapTrack(prev, selected.id, (t) => setClipFades(t, selectedClipId, 0.15, 0.25)),
-                )
-                setOk('Fades on selected clip')
-              }}
-            >
-              Fade clip
-            </button>
-            <button
-              type="button"
-              className={btn}
-              disabled={!selected?.buffer || !(selected.automation || []).length}
-              onClick={() => {
-                if (!selected) return
-                pushHistory()
-                setTracks((prev) => mapTrack(prev, selected.id, clearAutomation))
-                setOk('Cleared volume automation')
-              }}
-            >
-              Clear automation
-            </button>
+          </div>
+          <div className="grid gap-1.5 sm:grid-cols-2">
+            <details className="rounded-lg border border-[#1A232C] bg-[#0A1016] px-2.5 py-1.5">
+              <summary className="cursor-pointer text-[11px] uppercase tracking-[0.12em] text-[#8DEBFF]">
+                Volume &amp; dynamics
+              </summary>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <label className="inline-flex items-center gap-2 text-xs text-[#B8C4CF]">
+                  Section {Math.round(sectionLevel * 100)}%
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={sectionLevel}
+                    onChange={(e) => setSectionLevel(Number(e.target.value))}
+                    className="w-28"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!selected?.buffer}
+                  onClick={() =>
+                    editRange((t) => setVolumeInRange(t, rangeRef.current.start, rangeRef.current.end, sectionLevel), `Section volume ${Math.round(sectionLevel * 100)}% on this lane`)
+                  }
+                >
+                  Set section volume
+                </button>
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!selected?.buffer || !isVoiceRole(selected.role)}
+                  onClick={() => {
+                    if (!selected) return
+                    const cur = rangeRef.current
+                    if (cur.end - cur.start < 0.05) {
+                      setError('Drag a range, then Comp this take')
+                      return
+                    }
+                    pushHistory()
+                    setTracks((prev) => assignCompRange(prev, selected.id, cur.start, cur.end))
+                    setOk(`${selected.name} covers ${formatClock(cur.start)}–${formatClock(cur.end)}`)
+                  }}
+                >
+                  Comp this take
+                </button>
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!selected?.buffer}
+                  onClick={() => editRange((t) => setVolumeInRange(t, rangeRef.current.start, rangeRef.current.end, 0), 'Ducked section to silence (automation)')}
+                >
+                  <VolumeX size={12} /> Mute section
+                </button>
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!selected?.buffer || !(selected.automation || []).length}
+                  onClick={() => {
+                    if (!selected) return
+                    pushHistory()
+                    setTracks((prev) => mapTrack(prev, selected.id, clearAutomation))
+                    setOk('Cleared volume automation')
+                  }}
+                >
+                  Clear automation
+                </button>
+              </div>
+            </details>
+            <details className="rounded-lg border border-[#1A232C] bg-[#0A1016] px-2.5 py-1.5">
+              <summary className="cursor-pointer text-[11px] uppercase tracking-[0.12em] text-[#8DEBFF]">
+                Timing
+              </summary>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!selected?.buffer}
+                  onClick={() => {
+                    if (!selected) return
+                    pushHistory()
+                    setTracks((prev) => mapTrack(prev, selected.id, (t) => joinAdjacentClips(t, playheadRef.current)))
+                    setOk('Joined adjacent clips')
+                  }}
+                >
+                  Join
+                </button>
+              </div>
+            </details>
+            <details className="rounded-lg border border-[#1A232C] bg-[#0A1016] px-2.5 py-1.5">
+              <summary className="cursor-pointer text-[11px] uppercase tracking-[0.12em] text-[#8DEBFF]">
+                Trim &amp; delete
+              </summary>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!selected?.buffer}
+                  onClick={() => editRange((t) => cropToRange(t, rangeRef.current.start, rangeRef.current.end), 'Cropped to selection')}
+                >
+                  Crop to selection
+                </button>
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!selected?.buffer}
+                  onClick={() => editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, false), 'Cut hole (gap stays)')}
+                >
+                  Cut hole
+                </button>
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!selected?.buffer}
+                  onClick={() => editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, true), 'Ripple delete')}
+                >
+                  Ripple delete
+                </button>
+              </div>
+            </details>
+            <details className="rounded-lg border border-[#1A232C] bg-[#0A1016] px-2.5 py-1.5">
+              <summary className="cursor-pointer text-[11px] uppercase tracking-[0.12em] text-[#8DEBFF]">
+                Clips
+              </summary>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!selected?.buffer || !selectedClipId}
+                  onClick={() => {
+                    if (!selected || !selectedClipId) return
+                    const clip = clipsOf(selected).find((c) => c.id === selectedClipId) || clipsOf(selected)[0]
+                    if (clip) clipClipboardRef.current = { ...clip }
+                    setOk('Copied clip')
+                  }}
+                >
+                  Copy clip
+                </button>
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!selected?.buffer || !clipClipboardRef.current}
+                  onClick={() => {
+                    const clip = clipClipboardRef.current
+                    if (!selected || !clip) return
+                    pushHistory()
+                    setTracks((prev) => mapTrack(prev, selected.id, (t) => pasteClip(t, clip, playheadRef.current)))
+                    setOk('Pasted clip at playhead')
+                  }}
+                >
+                  Paste at playhead
+                </button>
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!selected?.buffer || !selectedClipId}
+                  onClick={() => {
+                    if (!selected || !selectedClipId) return
+                    pushHistory()
+                    setTracks((prev) => mapTrack(prev, selected.id, (t) => duplicateClipAt(t, selectedClipId)))
+                    setOk('Repeated clip after itself')
+                  }}
+                >
+                  Repeat clip
+                </button>
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={!selected?.buffer || !selectedClipId}
+                  onClick={() => {
+                    if (!selected || !selectedClipId) return
+                    pushHistory()
+                    setTracks((prev) =>
+                      mapTrack(prev, selected.id, (t) => setClipFades(t, selectedClipId, 0.15, 0.25)),
+                    )
+                    setOk('Fades on selected clip')
+                  }}
+                >
+                  Fade clip
+                </button>
+              </div>
+            </details>
           </div>
         </div>
 
@@ -4239,7 +4330,21 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             </button>
           </div>
         </div>
+        </>
+        )}
 
+        {showPublish && !showAll && (
+          <div className="rounded-xl border border-[#1A232C] bg-[#0A1016] px-3 py-2 text-xs text-[#A9B8C6]">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Ready to export</p>
+            <p className="mt-1">
+              {hasAudio
+                ? `Session ${durationLabel}${loudness && Number.isFinite(loudness.lufs) ? ` · ${loudness.lufs.toFixed(1)} LUFS (target ${PODCAST_LUFS})` : ''}${cameraClips.length ? ` · ${cameraClips.length} picture clip${cameraClips.length === 1 ? '' : 's'}` : ''}. Save the mix below, then use the Publish action above.`
+                : 'No audio yet — record or import a take in the earlier stages before exporting.'}
+            </p>
+          </div>
+        )}
+
+        {showPublish && (
         <div className="flex flex-wrap gap-2 pt-1 border-t border-[#27313B]">
           <button
             type="button"
@@ -4307,14 +4412,17 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             {busy?.includes('MP4') ? busy : 'Download MP4 (picture + master mix)'}
           </button>
         </div>
+        )}
 
         {error && <p className="text-sm text-red-300">{error}</p>}
         {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
+        {(showAll || showEdit) && (
         <p className="text-[11px] text-[#A9B8C6]">
           After the mix lays the next person at the end of the session. After my last take is a pickup. Cue mix plays live from the other lanes — no bounce before Record. Record capture starts with preroll and trims to punch. Two mics auto-mute the quieter lane (recordings keep rolling). Isolate uses RNNoise on the insert rack. Cam on a voice card is a real local preview; Record also writes a parallel camera file on the same clock (autosaved in this browser, not episode audio_url). Linked moves can nudge picture; Unlinked edits audio and video apart. A broken-sync badge shows if in-points drift. Punch with Cam off lays new audio under existing picture. Preview is live cameras; Program is punched/edited output (titles, B-roll, stingers, keyframes, dissolves, color). Host / Guest / PIP is the Program scene — Cut or Fade takes Preview to Program. Stinger is a black or title flash on the picture clock. Keyframes move opacity and position on the selected clip. Lower third and B-roll sit on the picture lane. Dissolve overlaps the next clip. Color is a non-destructive insert. Chapters (C) tick on the camera lane. V splits picture; J/K/L is the playhead. If this browser runs out of space, takes still save and you are told to download the camera files. Remote guest can send live camera on the same WebRTC peer, plus a local camera backup if the peer is thin. Download A-roll / PIP follows edited clip offsets and encodes as fast as this computer can (WebCodecs); the public feed stays audio. A picks the default audible take; Comp assigns a range to another take; L layers. Drag a range on the music lane to duck without a second track. Export can match −16 LUFS; stems zip is a local download. Mix is hosted on your site (Supabase media). Public feed{' '}
           <code className="text-[#8DEBFF]">/podcast/rss.xml</code> powers Apple Podcasts, Spotify for
           Podcasters, and Amazon Music — submit that URL once; new published mixes appear automatically.
         </p>
+        )}
       </div>
 
       <RecordingBooth

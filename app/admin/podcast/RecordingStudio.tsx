@@ -2,21 +2,26 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { CheckCircle2, Circle, Mic2, Plus, Trash2 } from 'lucide-react'
+import { CheckCircle2, Circle } from 'lucide-react'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
+import { StudioStageBar } from '@/components/podcast/studio-stage-bar'
+import { EpisodePlan, type QueueFilter } from '@/components/podcast/episode-plan'
 import { measureAudioDuration, uploadPodcastMedia } from '@/lib/podcast/media-upload'
 import { checkFeedCompliance } from '@/lib/podcast/compliance'
+import { type StudioStage } from '@/lib/podcast/stage'
 import type {
   ContentTopic,
   EpisodeStatus,
-  EpisodeType,
-  EpisodeVisibility,
   PodcastChapter,
   PodcastEpisode,
 } from '@/lib/studio/types'
 import { EPISODE_PIPELINE } from '@/lib/studio/types'
 
-type QueueFilter = 'planned' | 'needs_audio' | 'all'
+/** Editor mounted with an optional `stage` prop the audio-editor engineer is adding.
+ *  Typed here so passing `stage` stays type-safe before that prop lands. */
+const StagedAudioEditor = PodcastAudioEditor as (
+  props: React.ComponentProps<typeof PodcastAudioEditor> & { stage?: StudioStage },
+) => React.ReactElement
 
 type Props = {
   episodes: PodcastEpisode[]
@@ -35,6 +40,7 @@ export function RecordingStudio({
   onSelect,
   onEpisodesChange,
 }: Props) {
+  const [stage, setStage] = useState<StudioStage>('plan')
   const [filter, setFilter] = useState<QueueFilter>('planned')
   const [creating, setCreating] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -311,452 +317,194 @@ export function RecordingStudio({
     void saveEpisode({ show_notes }, 'Talking points added to the script')
   }
 
+  const blockersText = compliance && !compliance.ok
+    ? compliance.blockers.map((b) => b.detail || b.label).join('; ')
+    : null
+
   return (
     <div className="space-y-4">
-      <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-4">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Production room</p>
-          <p className="text-sm text-[#B8C4CF] mt-1">
-            Pull a planned episode, write the show, record takes per person, mix, and publish — all in this room.
-            Recording, punch-in, effects, and mixdown run in Chrome on this computer. Host and Guest can share one mic
-            on a take, or each take a local mic and land on the same punch. Two mics follow the talker (quieter lane
-            mutes; both recordings stay). Cam on a voice card is a local 720p preview; Record can write a parallel
-            camera file. A-roll / PIP downloads encode as fast as this computer can. RSS publish stays the audio mix.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-1">
-          {([
-            ['planned', 'Planned'],
-            ['needs_audio', 'Needs audio'],
-            ['all', 'All episodes'],
-          ] as const).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setFilter(id)}
-              className={`px-3 py-1.5 rounded-lg text-sm ${
-                filter === id ? 'bg-[#1A232C] text-[#8DEBFF]' : 'text-[#B8C4CF] hover:bg-[#1A232C]'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        <div className="grid lg:grid-cols-[1.2fr_1fr] gap-4">
-          <div className="space-y-3">
-            <label className="block">
-              <span className="block text-[11px] uppercase tracking-[0.16em] text-[#A9B8C6] mb-1">
-                Open a planned episode
-              </span>
-              <select
-                value={selectedId}
-                onChange={(e) => onSelect(e.target.value)}
-                className={input}
-              >
-                <option value="">Select an episode…</option>
-                {queuedEpisodes.map((ep) => (
-                  <option key={ep.id} value={ep.id}>
-                    {ep.title}
-                    {ep.episode_number != null ? ` · S${ep.season}E${ep.episode_number}` : ''}
-                    {` · ${ep.status}`}
-                    {ep.audio_url ? ' · has audio' : ' · needs audio'}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {plannedTopics.length > 0 && (
-              <div>
-                <p className="text-[11px] uppercase tracking-[0.16em] text-[#A9B8C6] mb-2">
-                  Planned topics without an episode
-                </p>
-                <div className="space-y-2 max-h-40 overflow-y-auto">
-                  {plannedTopics.map((topic) => (
-                    <button
-                      key={topic.id}
-                      type="button"
-                      disabled={creating}
-                      onClick={() => void openFromTopic(topic)}
-                      className="w-full text-left rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 hover:border-[#53D6FF]"
-                    >
-                      <p className="text-sm text-[#F6FAFC]">{topic.title}</p>
-                      <p className="text-[11px] text-[#A9B8C6]">
-                        {topic.status}
-                        {topic.scheduled_on ? ` · ${topic.scheduled_on}` : ''}
-                        {topic.talking_points?.length ? ` · ${topic.talking_points.length} talking points` : ''}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-xl border border-[#27313B] bg-[#05070A] p-4 space-y-3">
-            <p className="text-sm text-[#F6FAFC]">Write a new episode</p>
-            <input
-              value={draftTitle}
-              onChange={(e) => setDraftTitle(e.target.value)}
-              placeholder="Episode title"
-              className={input}
-            />
-            <textarea
-              value={draftSummary}
-              onChange={(e) => setDraftSummary(e.target.value)}
-              placeholder="One-line summary for the public page and RSS"
-              rows={2}
-              className={input}
-            />
-            <textarea
-              value={draftNotes}
-              onChange={(e) => setDraftNotes(e.target.value)}
-              placeholder="Show notes / recording script"
-              rows={4}
-              className={input}
-            />
-            <input
-              value={draftGuest}
-              onChange={(e) => setDraftGuest(e.target.value)}
-              placeholder="Guest name (optional)"
-              className={input}
-            />
-            <select
-              value={draftTopicId}
-              onChange={(e) => setDraftTopicId(e.target.value)}
-              className={input}
-            >
-              <option value="">No planned topic</option>
-              {topics.map((topic) => (
-                <option key={topic.id} value={topic.id}>{topic.title}</option>
-              ))}
-            </select>
-            <button
-              type="button"
-              disabled={creating}
-              onClick={() => void writeNewEpisode()}
-              className="w-full inline-flex items-center justify-center gap-2 rounded-lg bg-[#53D6FF] text-[#061016] px-4 py-2 text-sm font-medium disabled:opacity-40"
-            >
-              <Mic2 size={14} />
-              {creating ? 'Opening…' : 'Create & open in studio'}
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {error && <p className="text-sm text-red-300">{error}</p>}
-      {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
-
       {!episode ? (
-        <div className="rounded-2xl border border-dashed border-[#27313B] bg-[#151B22] px-5 py-16 text-center">
-          <p className="text-sm text-[#B8C4CF]">
-            Pull a planned episode, grab a studio topic, or write a new one to start recording.
-          </p>
-        </div>
+        // No episode loaded yet: show the Plan queue so the host can pick or write one.
+        <>
+          {error && <p className="text-sm text-red-300">{error}</p>}
+          {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
+          <EpisodePlan
+            topics={topics}
+            queuedEpisodes={queuedEpisodes}
+            plannedTopics={plannedTopics}
+            selectedId={selectedId}
+            filter={filter}
+            creating={creating}
+            onFilterChange={setFilter}
+            onSelect={onSelect}
+            onOpenTopic={(topic) => void openFromTopic(topic)}
+            draftTitle={draftTitle}
+            draftSummary={draftSummary}
+            draftNotes={draftNotes}
+            draftGuest={draftGuest}
+            draftTopicId={draftTopicId}
+            onDraftTitle={setDraftTitle}
+            onDraftSummary={setDraftSummary}
+            onDraftNotes={setDraftNotes}
+            onDraftGuest={setDraftGuest}
+            onDraftTopicId={setDraftTopicId}
+            onCreate={() => void writeNewEpisode()}
+            episode={null}
+            onSave={(patch, label) => void saveEpisode(patch, label)}
+            onUploadCover={(file) => void uploadCover(file)}
+            uploadingCover={uploadingCover}
+            linkedTopic={linkedTopic}
+            onInsertTalkingPoints={insertTalkingPoints}
+            chapterStart={chapterStart}
+            chapterTitle={chapterTitle}
+            onChapterStart={setChapterStart}
+            onChapterTitle={setChapterTitle}
+            onAddChapter={addChapter}
+            onRemoveChapter={removeChapter}
+            formatMs={formatMs}
+            checks={[]}
+            complianceOk
+            blockersText={null}
+            toLocalInput={toLocalInput}
+          />
+        </>
       ) : (
         <>
-          <section key={episode.id} className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-4">
-            <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
-              <input
-                defaultValue={episode.title}
-                onBlur={(e) => {
-                  const title = e.target.value.trim()
-                  if (title && title !== episode.title) void saveEpisode({ title })
-                }}
-                className="flex-1 bg-transparent text-xl font-bold text-[#F6FAFC] focus:outline-none"
-              />
-              <div className="flex flex-wrap gap-2">
-                <select
-                  value={episode.status}
-                  onChange={(e) => changeStatus(e.target.value as EpisodeStatus)}
-                  className="rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
-                >
-                  {EPISODE_PIPELINE.map((status) => (
-                    <option key={status} value={status}>{status}</option>
-                  ))}
-                </select>
-                <Link
-                  href={`/admin/podcast/${episode.id}`}
-                  className="px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
-                >
-                  Episode page
-                </Link>
+          {/* Persistent header: identity + stage switcher, always visible across stages. */}
+          <StudioStageBar episode={episode} stage={stage} onStageChange={setStage} />
+
+          {/* Status control + jump to the standalone episode page, on every stage. */}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <select
+              value={episode.status}
+              onChange={(e) => changeStatus(e.target.value as EpisodeStatus)}
+              className="rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]"
+            >
+              {EPISODE_PIPELINE.map((status) => (
+                <option key={status} value={status}>{status}</option>
+              ))}
+            </select>
+            <Link
+              href={`/admin/podcast/${episode.id}`}
+              className="rounded-lg border border-[#27313B] px-3 py-2 text-sm text-[#B8C4CF]"
+            >
+              Episode page
+            </Link>
+          </div>
+
+          {error && <p className="text-sm text-red-300">{error}</p>}
+          {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
+          {saving && <p className="text-xs text-[#A9B8C6]">Saving…</p>}
+
+          {/* Plan stage: queue + all metadata + checklist. */}
+          {stage === 'plan' && (
+            <EpisodePlan
+              topics={topics}
+              queuedEpisodes={queuedEpisodes}
+              plannedTopics={plannedTopics}
+              selectedId={selectedId}
+              filter={filter}
+              creating={creating}
+              onFilterChange={setFilter}
+              onSelect={onSelect}
+              onOpenTopic={(topic) => void openFromTopic(topic)}
+              draftTitle={draftTitle}
+              draftSummary={draftSummary}
+              draftNotes={draftNotes}
+              draftGuest={draftGuest}
+              draftTopicId={draftTopicId}
+              onDraftTitle={setDraftTitle}
+              onDraftSummary={setDraftSummary}
+              onDraftNotes={setDraftNotes}
+              onDraftGuest={setDraftGuest}
+              onDraftTopicId={setDraftTopicId}
+              onCreate={() => void writeNewEpisode()}
+              episode={episode}
+              onSave={(patch, label) => void saveEpisode(patch, label)}
+              onUploadCover={(file) => void uploadCover(file)}
+              uploadingCover={uploadingCover}
+              linkedTopic={linkedTopic}
+              onInsertTalkingPoints={insertTalkingPoints}
+              chapterStart={chapterStart}
+              chapterTitle={chapterTitle}
+              onChapterStart={setChapterStart}
+              onChapterTitle={setChapterTitle}
+              onAddChapter={addChapter}
+              onRemoveChapter={removeChapter}
+              formatMs={formatMs}
+              checks={checks}
+              complianceOk={Boolean(compliance?.ok)}
+              blockersText={blockersText}
+              toLocalInput={toLocalInput}
+            />
+          )}
+
+          {/* Publish stage: compliance summary + publish CTA, on top of the mounted editor. */}
+          {stage === 'publish' && (
+            <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm font-medium text-[#F6FAFC]">Ready to publish?</p>
                 <button
                   type="button"
                   onClick={() => void publish()}
                   disabled={episode.status === 'published' || !compliance?.ok}
-                  title={compliance && !compliance.ok ? compliance.blockers.map((b) => b.detail || b.label).join('; ') : undefined}
-                  className="px-3 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium disabled:opacity-40"
+                  title={blockersText || undefined}
+                  className="rounded-lg bg-[#53D6FF] px-4 py-2 text-sm font-medium text-[#061016] disabled:opacity-40"
                 >
                   {episode.status === 'published' ? 'Live' : 'Publish now'}
                 </button>
               </div>
-            </div>
-
-            <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_18rem] gap-4 items-start">
-              <div className="min-w-0">
-                <PodcastAudioEditor
-                  key={episode.id}
-                  episodeId={episode.id}
-                  audioUrl={episode.audio_url}
-                  title={episode.title}
-                  onExported={saveMix}
-                  onPublished={publish}
-                  onMarkChapter={markChapterAt}
-                  chapters={episode.chapters}
-                />
-              </div>
-              <aside className="lg:sticky lg:top-20 space-y-3">
-                <Field label="Show notes / recording script">
-                  <textarea
-                    defaultValue={episode.show_notes || ''}
-                    rows={16}
-                    onBlur={(e) => void saveEpisode({ show_notes: e.target.value })}
-                    className={input + ' min-h-[16rem]'}
-                  />
-                </Field>
-                {linkedTopic && (
-                  <div className="rounded-xl border border-[#27313B] bg-[#05070A] p-4">
-                    <div className="flex items-center justify-between gap-3 mb-2">
-                      <p className="text-sm text-[#F6FAFC]">Cues from {linkedTopic.title}</p>
-                      <button type="button" onClick={insertTalkingPoints} className="text-sm text-[#53D6FF]">
-                        Insert
-                      </button>
-                    </div>
-                    {linkedTopic.talking_points?.length ? (
-                      <ol className="list-decimal pl-5 space-y-1 text-sm text-[#B8C4CF]">
-                        {linkedTopic.talking_points.map((point) => (
-                          <li key={point}>{point}</li>
-                        ))}
-                      </ol>
+              {blockersText && (
+                <p className="mb-3 text-xs text-red-300">Publish blocked: {blockersText}</p>
+              )}
+              <ul className="grid gap-2 sm:grid-cols-2">
+                {checks.map((item) => (
+                  <li
+                    key={item.label}
+                    className={`flex items-center gap-2 text-sm ${
+                      item.required && !item.ok ? 'text-red-300' : 'text-[#B8C4CF]'
+                    }`}
+                  >
+                    {item.ok ? (
+                      <CheckCircle2 size={16} className="text-[#53D6FF]" />
                     ) : (
-                      <p className="text-sm text-[#A9B8C6]">This topic has no talking points yet.</p>
+                      <Circle size={16} className={item.required ? 'text-red-400' : 'text-[#27313B]'} />
                     )}
-                  </div>
-                )}
-              </aside>
-            </div>
-
-            <details className="rounded-xl border border-[#27313B] bg-[#05070A] px-4 py-3">
-              <summary className="cursor-pointer text-sm text-[#B8C4CF]">Episode details</summary>
-              <div className="grid md:grid-cols-2 gap-3 mt-4">
-              <Field label="Summary">
-                <textarea
-                  defaultValue={episode.summary || ''}
-                  rows={2}
-                  onBlur={(e) => void saveEpisode({ summary: e.target.value })}
-                  className={input}
-                />
-              </Field>
-              <Field label="Guest">
-                <input
-                  defaultValue={episode.guest_name || ''}
-                  onBlur={(e) => void saveEpisode({ guest_name: e.target.value.trim() || null })}
-                  className={input}
-                />
-              </Field>
-              <Field label="Season">
-                <input
-                  type="number"
-                  defaultValue={episode.season}
-                  onBlur={(e) => void saveEpisode({ season: Number(e.target.value) })}
-                  className={input}
-                />
-              </Field>
-              <Field label="Episode number">
-                <input
-                  type="number"
-                  defaultValue={episode.episode_number ?? ''}
-                  onBlur={(e) => void saveEpisode({ episode_number: e.target.value })}
-                  className={input}
-                />
-              </Field>
-              <Field label="Type">
-                <select
-                  value={episode.episode_type || 'full'}
-                  onChange={(e) => void saveEpisode({ episode_type: e.target.value as EpisodeType })}
-                  className={input}
-                >
-                  <option value="full">full</option>
-                  <option value="trailer">trailer</option>
-                  <option value="bonus">bonus</option>
-                </select>
-              </Field>
-              <Field label="Visibility">
-                <select
-                  value={episode.visibility || 'public'}
-                  onChange={(e) => void saveEpisode({ visibility: e.target.value as EpisodeVisibility })}
-                  className={input}
-                >
-                  <option value="public">public</option>
-                  <option value="unlisted">unlisted</option>
-                  <option value="private">private</option>
-                </select>
-              </Field>
-              <Field label="Studio topic">
-                <select
-                  value={episode.topic_id || ''}
-                  onChange={(e) => void saveEpisode({ topic_id: e.target.value || null })}
-                  className={input}
-                >
-                  <option value="">Unlinked</option>
-                  {topics.map((topic) => (
-                    <option key={topic.id} value={topic.id}>{topic.title}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Schedule publish">
-                <input
-                  type="datetime-local"
-                  defaultValue={toLocalInput(episode.scheduled_for)}
-                  onBlur={(e) => {
-                    const iso = e.target.value ? new Date(e.target.value).toISOString() : null
-                    void saveEpisode({
-                      scheduled_for: iso,
-                      status: iso && episode.status === 'draft' ? 'scheduled' : episode.status,
-                    })
-                  }}
-                  className={input}
-                />
-              </Field>
-              <Field label="Slug">
-                <input
-                  defaultValue={episode.slug}
-                  onBlur={(e) => {
-                    const slug = e.target.value.trim()
-                    if (slug && slug !== episode.slug) void saveEpisode({ slug })
-                  }}
-                  className={input}
-                />
-              </Field>
-              <label className="flex items-center gap-2 text-sm text-[#B8C4CF] md:col-span-2">
-                <input
-                  type="checkbox"
-                  checked={Boolean(episode.explicit)}
-                  onChange={(e) => void saveEpisode({ explicit: e.target.checked })}
-                />
-                Mark episode explicit
-              </label>
-              <Field label="Guest bio">
-                <textarea
-                  defaultValue={episode.guest_bio || ''}
-                  rows={3}
-                  onBlur={(e) => void saveEpisode({ guest_bio: e.target.value })}
-                  className={input}
-                />
-              </Field>
-              <Field label="Transcript">
-                <textarea
-                  defaultValue={episode.transcript || ''}
-                  rows={3}
-                  onBlur={(e) => void saveEpisode({ transcript: e.target.value })}
-                  className={input}
-                />
-              </Field>
-              <Field label="Keywords">
-                <input
-                  defaultValue={(episode.keywords || []).join(', ')}
-                  onBlur={(e) => {
-                    const keywords = e.target.value.split(',').map((k) => k.trim()).filter(Boolean)
-                    void saveEpisode({ keywords })
-                  }}
-                  className={input}
-                />
-              </Field>
-              <Field label="Cover art">
-                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF] cursor-pointer">
-                  {uploadingCover ? 'Uploading…' : episode.cover_url ? 'Replace cover' : 'Upload cover'}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0]
-                      if (file) void uploadCover(file)
-                    }}
-                  />
-                </label>
-                {episode.cover_url && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={episode.cover_url} alt="" className="mt-2 h-16 w-16 rounded-lg object-cover border border-[#27313B]" />
-                )}
-              </Field>
-            </div>
-
-            <div className="mt-4">
-              <p className="text-sm font-medium text-[#F6FAFC] mb-2">Chapters</p>
-              <ul className="space-y-1 mb-2">
-                {(episode.chapters || []).map((ch, idx) => (
-                  <li key={`${ch.start_ms}-${idx}`} className="flex items-center justify-between gap-2 text-sm text-[#B8C4CF]">
-                    <span>
-                      <span className="text-[#8DEBFF]">{formatMs(ch.start_ms)}</span> — {ch.title}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removeChapter(idx)}
-                      className="inline-flex items-center gap-1 text-xs text-red-300"
-                    >
-                      <Trash2 size={12} /> Remove
-                    </button>
+                    {item.label}
+                    {item.required && !item.ok && (
+                      <span className="text-[10px] uppercase tracking-wide">required</span>
+                    )}
                   </li>
                 ))}
               </ul>
-              <div className="grid md:grid-cols-[120px_1fr_auto] gap-2">
-                <input value={chapterStart} onChange={(e) => setChapterStart(e.target.value)} placeholder="1:30" className={input} />
-                <input value={chapterTitle} onChange={(e) => setChapterTitle(e.target.value)} placeholder="Chapter title" className={input} />
-                <button
-                  type="button"
-                  onClick={addChapter}
-                  className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#53D6FF]"
-                >
-                  <Plus size={14} /> Add
-                </button>
-              </div>
-            </div>
-            </details>
+            </section>
+          )}
 
-            {saving && <p className="text-xs text-[#A9B8C6]">Saving…</p>}
-          </section>
-
-          <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5">
-            <p className="text-sm font-medium text-[#F6FAFC] mb-1">Ready to publish?</p>
-            {compliance && !compliance.ok && (
-              <p className="text-xs text-red-300 mb-3">
-                Publish blocked: {compliance.blockers.map((b) => b.detail || b.label).join('; ')}
-              </p>
-            )}
-            <ul className="grid sm:grid-cols-2 gap-2">
-              {checks.map((item) => (
-                <li
-                  key={item.label}
-                  className={`flex items-center gap-2 text-sm ${item.required && !item.ok ? 'text-red-300' : 'text-[#B8C4CF]'}`}
-                >
-                  {item.ok
-                    ? <CheckCircle2 size={16} className="text-[#53D6FF]" />
-                    : <Circle size={16} className={item.required ? 'text-red-400' : 'text-[#27313B]'} />}
-                  {item.label}
-                  {item.required && !item.ok && <span className="text-[10px] uppercase tracking-wide">required</span>}
-                </li>
-              ))}
-            </ul>
-          </section>
+          {/*
+            Editor stays MOUNTED across record/edit/publish so the live session and
+            recording state are never dropped. During Plan we hide it (never unmount)
+            so the plan metadata gets the full width. The editor renders its own
+            record/edit/publish content from the `stage` prop.
+          */}
+          <div className={stage === 'plan' ? 'hidden' : ''} aria-hidden={stage === 'plan'}>
+            <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5">
+              <StagedAudioEditor
+                episodeId={episode.id}
+                audioUrl={episode.audio_url}
+                title={episode.title}
+                onExported={saveMix}
+                onPublished={publish}
+                onMarkChapter={markChapterAt}
+                chapters={episode.chapters}
+                stage={stage}
+              />
+            </section>
+          </div>
         </>
       )}
     </div>
   )
 }
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="block text-[11px] uppercase tracking-[0.16em] text-[#A9B8C6] mb-1">{label}</span>
-      {children}
-    </label>
-  )
-}
-
-const input = 'w-full rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]'
 
 function normalizeEpisode(raw: PodcastEpisode): PodcastEpisode {
   return {
