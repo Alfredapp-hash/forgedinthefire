@@ -3750,7 +3750,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               </button>
             </div>
           </div>
-          <SessionTimeline {...timelineBoard} rulerOnly showRuler />
+          {/* Shared ruler. gutterLeft matches each track group's left header rail
+              (card pad 10 + card border 1 + rail 160 + rail border 1) so the time
+              axis lines up with the video/audio content columns below. */}
+          <SessionTimeline {...timelineBoard} rulerOnly showRuler gutterLeft={172} />
 
           {people.map((person) => {
             const lane = tracks.filter((t) => t.personId === person.id).sort((a, b) => a.take - b.take)
@@ -4157,111 +4160,164 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                     </div>
                   </div>
                 )}
-                <SessionTimeline {...timelineBoard} personId={person.id} embedded showRuler={false} />
-                {person.kind === 'voice' && person.id === 'guest' && remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest)) ? (
-                  <div className="flex flex-wrap items-start gap-3 pt-1">
-                    <CameraPreview
-                      stream={remoteGuest}
-                      label={`${person.name} camera (live)`}
-                      live={recording}
-                      role="preview"
+                {(() => {
+                  // The audio row — every person renders this.
+                  const audioRow = (
+                    <SessionTimeline {...timelineBoard} personId={person.id} embedded showRuler={false} />
+                  )
+
+                  // Audio-only people (beds / SFX / voices with no camera lane) show
+                  // only the waveform row — no empty video lane above it.
+                  if (person.kind !== 'voice') return audioRow
+
+                  // Live preview for this voice person — remote guest peer or local cam.
+                  const guestLive =
+                    person.id === 'guest' && remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest))
+                  const previewStream = guestLive ? remoteGuest : cameraStreams[person.id] || null
+                  const personCameraClips = cameraClips.filter((c) => c.personId === person.id)
+                  // Show the video row only when this person actually has picture
+                  // (clips) or a live camera to preview — otherwise it is audio-only.
+                  const hasVideoRow = personCameraClips.length > 0 || Boolean(previewStream)
+
+                  // Shared left header column: one swatch + name + role, spanning both
+                  // rows, with the live preview folded in as a small thumbnail. The two
+                  // rows to its right share the same content origin, pxPerSec, and scroll,
+                  // so a vertical line at any x hits the same moment in video and audio.
+                  const trackHeader = (
+                    <div
+                      className="shrink-0 w-40 flex flex-col gap-2 border-r border-divider px-2.5 py-2"
+                      style={{ background: lc?.laneBg }}
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: lc?.base ?? person.color }} />
+                        <span className="studio-type-label text-ice truncate">{person.name}</span>
+                      </span>
+                      <span className="studio-type-label text-silver-label normal-case tracking-normal">
+                        {lc?.id ?? 'track'} · video + audio
+                      </span>
+                      {previewStream ? (
+                        <CameraPreview
+                          stream={previewStream}
+                          label={guestLive ? `${person.name} (live)` : person.name}
+                          live={recording}
+                          role="preview"
+                          compact
+                        />
+                      ) : (
+                        <span className="studio-type-label text-silver-label normal-case tracking-normal">
+                          {person.id === 'guest' ? 'Camera off — waiting for peer' : 'Camera off'}
+                        </span>
+                      )}
+                    </div>
+                  )
+
+                  const videoRow = (
+                    <CameraLane
+                      hideChrome
+                      clips={personCameraClips}
+                      playhead={playhead}
+                      pxPerSec={zoom}
+                      durationSec={boardDuration}
+                      scrollLeft={timelineScroll}
+                      onScrollLeft={setTimelineScroll}
+                      color={person.color}
+                      selectedId={selectedCamClipId}
+                      onSelect={setSelectedCamClipId}
+                      onPlayhead={setHead}
+                      onMoveClip={moveSelectedCamera}
+                      onTrimClip={(clipId, edge, time) => {
+                        setCameraClips((prev) => trimCameraClip(prev, clipId, edge, time))
+                      }}
+                      onRange={(start, end) => setRange((prev) => ({ ...prev, start, end }))}
+                      range={range}
+                      linked={personAvLinked(person)}
+                      onLinkedChange={(next) =>
+                        setPeople((prev) => prev.map((p) => (p.id === person.id ? { ...p, avLinked: next } : p)))
+                      }
+                      drift={avDriftForPerson(tracks, cameraClips, person.id)}
+                      broken={avBroken(tracks, cameraClips, person)}
+                      onSnapSync={() => {
+                        const drift = avDriftForPerson(tracks, cameraClips, person.id)
+                        if (!drift) return
+                        pushHistory()
+                        setCameraClips((prev) => snapCamerasToAudio(prev, drift))
+                        setOk(`Snapped ${person.name} picture to the audio in-point — sync corrected`)
+                      }}
+                      disabled={Boolean(busy) || recording}
+                      onSplit={splitSelectedCameraAtPlayhead}
+                      onCutHole={(ripple) => editCameraRange(ripple)}
+                      onTrimEdge={(edge) => {
+                        if (!selectedCamClipId) return
+                        pushHistory()
+                        setCameraClips((prev) => trimCameraClip(prev, selectedCamClipId, edge, playheadRef.current))
+                        setOk(edge === 'in' ? 'Trimmed picture in at playhead' : 'Trimmed picture out at playhead')
+                      }}
+                      onSlip={(delta) => {
+                        if (!selectedCamClipId) return
+                        pushHistory()
+                        setCameraClips((prev) => slipCameraClip(prev, selectedCamClipId, delta))
+                        setOk('Slipped picture (timeline seat stays)')
+                      }}
+                      onMute={() => {
+                        if (!selectedCamClipId) return
+                        pushHistory()
+                        setCameraClips((prev) => toggleCameraMute(prev, selectedCamClipId))
+                        setOk('Toggled picture mute — audio unchanged')
+                      }}
+                      onJoin={() => {
+                        pushHistory()
+                        setCameraClips((prev) => joinAdjacentCamera(prev, playheadRef.current, person.id))
+                        setOk('Joined adjacent picture clips')
+                      }}
+                      onDissolve={() => {
+                        if (!selectedCamClipId) return
+                        pushHistory()
+                        setCameraClips((prev) => dissolveCameraPair(prev, selectedCamClipId, 0.5))
+                        setOk('Dissolved into the next picture clip — audio unchanged')
+                      }}
+                      onStinger={(where) => addStinger(person.id, where)}
+                      markers={pictureMarkers}
+                      edl={switchEdl}
+                      switchParticipants={switchParticipants}
+                      onAddSwitch={(atSec, mainId) =>
+                        setSwitchEdl((e) => addSwitch(e, { atSec, mainId, reason: 'manual' }))
+                      }
+                      onMoveSwitch={(id, toSec) => setSwitchEdl((e) => moveSwitch(e, id, toSec))}
+                      onRemoveSwitch={(id) => setSwitchEdl((e) => removeSwitch(e, id))}
+                      onSetSwitchMain={(id, mainId) => setSwitchEdl((e) => setSwitchMain(e, id, mainId))}
+                      audioForPerson={audioForPerson}
                     />
-                    <p className="max-w-xs text-[11px] text-[#7C8B97]">
-                      Inbound guest camera on the same WebRTC peer. Record writes a separate camera file
-                      on the same punch — not muxed into the take. Cam off punches audio under existing
-                      picture. Not written to the RSS mix.
-                    </p>
-                  </div>
-                ) : person.kind === 'voice' && cameraStreams[person.id] ? (
-                  <div className="flex flex-wrap items-start gap-3 pt-1">
-                    <CameraPreview
-                      stream={cameraStreams[person.id]}
-                      label={`${person.name} camera`}
-                      live={recording}
-                      role="preview"
-                    />
-                    <p className="max-w-xs text-[11px] text-[#7C8B97]">
-                      Local preview, capped ~720p. Record writes a separate camera file on the same punch.
-                      Cam off + Record is punch-under-picture — new audio, same video. Not muxed, not RSS.
-                    </p>
-                  </div>
-                ) : null}
-                {person.kind === 'voice' && (
-                  <CameraLane
-                    clips={cameraClips.filter((c) => c.personId === person.id)}
-                    playhead={playhead}
-                    pxPerSec={zoom}
-                    durationSec={boardDuration}
-                    scrollLeft={timelineScroll}
-                    onScrollLeft={setTimelineScroll}
-                    color={person.color}
-                    selectedId={selectedCamClipId}
-                    onSelect={setSelectedCamClipId}
-                    onPlayhead={setHead}
-                    onMoveClip={moveSelectedCamera}
-                    onTrimClip={(clipId, edge, time) => {
-                      setCameraClips((prev) => trimCameraClip(prev, clipId, edge, time))
-                    }}
-                    onRange={(start, end) => setRange((prev) => ({ ...prev, start, end }))}
-                    range={range}
-                    linked={personAvLinked(person)}
-                    onLinkedChange={(next) =>
-                      setPeople((prev) => prev.map((p) => (p.id === person.id ? { ...p, avLinked: next } : p)))
-                    }
-                    drift={avDriftForPerson(tracks, cameraClips, person.id)}
-                    broken={avBroken(tracks, cameraClips, person)}
-                    onSnapSync={() => {
-                      const drift = avDriftForPerson(tracks, cameraClips, person.id)
-                      if (!drift) return
-                      pushHistory()
-                      setCameraClips((prev) => snapCamerasToAudio(prev, drift))
-                      setOk(`Snapped ${person.name} picture to the audio in-point — sync corrected`)
-                    }}
-                    disabled={Boolean(busy) || recording}
-                    onSplit={splitSelectedCameraAtPlayhead}
-                    onCutHole={(ripple) => editCameraRange(ripple)}
-                    onTrimEdge={(edge) => {
-                      if (!selectedCamClipId) return
-                      pushHistory()
-                      setCameraClips((prev) => trimCameraClip(prev, selectedCamClipId, edge, playheadRef.current))
-                      setOk(edge === 'in' ? 'Trimmed picture in at playhead' : 'Trimmed picture out at playhead')
-                    }}
-                    onSlip={(delta) => {
-                      if (!selectedCamClipId) return
-                      pushHistory()
-                      setCameraClips((prev) => slipCameraClip(prev, selectedCamClipId, delta))
-                      setOk('Slipped picture (timeline seat stays)')
-                    }}
-                    onMute={() => {
-                      if (!selectedCamClipId) return
-                      pushHistory()
-                      setCameraClips((prev) => toggleCameraMute(prev, selectedCamClipId))
-                      setOk('Toggled picture mute — audio unchanged')
-                    }}
-                    onJoin={() => {
-                      pushHistory()
-                      setCameraClips((prev) => joinAdjacentCamera(prev, playheadRef.current, person.id))
-                      setOk('Joined adjacent picture clips')
-                    }}
-                    onDissolve={() => {
-                      if (!selectedCamClipId) return
-                      pushHistory()
-                      setCameraClips((prev) => dissolveCameraPair(prev, selectedCamClipId, 0.5))
-                      setOk('Dissolved into the next picture clip — audio unchanged')
-                    }}
-                    onStinger={(where) => addStinger(person.id, where)}
-                    markers={pictureMarkers}
-                    edl={switchEdl}
-                    switchParticipants={switchParticipants}
-                    onAddSwitch={(atSec, mainId) =>
-                      setSwitchEdl((e) => addSwitch(e, { atSec, mainId, reason: 'manual' }))
-                    }
-                    onMoveSwitch={(id, toSec) => setSwitchEdl((e) => moveSwitch(e, id, toSec))}
-                    onRemoveSwitch={(id) => setSwitchEdl((e) => removeSwitch(e, id))}
-                    onSetSwitchMain={(id, mainId) => setSwitchEdl((e) => setSwitchMain(e, id, mainId))}
-                    audioForPerson={audioForPerson}
-                  />
-                )}
+                  )
+
+                  // One cohesive track group: shared left header, then the video lane
+                  // stacked directly on top of the audio lane — tight, no divider break.
+                  // Audio-only voices (no picture, no live camera) skip the video row.
+                  return (
+                    <Panel
+                      elevation="flat"
+                      className="overflow-hidden p-0"
+                      style={{ borderColor: lc?.border, background: lc?.laneBg }}
+                    >
+                      <div className="flex items-stretch">
+                        {trackHeader}
+                        <div className="min-w-0 flex-1 flex flex-col">
+                          {hasVideoRow && (
+                            <div className="border-b border-divider/60">{videoRow}</div>
+                          )}
+                          <div>
+                            <SessionTimeline
+                              {...timelineBoard}
+                              personId={person.id}
+                              embedded
+                              showRuler={false}
+                              flush
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </Panel>
+                  )
+                })()}
                 {person.kind === 'voice' &&
                   cameraClips
                     .filter((c) => c.personId === person.id && c.id === selectedCamClipId)

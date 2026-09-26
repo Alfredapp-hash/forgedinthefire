@@ -68,6 +68,12 @@ type Props = {
   onSetSwitchMain?: (id: string, mainId: string) => void
   /** Waveform source drawn under this person's video lane. Null degrades to bare clips. */
   audioForPerson?: (personId: string) => AudioBuffer | null
+  /**
+   * Suppress the lane's own "Camera takes" header bar so this row can sit flush
+   * inside a unified per-person track group (shared header lives outside).
+   * The status line (file count / broken sync) folds into the toolbar footer.
+   */
+  hideChrome?: boolean
 }
 
 /** Persistent lane hue for a camera person — canonical ids pass through, else index-stable. */
@@ -115,6 +121,7 @@ export function CameraLane({
   onRemoveSwitch,
   onSetSwitchMain,
   audioForPerson,
+  hideChrome = false,
 }: Props) {
   const boardRef = useRef<HTMLDivElement>(null)
   const width = Math.max(480, Math.round(durationSec * pxPerSec))
@@ -231,7 +238,14 @@ export function CameraLane({
   if (clips.length === 0 && !(markers && markers.length)) return null
 
   return (
-    <div className="rounded-tile border border-divider bg-obsidian overflow-hidden shadow-depth-sm">
+    <div
+      className={
+        hideChrome
+          ? 'bg-obsidian overflow-hidden'
+          : 'rounded-tile border border-divider bg-obsidian overflow-hidden shadow-depth-sm'
+      }
+    >
+      {!hideChrome && (
       <div
         className="flex flex-wrap items-center justify-between gap-2"
         style={{ paddingLeft: 8, paddingRight: 8, paddingTop: 4, paddingBottom: 4, background: laneHue.laneBg }}
@@ -282,6 +296,7 @@ export function CameraLane({
           {selected ? ` · in ${formatClock(cameraSourceStart(selected))}` : ''}
         </p>
       </div>
+      )}
       {clips.length > 0 && (
         <div
           ref={boardRef}
@@ -498,6 +513,41 @@ export function CameraLane({
       )}
       {(onSplit || onCutHole || onSlip || onLinkedChange || switchEnabled) && clips.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 border-t border-divider px-2 py-1.5">
+          {hideChrome && onLinkedChange && (
+            <Button
+              size="dense"
+              variant={linked ? 'secondary' : 'ghost'}
+              onClick={() => onLinkedChange(!linked)}
+              title={
+                linked
+                  ? 'Linked: moving a take can nudge this camera. Trim/split/cut stay independent.'
+                  : 'Unlinked: audio and picture edit on their own. Same playhead.'
+              }
+            >
+              {linked ? 'Linked' : 'Unlinked'}
+            </Button>
+          )}
+          {hideChrome && showBroken && drift && (
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="studio-type-timecode text-lane-cohost-1"
+                title={`Audio in-point ${formatClock(drift.audioOffset)} vs picture ${formatClock(drift.cameraOffset)}`}
+              >
+                Broken sync · {formatDrift(drift.seconds)}
+              </span>
+              {onSnapSync && (
+                <Button
+                  size="dense"
+                  variant="secondary"
+                  onClick={onSnapSync}
+                  disabled={disabled}
+                  title={`Slide the picture ${formatDrift(drift.seconds)} to the audio in-point (${formatClock(drift.audioOffset)}).`}
+                >
+                  Snap to sync
+                </Button>
+              )}
+            </span>
+          )}
           {onSplit && (
             <Button
               size="dense"

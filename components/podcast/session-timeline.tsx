@@ -40,6 +40,17 @@ export type SessionTimelineProps = {
   onScrollLeft?: (left: number) => void
   /** Transport rolling — gently pulses the playhead glow. Visual only; defaults off. */
   playing?: boolean
+  /**
+   * Drop the embedded tile's border / rounding / shadow so this board can sit
+   * flush as the audio row inside a unified per-person track group. Visual only.
+   */
+  flush?: boolean
+  /**
+   * Reserve a fixed-width, non-scrolling left column before the board so the
+   * time axis lines up with per-person track groups that carry a header rail
+   * of the same width. Used by the shared ruler. Visual only.
+   */
+  gutterLeft?: number
 }
 
 /**
@@ -118,6 +129,8 @@ export function SessionTimeline({
   scrollLeft,
   onScrollLeft,
   playing = false,
+  flush = false,
+  gutterLeft,
 }: SessionTimelineProps) {
   const scopedPeople = personId ? people.filter((p) => p.id === personId) : people
   const scopedTracks = (personId ? tracks.filter((t) => t.personId === personId) : tracks).slice().sort((a, b) => {
@@ -414,11 +427,26 @@ export function SessionTimeline({
   )
 
   if (embedded || rulerOnly) {
-    return (
-      <div className="rounded-tile border border-divider bg-obsidian overflow-hidden shadow-depth-sm">
-        {board}
-      </div>
-    )
+    const shell =
+      flush
+        ? 'bg-obsidian overflow-hidden'
+        : 'rounded-tile border border-divider bg-obsidian overflow-hidden shadow-depth-sm'
+    if (gutterLeft != null) {
+      return (
+        <div className={shell}>
+          <div className="flex items-stretch">
+            <div
+              className="shrink-0 flex items-center border-r border-divider px-2"
+              style={{ width: gutterLeft }}
+            >
+              <span className="studio-type-label text-silver-label">Timeline</span>
+            </div>
+            <div className="min-w-0 flex-1">{board}</div>
+          </div>
+        </div>
+      )
+    }
+    return <div className={shell}>{board}</div>
   }
 
   return (
