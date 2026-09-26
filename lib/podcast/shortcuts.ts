@@ -40,10 +40,21 @@ export const STUDIO_SHORTCUTS: ShortcutGroup[] = [
     items: [
       { keys: 'S', action: 'Split audio at the playhead' },
       { keys: 'V', action: 'Split the picture at the playhead' },
+      { keys: 'F', action: 'Fade the selected clip(s)' },
       { keys: 'Delete', action: 'Cut a hole in the selection' },
       { keys: 'Shift + Delete', action: 'Ripple delete the selection' },
       { keys: 'Shift + M', action: 'Mute the selected range' },
+      { keys: '⌘ / Ctrl + click', action: 'Add a clip to the selection' },
+      { keys: 'Shift + drag edge', action: 'Roll-trim — trims the neighbor, keeps total length' },
       { keys: '1–0', action: 'Drop a sound effect' },
+    ],
+  },
+  {
+    group: 'View',
+    items: [
+      { keys: '⌘ / Ctrl +', action: 'Zoom in' },
+      { keys: '⌘ / Ctrl −', action: 'Zoom out' },
+      { keys: '⌘ / Ctrl 0', action: 'Fit the session to the window' },
     ],
   },
   {

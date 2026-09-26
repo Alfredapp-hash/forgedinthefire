@@ -34,10 +34,29 @@ export function ShortcutsHelpModal({ open, onClose }: Props): React.JSX.Element 
 
   // Drive the native modal so the dialog enters the top layer and the page
   // behind it goes inert. Opened in an effect (never during render).
+  // `<dialog showModal>` traps Tab within the dialog natively; we only add
+  // focus RETURN (native dialogs do not restore focus to the trigger on close).
   const dialogRef = useRef<HTMLDialogElement | null>(null)
+  const triggerRef = useRef<HTMLElement | null>(null)
   useEffect(() => {
     const dlg = dialogRef.current
-    if (open && mounted && dlg && !dlg.open) dlg.showModal()
+    if (open && mounted && dlg && !dlg.open) {
+      // Remember what had focus so we can restore it when the dialog closes.
+      triggerRef.current = (document.activeElement as HTMLElement | null) ?? null
+      dlg.showModal()
+      // Move initial focus into the dialog (onto the Close button) so keyboard
+      // users start inside the trap rather than on the <body>.
+      const initial = dlg.querySelector<HTMLElement>('[data-autofocus]')
+      initial?.focus()
+    }
+    return () => {
+      // On close/unmount, return focus to the element that opened the dialog.
+      const trigger = triggerRef.current
+      if (trigger && typeof trigger.focus === 'function' && trigger.isConnected) {
+        trigger.focus()
+      }
+      triggerRef.current = null
+    }
   }, [open, mounted])
 
   if (!open || !mounted) return null
@@ -58,7 +77,13 @@ export function ShortcutsHelpModal({ open, onClose }: Props): React.JSX.Element 
             <p className="studio-type-label text-ice">Studio</p>
             <h2 className="studio-type-section mt-0.5 !text-[18px]">Keyboard shortcuts</h2>
           </div>
-          <Button variant="secondary" size="compact" onClick={onClose} aria-label="Close shortcuts">
+          <Button
+            variant="secondary"
+            size="compact"
+            onClick={onClose}
+            aria-label="Close shortcuts"
+            data-autofocus
+          >
             Close
           </Button>
         </div>

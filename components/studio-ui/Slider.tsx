@@ -28,7 +28,13 @@ export const Slider = forwardRef<HTMLInputElement, SliderProps>(function Slider(
       max={max}
       value={value}
       defaultValue={defaultValue}
-      className={cn('studio-slider h-control-compact w-full', className)}
+      className={cn(
+        // Comfortable touch target on small screens (~32px effective height),
+        // relaxing to the compact control height from sm up. The visible track
+        // is drawn thin in CSS; this only enlarges the pointer/hit area.
+        'studio-slider h-8 w-full sm:h-control-compact',
+        className
+      )}
       style={
         { '--studio-slider-fill': `${pct}%`, ...style } as React.CSSProperties
       }

@@ -56,6 +56,7 @@ import {
   clearAutomation,
   cropToRange,
   deleteRange,
+  duckWithSidechain,
   duplicateClipAt,
   fullClipForBuffer,
   joinAdjacentClips,
@@ -63,8 +64,11 @@ import {
   moveClip,
   muteRange,
   pasteClip,
+  rollTrimClip,
   setClipFades,
+  setClipGain,
   setVolumeInRange,
+  snapTime,
   splitRange,
   splitTrackAt,
   trimClip,
@@ -156,6 +160,7 @@ import {
 } from '@/lib/podcast/camera'
 import {
   addKeyframeAt,
+  clearCameraDissolve,
   deleteCameraRange,
   dissolveCameraPair,
   joinAdjacentCamera,
@@ -218,6 +223,7 @@ import {
   RecordButton,
   SegmentedControl,
   Slider,
+  toast,
   laneColor,
   LANE_IDS,
   type LaneColor,
@@ -235,6 +241,9 @@ type Props = {
    *  behavior). When set, sections are gated by stage — but the component and all
    *  its state/effects stay mounted, so a live recording survives stage switches. */
   stage?: StudioStage
+  /** Optional stage navigator. When supplied, a successful Record-stage export
+   *  surfaces a "View in editor" toast action that jumps to the Edit stage. */
+  onGoToStage?: (stage: StudioStage) => void
 }
 
 type Snapshot = {
@@ -267,7 +276,7 @@ function snapshotTracks(tracks: StudioTrack[]): StudioTrack[] {
   }))
 }
 
-export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage }: Props) {
+export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage, onGoToStage }: Props) {
   // Stage gating. `stage == null` keeps legacy behavior (show everything). These
   // are presentational only — nothing below unmounts on a stage switch, so a live
   // recording, its checkpoints, and all editor state persist across stages.
@@ -279,6 +288,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
   const [sectionLevel, setSectionLevel] = useState(0.25)
+  /** Ducking preset config: lower the selected lane when the sidechain lane is loud. */
+  const [duckSidechainId, setDuckSidechainId] = useState('')
+  const [duckDb, setDuckDb] = useState(-12)
   const [applyRangeAll, setApplyRangeAll] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [recording, setRecording] = useState(false)
@@ -290,6 +302,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [masterFadeOut, setMasterFadeOut] = useState(0.4)
   const [zoom, setZoom] = useState(48)
   const [timelineScroll, setTimelineScroll] = useState(0)
+  const [snap, setSnap] = useState(false)
+  const SNAP_GRID = 0.1
+  const SNAP_MAGNET = 6 // px; converted to seconds via zoom at edit time
+  /** Extra clips in the current selection beyond the primary selectedClipId.
+   *  Value is the owning trackId so batch ops can find each clip's lane. */
+  const [multiSel, setMultiSel] = useState<Record<string, string>>({})
+  /** Live mirror of the full clip selection for the keydown handler (no re-subscribe). */
+  const selectionClipIdsRef = useRef<Set<string>>(new Set())
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
@@ -424,6 +444,23 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     const next = Math.max(0, sec)
     playheadRef.current = next
     setPlayhead(next)
+  }, [])
+
+  // Feedback: route through the studio toast, and mirror into the legacy inline
+  // error/ok line so there is always a persistent record + an accessible
+  // live-region fallback. Success clears any stale error; error clears stale ok.
+  const notifyOk = useCallback(
+    (title: string, opts?: { description?: string; action?: { label: string; onClick: () => void } }) => {
+      setError(null)
+      setOk(opts?.description ? `${title} — ${opts.description}` : title)
+      toast({ title, description: opts?.description, tone: 'success', action: opts?.action })
+    },
+    [],
+  )
+  const notifyError = useCallback((title: string, description?: string) => {
+    setOk(null)
+    setError(description ? `${title} — ${description}` : title)
+    toast({ title, description, tone: 'error' })
   }, [])
 
   cueToGuestRef.current = cueToGuest
@@ -940,6 +977,24 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         setHelpOpen(true)
         return
       }
+      // Cmd/Ctrl +/-/0 drive the timeline zoom (0 = Fit). Guarded against typing above.
+      if (event.metaKey || event.ctrlKey) {
+        if (event.key === '=' || event.key === '+') {
+          event.preventDefault()
+          zoomBy(1.25)
+          return
+        }
+        if (event.key === '-' || event.key === '_') {
+          event.preventDefault()
+          zoomBy(0.8)
+          return
+        }
+        if (event.key === '0') {
+          event.preventDefault()
+          zoomToFit()
+          return
+        }
+      }
       if (event.code === 'Space') {
         event.preventDefault()
         if (!recording) void togglePlay()
@@ -993,7 +1048,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       }
       if ((event.key === 'm' || event.key === 'M') && !recording && event.shiftKey) {
         event.preventDefault()
-        editRange((t) => muteRange(t, rangeRef.current.start, rangeRef.current.end, true), 'Muted range on this lane')
+        // With a clip multi-selection, mute the selected clips; else mute the range.
+        if (selectionClipIdsRef.current.size > 0) batchClips('mute')
+        else editRange((t) => muteRange(t, rangeRef.current.start, rangeRef.current.end, true), 'Muted range on this lane')
+      }
+      // F — fade the selected clip(s): short in/out on each. Guarded against typing.
+      if ((event.key === 'f' || event.key === 'F') && !recording && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault()
+        batchClips('fade')
       }
     }
     window.addEventListener('keydown', onKey)
@@ -1012,6 +1074,22 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   function nudge(seconds: number) {
     const total = Math.max(sessionLen, playheadRef.current)
     setHead(Math.max(0, Math.min(total, playheadRef.current + seconds)))
+  }
+
+  const ZOOM_MIN = 12
+  const ZOOM_MAX = 240
+  const timelineViewportRef = useRef<HTMLDivElement>(null)
+  function zoomBy(factor: number) {
+    setZoom((z) => Math.round(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z * factor))))
+  }
+  /** Fit the whole session (plus a little headroom) into the timeline viewport. */
+  function zoomToFit() {
+    const total = Math.max(1, sessionLen + 2)
+    const px = timelineViewportRef.current?.clientWidth || 720
+    const gutter = 180 // shared-ruler left gutter + padding
+    const usable = Math.max(240, px - gutter)
+    setZoom(Math.round(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, usable / total))))
+    setTimelineScroll(0)
   }
 
   async function togglePlay() {
@@ -1219,7 +1297,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
   async function runEffect(id: EffectId, mode: 'insert' | 'render' = isInsertFx(id) ? 'insert' : 'render') {
     if (!selected?.buffer) {
-      setError('Select a track with audio first')
+      notifyError('Select a track with audio first')
       return
     }
     if (mode === 'insert') {
@@ -1230,7 +1308,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       )
       invalidateInsertCache(selected.id)
       setApplied((prev) => [...prev, id])
-      setOk(`${EFFECT_META.find((e) => e.id === id)?.label || id} on insert rack · ${selected.name}`)
+      notifyOk(`${EFFECT_META.find((e) => e.id === id)?.label || id} on insert rack · ${selected.name}`)
       return
     }
     pushHistory()
@@ -1240,9 +1318,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       const next = await applyEffect(cloneBuffer(selected.buffer), id)
       assignBufferToTrack(selected.id, next)
       setApplied((prev) => [...prev, id])
-      setOk(`${EFFECT_META.find((e) => e.id === id)?.label || id} baked into ${selected.name}`)
+      notifyOk(`${EFFECT_META.find((e) => e.id === id)?.label || id} baked into ${selected.name}`)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Effect failed')
+      notifyError('Effect failed', err instanceof Error ? err.message : undefined)
     } finally {
       setBusy(null)
     }
@@ -2358,7 +2436,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     const a = Math.min(cur.start, cur.end)
     const b = Math.max(cur.start, cur.end)
     if (b - a < 0.05) {
-      setError('Drag a range on the timeline (empty lane or ruler), then use the lane tools')
+      notifyError('Select a range first', 'Drag a range on the timeline (empty lane or ruler), then use the lane tools')
       return
     }
     const ids = applyRangeAll
@@ -2367,12 +2445,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         ? [selected.id]
         : []
     if (ids.length === 0) {
-      setError('Select a lane first')
+      notifyError('Select a lane first')
       return
     }
     pushHistory()
     setTracks((prev) => prev.map((t) => (ids.includes(t.id) ? fn(t) : t)))
-    setOk(label)
+    notifyOk(label)
   }
 
   function splitSelectedAtPlayhead() {
@@ -2519,13 +2597,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       a.download = `${slugFile(title)}-${mode === 'pip' ? 'pip' : 'a-roll'}.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`
       a.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 4000)
-      setOk(
-        usedRealtime
-          ? `${mode === 'pip' ? 'PIP' : 'A-roll'} downloaded (realtime encode) — public RSS is still the audio mix`
-          : `${mode === 'pip' ? 'PIP' : 'A-roll'} downloaded locally — public RSS is still the audio mix`,
-      )
+      notifyOk(`${mode === 'pip' ? 'PIP' : 'A-roll'} downloaded`, {
+        description: `${a.download}${blob.size ? ` · ${formatBytes(blob.size)}` : ''}${
+          usedRealtime ? ' · realtime encode' : ''
+        } — public RSS is still the audio mix`,
+      })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Picture export failed')
+      notifyError('Picture export failed', err instanceof Error ? err.message : undefined)
     } finally {
       setBusy(null)
     }
@@ -2597,15 +2675,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       a.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 4000)
       if (manageBusy) {
-        setOk(
-          out.realtime
-            ? `Downloaded ${out.ext.toUpperCase()} (realtime encode) — public RSS is still the audio mix`
-            : `Downloaded ${out.ext.toUpperCase()} deliverable — public RSS is still the audio mix`,
-        )
+        notifyOk(`Downloaded ${out.ext.toUpperCase()} deliverable`, {
+          description: `${out.filename}${out.blob.size ? ` · ${formatBytes(out.blob.size)}` : ''}${
+            out.realtime ? ' · realtime encode' : ''
+          } — public RSS is still the audio mix`,
+        })
       }
       return true
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'MP4 deliverable failed')
+      if (manageBusy) notifyError('MP4 deliverable failed', err instanceof Error ? err.message : undefined)
+      else setError(err instanceof Error ? err.message : 'MP4 deliverable failed')
       return false
     } finally {
       if (manageBusy) setBusy(null)
@@ -2630,31 +2709,36 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
    */
   async function exportEpisode(thenPublish = false) {
     if (!hasAudio) {
-      setError('Nothing to export — record or import onto a track first')
+      notifyError('Nothing to export', 'Record or import onto a track first')
       return
     }
     setError(null)
     setOk(null)
     const notes: string[] = []
+    let audioSaved = false
     let master: AudioBuffer
     try {
-      setBusy('Building master mix (shared by audio + video)…')
+      // Sub-step 1 — Building mix.
+      setBusy('Building mix (shared by audio + video)…')
       master = await buildMasterMix(false)
     } catch (err) {
       setBusy(null)
-      setError(err instanceof Error ? err.message : 'Could not build the master mix')
+      notifyError('Could not build the master mix', err instanceof Error ? err.message : undefined)
       return
     }
 
     // Part 1 — audio-only podcast-feed file. Priority deliverable; runs first.
-    setBusy(thenPublish ? 'Saving audio for Apple & Spotify + publishing…' : 'Saving audio for Apple & Spotify (podcast feed)…')
-    const audioOk = await exportAudio('mp3', thenPublish, master, false)
+    // Sub-step 2 — Loudness + 3 — Encoding are handled inside exportAudio/buildMasterMix.
+    setBusy(thenPublish ? 'Loudness → Encoding → saving audio + publishing…' : 'Loudness → Encoding audio (Apple & Spotify)…')
+    const audioOk = (await exportAudio('mp3', thenPublish, master, false)) === true
+    audioSaved = audioOk
     notes.push(audioOk ? 'Audio for Apple & Spotify saved to the feed' : 'Audio export failed')
 
     // Part 2 — video for YouTube & social. Only when the session has picture. A video
     // failure must NOT block or undo the podcast-feed file already delivered above.
     if (hasVideo) {
-      setBusy('Encoding video for YouTube & social (picture + master mix)…')
+      // Sub-step 4 — Muxing (progress % streamed into busy by downloadDeliverable).
+      setBusy('Muxing video for YouTube & social (picture + master mix)…')
       const videoOk = await downloadDeliverable(master, false)
       notes.push(videoOk ? 'Video for YouTube & social downloaded' : 'Video encode failed — audio feed file is unaffected')
     } else {
@@ -2662,8 +2746,20 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
 
     setBusy(null)
-    // Success line summarizes both parts; `setError` from a failed part still shows.
-    setOk(notes.join(' · '))
+    // Success/summary. On success in the Record stage, offer a jump to the editor.
+    const summary = notes.join(' · ')
+    if (audioSaved) {
+      const action =
+        onGoToStage && stage === 'record'
+          ? { label: 'View in editor', onClick: () => onGoToStage('edit') }
+          : undefined
+      notifyOk(thenPublish ? 'Episode exported + published' : 'Episode exported', {
+        description: summary,
+        action,
+      })
+    } else {
+      notifyError('Export finished with problems', summary)
+    }
   }
 
   async function downloadStems() {
@@ -2693,9 +2789,11 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       a.download = `${slugFile(title)}-stems.zip`
       a.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 4000)
-      setOk(`Downloaded ${files.length - 1} stems + mix`)
+      notifyOk(`Downloaded ${files.length - 1} stems + mix`, {
+        description: `${a.download}${zip.size ? ` · ${formatBytes(zip.size)}` : ''}`,
+      })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Stems zip failed')
+      notifyError('Stems zip failed', err instanceof Error ? err.message : undefined)
     } finally {
       setBusy(null)
     }
@@ -2808,15 +2906,18 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
       await onExported(file, durationSeconds)
       if (warnings.length) {
-        setError(`Saved, but check before publish: ${warnings.join(' · ')}`)
+        notifyError('Saved — check before publish', warnings.join(' · '))
       }
       if (manageBusy) {
-        setOk(thenPublish ? 'Mix saved to site host' : `Saved ${ext.toUpperCase()} mix to episode`)
+        notifyOk(thenPublish ? 'Mix saved to site host' : `Saved ${ext.toUpperCase()} mix to episode`, {
+          description: `${file.name} · ${formatBytes(file.size)} · ${formatClock(durationSeconds)}`,
+        })
       }
       if (thenPublish && onPublished) await onPublished()
       return true
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Export failed')
+      if (manageBusy) notifyError('Export failed', err instanceof Error ? err.message : undefined)
+      else setError(err instanceof Error ? err.message : 'Export failed')
       return false
     } finally {
       if (manageBusy) setBusy(null)
@@ -2847,6 +2948,77 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     },
     [tracks],
   )
+  // Magnetic-snap anchors for a lane edit: that lane's other clip edges, the
+  // playhead, and the loop-range bounds. Snap quantizes to a 0.1s grid and magnets
+  // onto any anchor within a few pixels (converted to seconds via the current zoom).
+  const snapAnchors = useCallback(
+    (track: StudioTrack | null | undefined, excludeClipId?: string): number[] => {
+      const edges = track
+        ? clipsOf(track)
+            .filter((c) => c.id !== excludeClipId)
+            .flatMap((c) => [c.offset, c.offset + c.duration])
+        : []
+      const rng = rangeRef.current
+      return [...edges, playheadRef.current, rng.start, rng.end].filter((n) => Number.isFinite(n) && n >= 0)
+    },
+    [],
+  )
+  const applySnap = useCallback(
+    (time: number, track: StudioTrack | null | undefined, excludeClipId?: string): number => {
+      if (!snap) return time
+      return snapTime(time, SNAP_GRID, snapAnchors(track, excludeClipId), SNAP_MAGNET / Math.max(1, zoom))
+    },
+    [snap, snapAnchors, zoom],
+  )
+
+  // Multi-select: primary is selectedClipId; extras live in multiSel keyed by clipId.
+  const selectionClipIds = useMemo(() => {
+    const ids = new Set<string>(Object.keys(multiSel))
+    if (selectedClipId) ids.add(selectedClipId)
+    return ids
+  }, [multiSel, selectedClipId])
+  selectionClipIdsRef.current = selectionClipIds
+
+  /**
+   * Batch clip operation across the current multi-selection (or the single selected
+   * clip). Runs one history snapshot, then maps the op over every selected clip,
+   * grouped by its lane. `fade` sets a short in/out; `mute` toggles muted on; `gain`
+   * scales clip gain by the supplied factor.
+   */
+  function batchClips(op: 'fade' | 'mute' | 'gain', arg?: number) {
+    const ids = selectionClipIdsRef.current
+    if (ids.size === 0) {
+      notifyError('Select a clip first', 'Click a clip (Cmd/Ctrl-click to add more), then use clip tools')
+      return
+    }
+    pushHistory()
+    setTracks((prev) =>
+      prev.map((t) => {
+        const mine = clipsOf(t).filter((c) => ids.has(c.id))
+        if (mine.length === 0) return t
+        let next = t
+        for (const clip of mine) {
+          if (op === 'fade') {
+            const dur = clip.duration
+            next = setClipFades(next, clip.id, Math.min(0.25, dur / 3), Math.min(0.4, dur / 3))
+          } else if (op === 'mute') {
+            next = setClipGain(next, clip.id, clip.gain ?? 1, !clip.muted)
+          } else if (op === 'gain') {
+            next = setClipGain(next, clip.id, Math.max(0, (clip.gain ?? 1) * (arg ?? 1)))
+          }
+        }
+        return next
+      }),
+    )
+    const label =
+      op === 'fade'
+        ? `Faded ${ids.size} clip${ids.size === 1 ? '' : 's'}`
+        : op === 'mute'
+          ? `Muted ${ids.size} clip${ids.size === 1 ? '' : 's'}`
+          : `Adjusted gain on ${ids.size} clip${ids.size === 1 ? '' : 's'}`
+    notifyOk(label)
+  }
+
   const timelineBoard = {
     people,
     tracks,
@@ -2854,25 +3026,51 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     pxPerSec: zoom,
     selectedId: selected?.id || null,
     selectedClipId,
+    selectedClipIds: selectionClipIds,
+    snap,
     range,
+    loop,
     durationSec: boardDuration,
     scrollLeft: timelineScroll,
     onScrollLeft: setTimelineScroll,
-    onSelect: (id: string, clipId: string | null) => {
+    onSelect: (id: string, clipId: string | null, additive = false) => {
       setSelectedId(id)
+      if (additive && clipId) {
+        // Cmd/Ctrl-click toggles a clip in/out of the multi-selection.
+        setMultiSel((prev) => {
+          const next = { ...prev }
+          const anchor = selectedClipId
+          if (anchor && anchor !== clipId && !next[anchor]) next[anchor] = id
+          if (next[clipId]) delete next[clipId]
+          else next[clipId] = id
+          return next
+        })
+        setSelectedClipId(clipId)
+        return
+      }
+      setMultiSel({})
       setSelectedClipId(clipId)
     },
     onPlayhead: setHead,
+    onEditStart: () => pushHistory(),
     onMoveClip: (id: string, clipId: string, offset: number) => {
       const track = tracks.find((t) => t.id === id)
       const clip = track ? clipsOf(track).find((c) => c.id === clipId) : null
-      setTracks((prev) => mapTrack(prev, id, (t) => moveClip(t, clipId, offset)))
+      const snapped = applySnap(offset, track, clipId)
+      setTracks((prev) => mapTrack(prev, id, (t) => moveClip(t, clipId, snapped)))
       if (track && clip && personAvLinked(people.find((p) => p.id === track.personId))) {
-        setCameraClips((prev) => nudgeCamerasWithAudio(prev, clip, track.personId, clip.offset, offset, true))
+        setCameraClips((prev) => nudgeCamerasWithAudio(prev, clip, track.personId, clip.offset, snapped, true))
       }
     },
     onTrimClip: (id: string, clipId: string, edge: 'in' | 'out', time: number) => {
-      setTracks((prev) => mapTrack(prev, id, (t) => trimClip(t, clipId, edge, time)))
+      const track = tracks.find((t) => t.id === id)
+      const snapped = applySnap(time, track, clipId)
+      setTracks((prev) => mapTrack(prev, id, (t) => trimClip(t, clipId, edge, snapped)))
+    },
+    onRollTrim: (id: string, clipId: string, edge: 'in' | 'out', time: number) => {
+      const track = tracks.find((t) => t.id === id)
+      const snapped = applySnap(time, track, clipId)
+      setTracks((prev) => mapTrack(prev, id, (t) => rollTrimClip(t, clipId, edge, snapped)))
     },
     onRange: (start: number, end: number, trackId: string) => {
       setSelectedId(trackId)
@@ -3160,6 +3358,84 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           >
             <Repeat />
           </IconButton>
+          {/* Zoom cluster: − / Fit / + (also Cmd/Ctrl −, 0, +). */}
+          <div className="inline-flex items-center gap-1 shrink-0 rounded-control border border-divider bg-surface-raised px-1">
+            <IconButton
+              aria-label="Zoom out (Cmd/Ctrl −)"
+              title="Zoom out (Cmd/Ctrl −)"
+              variant="ghost"
+              onClick={() => zoomBy(0.8)}
+            >
+              <Minus />
+            </IconButton>
+            <Button
+              variant="ghost"
+              size="dense"
+              title="Fit session to view (Cmd/Ctrl 0)"
+              onClick={() => zoomToFit()}
+            >
+              Fit
+            </Button>
+            <IconButton
+              aria-label="Zoom in (Cmd/Ctrl +)"
+              title="Zoom in (Cmd/Ctrl +)"
+              variant="ghost"
+              onClick={() => zoomBy(1.25)}
+            >
+              <Plus />
+            </IconButton>
+          </div>
+          {showEdit && (
+            <Button
+              variant={snap ? 'primary' : 'secondary'}
+              size="dense"
+              className="shrink-0"
+              title={`Snap clip moves/trims to a ${SNAP_GRID}s grid and magnet to nearby clip edges / the playhead`}
+              aria-pressed={snap}
+              onClick={() => setSnap((v) => !v)}
+            >
+              Snap {snap ? 'on' : 'off'}
+            </Button>
+          )}
+          {showEdit && selectionClipIds.size > 1 && (
+            <div className="inline-flex items-center gap-1 shrink-0">
+              <Chip tone="accent" dot>
+                {selectionClipIds.size} clips
+              </Chip>
+              <Button
+                variant="secondary"
+                size="dense"
+                title="Fade in/out on all selected clips (F)"
+                onClick={() => batchClips('fade')}
+              >
+                Fade
+              </Button>
+              <Button
+                variant="secondary"
+                size="dense"
+                title="Toggle mute on all selected clips (Shift+M)"
+                onClick={() => batchClips('mute')}
+              >
+                Mute
+              </Button>
+              <Button
+                variant="secondary"
+                size="dense"
+                title="Trim gain −3 dB on all selected clips"
+                onClick={() => batchClips('gain', 0.708)}
+              >
+                −3 dB
+              </Button>
+              <Button
+                variant="ghost"
+                size="dense"
+                title="Clear multi-selection"
+                onClick={() => setMultiSel({})}
+              >
+                Clear
+              </Button>
+            </div>
+          )}
           {showRecord && (
           <>
           <Button
@@ -3600,6 +3876,75 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             </details>
             <details className="rounded-control border border-divider bg-obsidian px-2.5 py-1.5">
               <summary className="studio-type-label cursor-pointer text-ice">
+                Ducking preset
+              </summary>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#A9B8C6]">
+                <span className="normal-case tracking-normal">
+                  Lower <b className="text-white">{selected?.name || 'selected lane'}</b> by
+                </span>
+                <select
+                  className={select}
+                  aria-label="Duck amount"
+                  value={duckDb}
+                  onChange={(e) => setDuckDb(Number(e.target.value))}
+                >
+                  <option value={-6}>6 dB</option>
+                  <option value={-9}>9 dB</option>
+                  <option value={-12}>12 dB</option>
+                  <option value={-18}>18 dB</option>
+                </select>
+                <span className="normal-case tracking-normal">when</span>
+                <select
+                  className={select}
+                  aria-label="Sidechain lane"
+                  value={duckSidechainId}
+                  onChange={(e) => setDuckSidechainId(e.target.value)}
+                >
+                  <option value="">choose a lane…</option>
+                  {tracks
+                    .filter((t) => t.buffer && t.id !== selected?.id)
+                    .map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                </select>
+                <span className="normal-case tracking-normal">is loud.</span>
+                <Button
+                  variant="secondary"
+                  size="dense"
+                  disabled={!selected?.buffer || !duckSidechainId || Boolean(busy)}
+                  onClick={() => {
+                    const side = tracks.find((t) => t.id === duckSidechainId)
+                    if (!selected || !side?.buffer) {
+                      notifyError('Pick a sidechain lane with audio')
+                      return
+                    }
+                    pushHistory()
+                    setBusy('Analyzing sidechain + writing ducking automation…')
+                    // Defer so the busy label paints before the analysis pass.
+                    window.setTimeout(() => {
+                      try {
+                        setTracks((prev) =>
+                          mapTrack(prev, selected.id, (t) => duckWithSidechain(t, side, { duckDb })),
+                        )
+                        notifyOk(`Ducked ${selected.name} by ${Math.abs(duckDb)} dB under ${side.name}`, {
+                          description: 'Volume automation only — no take was rewritten',
+                        })
+                      } catch (err) {
+                        notifyError('Ducking failed', err instanceof Error ? err.message : undefined)
+                      } finally {
+                        setBusy(null)
+                      }
+                    }, 0)
+                  }}
+                >
+                  Apply ducking
+                </Button>
+              </div>
+            </details>
+            <details className="rounded-control border border-divider bg-obsidian px-2.5 py-1.5">
+              <summary className="studio-type-label cursor-pointer text-ice">
                 Timing
               </summary>
               <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -3753,7 +4098,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           {/* Shared ruler. gutterLeft matches each track group's left header rail
               (card pad 10 + card border 1 + rail 160 + rail border 1) so the time
               axis lines up with the video/audio content columns below. */}
-          <SessionTimeline {...timelineBoard} rulerOnly showRuler gutterLeft={172} />
+          <div ref={timelineViewportRef}>
+            <SessionTimeline {...timelineBoard} rulerOnly showRuler gutterLeft={172} />
+          </div>
 
           {people.map((person) => {
             const lane = tracks.filter((t) => t.personId === person.id).sort((a, b) => a.take - b.take)
@@ -4269,11 +4616,19 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                         setCameraClips((prev) => joinAdjacentCamera(prev, playheadRef.current, person.id))
                         setOk('Joined adjacent picture clips')
                       }}
-                      onDissolve={() => {
+                      onDissolve={(seconds) => {
                         if (!selectedCamClipId) return
                         pushHistory()
-                        setCameraClips((prev) => dissolveCameraPair(prev, selectedCamClipId, 0.5))
-                        setOk('Dissolved into the next picture clip — audio unchanged')
+                        setCameraClips((prev) => dissolveCameraPair(prev, selectedCamClipId, seconds))
+                        notifyOk(`Dissolve (${seconds}s) into the next picture clip`, {
+                          description: 'Crossfade renders on export — audio unchanged',
+                        })
+                      }}
+                      onClearDissolve={() => {
+                        if (!selectedCamClipId) return
+                        pushHistory()
+                        setCameraClips((prev) => clearCameraDissolve(prev, selectedCamClipId))
+                        notifyOk('Removed dissolve')
                       }}
                       onStinger={(where) => addStinger(person.id, where)}
                       markers={pictureMarkers}
@@ -4634,6 +4989,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               variant="primary"
               size="touch"
               className="w-full sm:w-auto"
+              loading={Boolean(busy) && !/stems|A-roll|PIP/.test(busy || '')}
               disabled={!hasAudio || Boolean(busy)}
               title={
                 hasVideo
@@ -4664,6 +5020,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 variant="primary"
                 size="touch"
                 className="w-full sm:w-auto"
+                loading={/publish/.test(busy || '')}
                 disabled={!hasAudio || Boolean(busy)}
                 title="Runs Export episode, then publishes the audio-only file to your site / RSS. Video (if any) still downloads locally."
                 onClick={() => void exportEpisode(true)}
@@ -4678,6 +5035,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           <Button
             variant="secondary"
             size="compact"
+            loading={Boolean(busy?.includes('MP3'))}
             disabled={!hasAudio || Boolean(busy)}
             title="Audio-only MP3 podcast-feed file (Apple/Spotify via RSS) — same as the audio half of Export episode."
             onClick={() => void exportAudio('mp3')}
@@ -4687,6 +5045,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           <Button
             variant="secondary"
             size="compact"
+            loading={Boolean(busy?.includes('WAV'))}
             disabled={!hasAudio || Boolean(busy)}
             title="Audio-only WAV of the master mix."
             onClick={() => void exportAudio('wav')}
@@ -4700,6 +5059,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           <Button
             variant="secondary"
             size="compact"
+            loading={Boolean(busy?.includes('stems'))}
             disabled={!hasAudio || Boolean(busy)}
             onClick={() => void downloadStems()}
           >
@@ -4708,6 +5068,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           <Button
             variant="secondary"
             size="compact"
+            loading={Boolean(busy?.includes('A-roll'))}
             disabled={!cameraClips.length || Boolean(busy)}
             title="Host camera + audio mix, encoded as fast as this computer can. Local file — RSS stays the mix."
             onClick={() => void downloadPicture('a-roll')}
@@ -4717,6 +5078,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           <Button
             variant="secondary"
             size="compact"
+            loading={Boolean(busy?.includes('PIP'))}
             disabled={!cameraClips.some((c) => c.personId === 'guest') || Boolean(busy)}
             title="Host full frame, guest PIP, encoded as fast as this computer can. Local file — audio_url stays the mix."
             onClick={() => void downloadPicture('pip')}
@@ -4726,6 +5088,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           <Button
             variant="secondary"
             size="compact"
+            loading={Boolean(busy?.includes('MP4'))}
             disabled={!cameraClips.length || Boolean(busy)}
             title="Video only: camera timeline muxed with the master mix into one MP4 (WebM fallback). Same as the video half of Export episode. Local deliverable — RSS stays the audio mix."
             onClick={() => void downloadDeliverable()}

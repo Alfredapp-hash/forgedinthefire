@@ -1,7 +1,23 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Download, Headphones, Mic2, Music2, PhoneOff, RefreshCw, Video, VideoOff, Volume2, VolumeX } from 'lucide-react'
+import {
+  AlertTriangle,
+  Download,
+  Headphones,
+  Mic2,
+  Music2,
+  PhoneOff,
+  RefreshCw,
+  ShieldCheck,
+  UploadCloud,
+  Video,
+  VideoOff,
+  Volume2,
+  VolumeX,
+  WifiOff,
+} from 'lucide-react'
+import { Button, toast } from '@/components/studio-ui'
 import { createGuestHeadphoneMix, type GuestHeadphoneMix } from '@/lib/podcast/guest-cue'
 import { CameraPreview } from '@/components/podcast/camera-preview'
 import { resilientUpload, type SignedTarget } from '@/lib/podcast/resumable-upload'
@@ -52,6 +68,12 @@ import {
 
 type Phase = 'loading' | 'blocked' | 'lobby' | 'booth'
 
+function mmss(totalSeconds: number) {
+  const s = Math.max(0, Math.floor(totalSeconds))
+  const m = Math.floor(s / 60)
+  return `${m}:${String(s % 60).padStart(2, '0')}`
+}
+
 export function GuestPortal({
   token,
   initialSession,
@@ -94,6 +116,11 @@ export function GuestPortal({
   const [backupUrl, setBackupUrl] = useState<string | null>(null)
   const [ok, setOk] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
+  // Presentational only: wall-clock of the last successful connect + the elapsed
+  // offset frozen at the moment a drop was detected, for the reassuring
+  // "disconnected at MM:SS" banner. The reconnect state machine is untouched.
+  const [dropAtSec, setDropAtSec] = useState<number | null>(null)
+  const connectedAtRef = useRef<number | null>(null)
 
   const streamRef = useRef<MediaStream | null>(null)
   const camStreamRef = useRef<MediaStream | null>(null)
@@ -279,6 +306,16 @@ export function GuestPortal({
     }
   }
 
+  // Freeze the "disconnected at MM:SS" offset once per drop so the banner reads a
+  // stable timestamp across the reconnect attempts. Presentational only.
+  function noteDrop() {
+    setDropAtSec((prev) => {
+      if (prev != null) return prev
+      const startedAt = connectedAtRef.current
+      return startedAt != null ? (Date.now() - startedAt) / 1000 : 0
+    })
+  }
+
   function clearRestartTimers() {
     if (restartGraceRef.current != null) {
       window.clearTimeout(restartGraceRef.current)
@@ -379,6 +416,9 @@ export function GuestPortal({
       const markLive = () => {
         clearRestartTimers()
         restartingRef.current = false
+        const wasDown = connectedAtRef.current == null
+        connectedAtRef.current = Date.now()
+        setDropAtSec(null)
         void postGuestSession(token, { action: 'connected' }).catch(() => {})
         if (camStreamRef.current && !camLockedRef.current) {
           void pushGuestSignal(token, 'camera', { on: true }).catch(() => {})
@@ -386,6 +426,7 @@ export function GuestPortal({
         void pushGuestSignal(token, 'mute', { on: mutedRef.current }).catch(() => {})
         setError(null)
         setReconnecting(false)
+        if (wasDown) toast({ title: 'Connected to the host booth', tone: 'success' })
       }
       peer.oniceconnectionstatechange = () => {
         setIce(peer.iceConnectionState)
@@ -394,6 +435,7 @@ export function GuestPortal({
         // `disconnected` often self-heals — give it a short grace, then try an ICE
         // restart (keeps local tracks) before any full rebuild.
         if (state === 'disconnected') {
+          noteDrop()
           setReconnecting(true)
           if (restartGraceRef.current == null && !restartingRef.current) {
             restartGraceRef.current = window.setTimeout(() => {
@@ -406,6 +448,7 @@ export function GuestPortal({
         }
         // `failed` won't recover on its own — restart ICE immediately.
         if (state === 'failed') {
+          noteDrop()
           setError(iceFailedHint(iceCfgRef.current?.turnConfigured || false))
           if (peerRef.current === peer) void attemptIceRestart(peer)
         }
@@ -711,6 +754,7 @@ export function GuestPortal({
           ? 'Take + camera backup sent to the host. You can also download the camera file.'
           : 'Take sent to the host booth',
       )
+      toast({ title: 'Take uploaded to the host', tone: 'success' })
     } catch (err) {
       // Blob(s) remain in pendingTakesRef — nothing was discarded.
       setUploadFailed(true)
@@ -720,6 +764,11 @@ export function GuestPortal({
           ? `${err.message}. Your take is saved on this device — tap “Retry upload”.`
           : 'Upload failed. Your take is saved — tap “Retry upload”.',
       )
+      toast({
+        title: 'Upload paused',
+        description: 'Your take is saved on this device — tap Retry upload.',
+        tone: 'error',
+      })
     } finally {
       setUploading(false)
     }
@@ -820,72 +869,80 @@ export function GuestPortal({
   const conn = describeIceProgress(ice, { reconnecting })
   const connToneClass =
     conn.tone === 'live'
-      ? 'text-[#7CFFB2]'
+      ? 'text-lane-cohost-2'
       : conn.tone === 'fail'
-        ? 'text-[#FF7A9A]'
+        ? 'text-heart'
         : conn.tone === 'warn'
-          ? 'text-[#FFB86B]'
-          : 'text-[#A9B8C6]'
-  const iceFailed = presence.phase === 'failed'
+          ? 'text-lane-cohost-1'
+          : 'text-silver'
   const canRetry = presence.phase === 'failed' || presence.phase === 'dropped'
+  const showDropBanner = phase === 'booth' && (canRetry || dropAtSec != null)
   const tallyToneClass =
     tallyUi.tone === 'rec'
-      ? 'border-red-500/70 bg-[#2A1014]'
+      ? 'border-heart/70 bg-heart/10'
       : tallyUi.tone === 'wait'
-        ? 'border-[#FFB86B]/70 bg-[#24180C]'
-        : 'border-[#27313B] bg-[#11161C]'
+        ? 'border-lane-cohost-1/70 bg-lane-cohost-1/10'
+        : 'border-divider bg-surface'
   const tallyLabelTone =
-    tallyUi.tone === 'rec' ? 'text-[#FF7A9A]' : tallyUi.tone === 'wait' ? 'text-[#FFB86B]' : 'text-[#A9B8C6]'
+    tallyUi.tone === 'rec' ? 'text-heart' : tallyUi.tone === 'wait' ? 'text-lane-cohost-1' : 'text-silver'
   const labelTone =
     presence.tone === 'live'
-      ? 'text-[#7CFFB2]'
+      ? 'text-lane-cohost-2'
       : presence.tone === 'rec' || presence.tone === 'fail'
-        ? 'text-[#FF7A9A]'
+        ? 'text-heart'
         : presence.tone === 'wait' || presence.tone === 'warn'
-          ? 'text-[#FFB86B]'
-          : 'text-[#A9B8C6]'
+          ? 'text-lane-cohost-1'
+          : 'text-silver'
 
   return (
-    <div className="fixed inset-0 z-[80] bg-[#0C141C] text-[#F6FAFC] overflow-auto">
+    <div className="fixed inset-0 z-[80] overflow-auto bg-obsidian text-white">
       <audio ref={hostAudioRef} autoPlay playsInline muted className="hidden" />
-      <div className="mx-auto max-w-xl min-h-full px-4 py-8 space-y-5">
-        <header className="border-b border-[#27313B] pb-4">
-          <p className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Forged in the Fire · Guest booth</p>
-          <h1 className="text-xl font-medium mt-1">{session?.episodeTitle || 'Production room'}</h1>
-          <p className="text-sm text-[#A9B8C6] mt-1">
+      <div className="mx-auto min-h-full max-w-xl space-y-5 px-4 py-8">
+        <header className="border-b border-divider pb-4">
+          <p className="studio-type-label text-ice">Forged in the Fire · Guest booth</p>
+          <h1 className="mt-1 text-xl font-medium">{session?.episodeTitle || 'Production room'}</h1>
+          <p className="studio-type-body mt-1 text-silver">
             Mic, camera, mute, and a local backup. The host owns Record, talkback, cue mix, punch, FX, and export.
           </p>
         </header>
 
-        {phase === 'loading' && <p className="text-sm text-[#A9B8C6]">Checking invite…</p>}
+        {phase === 'loading' && <p className="studio-type-body text-silver">Checking invite…</p>}
 
         {phase === 'blocked' && (
-          <div className="rounded-xl border border-[#27313B] bg-[#11161C] p-4 text-sm text-[#FF7A9A]">
-            {error || 'This invite is closed'}
+          <div className="rounded-panel border border-heart/50 bg-heart/10 p-4">
+            <p className="studio-type-body inline-flex items-start gap-2 text-heart">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <span>{error || 'This invite is closed'}</span>
+            </p>
           </div>
         )}
 
         {phase === 'lobby' && (
-          <div className="rounded-2xl border border-[#27313B] bg-[#11161C] p-4 space-y-4">
-            <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Green room</p>
+          <div className="space-y-4 rounded-panel border border-divider bg-surface p-4">
+            <p className="studio-type-label text-ice">Green room</p>
             {!turnConfigured && (
-              <div className="rounded-xl border border-[#E8B84B]/50 bg-[#221B0A] px-3 py-2 text-[11px] text-[#F2D68A]">
-                Relay server isn’t configured for this booth. If you can’t connect from your current
-                network, join from a phone hotspot.
+              <div className="rounded-panel border border-lane-cohost-1/50 bg-lane-cohost-1/10 px-3 py-2">
+                <p className="studio-type-label inline-flex items-start gap-2 normal-case tracking-normal text-lane-cohost-1">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                  <span>
+                    Relay server isn’t configured for this booth. If you can’t connect from your
+                    current network, join from a phone hotspot.
+                  </span>
+                </p>
               </div>
             )}
             <label className="block space-y-1.5">
-              <span className="text-xs text-[#A9B8C6]">Display name</span>
+              <span className="studio-type-label normal-case tracking-normal text-silver">Display name</span>
               <input
                 value={name}
                 maxLength={40}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full rounded-lg border border-[#27313B] bg-[#151B22] px-3 py-2 text-[#F6FAFC]"
+                className="w-full rounded-control border border-divider bg-surface-raised px-3 py-2 text-white"
                 placeholder="How the host should see you"
               />
             </label>
             <label className="block space-y-1.5">
-              <span className="text-xs text-[#A9B8C6]">Microphone</span>
+              <span className="studio-type-label normal-case tracking-normal text-silver">Microphone</span>
               <select
                 value={micId}
                 onChange={(e) => {
@@ -895,7 +952,7 @@ export function GuestPortal({
                 onFocus={() => {
                   if (!streamRef.current) void prepareMic().catch((err) => setError(err instanceof Error ? err.message : 'Mic blocked'))
                 }}
-                className="w-full rounded-lg border border-[#27313B] bg-[#151B22] px-3 py-2 text-[#B8C4CF]"
+                className="w-full rounded-control border border-divider bg-surface-raised px-3 py-2 text-silver-body"
               >
                 <option value="">Default</option>
                 {mics.map((mic) => (
@@ -906,12 +963,12 @@ export function GuestPortal({
               </select>
             </label>
             <label className="block space-y-1.5">
-              <span className="text-xs text-[#A9B8C6]">Camera</span>
+              <span className="studio-type-label normal-case tracking-normal text-silver">Camera</span>
               <select
                 value={camId}
                 disabled={recording}
                 onChange={(e) => void changeCameraDevice(e.target.value)}
-                className="w-full rounded-lg border border-[#27313B] bg-[#151B22] px-3 py-2 text-[#B8C4CF]"
+                className="w-full rounded-control border border-divider bg-surface-raised px-3 py-2 text-silver-body"
               >
                 <option value="">Default camera</option>
                 {cams.map((cam) => (
@@ -922,42 +979,41 @@ export function GuestPortal({
               </select>
             </label>
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="touch"
                 onClick={() => void prepareMic().catch((err) => setError(err instanceof Error ? err.message : 'Mic blocked'))}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
               >
                 <Mic2 size={14} /> Test microphone
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant={camOn ? 'primary' : 'secondary'}
+                size="touch"
                 onClick={() => void toggleCamera()}
-                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm ${
-                  camOn ? 'bg-[#53D6FF] text-[#061016]' : 'border border-[#27313B] text-[#B8C4CF]'
-                }`}
               >
                 {camOn ? <Video size={14} /> : <VideoOff size={14} />}
                 {camOn ? 'Cam on' : 'Test camera'}
-              </button>
+              </Button>
             </div>
             {camStream && <CameraPreview stream={camStream} label="You · self-view" />}
             <Meter label="You" peak={peak} clip={clip} />
-            <label className="flex items-start gap-2 text-sm text-[#B8C4CF]">
+            <label className="studio-type-body flex items-start gap-2 text-silver-body">
               <input type="checkbox" checked={phones} onChange={(e) => setPhones(e.target.checked)} className="mt-1" />
               <span className="flex gap-2">
-                <Headphones size={16} className="text-[#8DEBFF] shrink-0 mt-0.5" />
+                <Headphones size={16} className="mt-0.5 shrink-0 text-ice" />
                 I am wearing headphones. Talkback and the host mix will leak into your take if you use speakers.
               </span>
             </label>
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              size="touch"
               onClick={() => void joinBooth()}
-              className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium"
+              className="w-full"
             >
               Join booth
-            </button>
+            </Button>
             {session && (
-              <p className="text-[11px] text-[#7C8B97]">
+              <p className="studio-type-label normal-case tracking-normal text-silver">
                 Link expires {mounted ? new Date(session.expiresAt).toLocaleString() : session.expiresAt}. Camera is
                 ~720p. Host still punches Record.
               </p>
@@ -967,11 +1023,11 @@ export function GuestPortal({
 
         {phase === 'booth' && (
           <div className="space-y-4">
-            <div className={`rounded-2xl border px-4 py-3 flex items-center justify-between gap-3 ${tallyToneClass}`}>
+            <div className={`flex items-center justify-between gap-3 rounded-panel border px-4 py-3 ${tallyToneClass}`}>
               <div>
-                <p className={`text-sm font-medium ${tallyLabelTone}`}>{tallyUi.label}</p>
-                <p className={`text-[11px] mt-0.5 ${labelTone}`}>{presence.label}</p>
-                <p className="text-[11px] text-[#7C8B97] mt-0.5">
+                <p className={`studio-type-body font-medium ${tallyLabelTone}`}>{tallyUi.label}</p>
+                <p className={`studio-type-label mt-0.5 normal-case tracking-normal ${labelTone}`}>{presence.label}</p>
+                <p className="studio-type-label mt-0.5 normal-case tracking-normal text-silver">
                   {tally === 'count-in'
                     ? 'Count-in — stay ready. Host still owns Record.'
                     : tally === 'rec'
@@ -981,72 +1037,88 @@ export function GuestPortal({
                         : 'Waiting for the host to record. You do not punch Record from here.'}
                 </p>
               </div>
-              <p className={`text-[11px] font-mono shrink-0 ${connToneClass}`}>{conn.label}</p>
+              <p className={`studio-type-timecode shrink-0 ${connToneClass}`}>{conn.label}</p>
             </div>
             {recording && captureFlowing === false && (
-              <div className="rounded-xl border border-[#FF7A9A]/70 bg-[#2A1014] px-4 py-2.5 text-[11px] text-[#FFB3C3]">
-                Local backup may not be recording — no samples detected. Check the mic isn’t muted or
-                unplugged and keep this tab focused. Your take could be silent.
+              <div className="rounded-panel border border-heart/70 bg-heart/10 px-4 py-2.5">
+                <p className="studio-type-label inline-flex items-start gap-2 normal-case tracking-normal text-heart">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                  <span>
+                    Local backup may not be recording — no samples detected. Check the mic isn’t muted
+                    or unplugged and keep this tab focused. Your take could be silent.
+                  </span>
+                </p>
               </div>
             )}
             {recording && captureFlowing === true && (
-              <p className="text-[11px] text-[#7CFFB2]">Local backup capturing — samples flowing.</p>
+              <p className="studio-type-label inline-flex items-center gap-1.5 normal-case tracking-normal text-lane-cohost-2">
+                <ShieldCheck size={13} className="shrink-0" />
+                Local backup capturing — samples flowing.
+              </p>
             )}
-            {(iceFailed || presence.phase === 'dropped') && (
-              <div className="rounded-xl border border-[#FF7A9A]/70 bg-[#2A1014] px-4 py-3 text-sm text-[#FFB3C3] space-y-2">
-                <p>{iceFailedHint(turnConfigured)}</p>
-                <p className="text-[11px] text-[#A9B8C6]">
-                  Same invite — no new link. Keep this tab open. When the host punches Record your
-                  local camera backup still uploads.
-                </p>
-                <button
-                  type="button"
+            {/* Guest-drop recovery — prominent + reassuring. Retry reuses the same
+                invite (ICE restart / rebuild), no new link. */}
+            {showDropBanner && (
+              <div className="space-y-2.5 rounded-panel border border-heart/60 bg-heart/10 p-4">
+                <div className="flex items-start gap-2.5">
+                  <WifiOff size={18} className="mt-0.5 shrink-0 text-heart" />
+                  <div className="space-y-1">
+                    <p className="studio-type-body font-medium text-white">
+                      {dropAtSec != null
+                        ? `Disconnected at ${mmss(dropAtSec)} — your audio so far is safe.`
+                        : 'Disconnected — your audio so far is safe.'}
+                    </p>
+                    <p className="studio-type-label normal-case tracking-normal text-silver-body">
+                      {iceFailedHint(turnConfigured)}
+                    </p>
+                    <p className="studio-type-label inline-flex items-center gap-1.5 normal-case tracking-normal text-silver-body">
+                      <ShieldCheck size={13} className="shrink-0 text-lane-cohost-2" />
+                      Reconnecting auto-syncs on the same invite — no new link. Keep this tab open; your
+                      local camera backup still uploads.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="primary"
+                  size="compact"
                   disabled={reconnecting}
                   onClick={() => void retryPeer()}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium disabled:opacity-40"
                 >
-                  <RefreshCw size={14} /> {reconnecting ? 'Reconnecting…' : 'Retry connection'}
-                </button>
+                  <RefreshCw size={14} /> {reconnecting ? 'Reconnecting…' : 'Retry'}
+                </Button>
               </div>
             )}
 
-            <div className="rounded-2xl border border-[#1A232C] bg-[#080C10] p-4 space-y-3">
+            <div className="space-y-3 rounded-panel border border-divider bg-surface-sunken p-4">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm">
-                  <span className="inline-block h-2.5 w-2.5 rounded-full mr-2 bg-[#7CFFB2]" />
+                <p className="studio-type-body text-white">
+                  <span className="mr-2 inline-block h-2.5 w-2.5 rounded-full bg-lane-cohost-2" />
                   {name || 'Guest'}
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
+                  <Button
+                    variant={camOn && !camLocked ? 'primary' : 'secondary'}
+                    size="compact"
                     disabled={recording || (camLocked && !camOn)}
                     onClick={() => void toggleCamera()}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
-                      camLocked
-                        ? 'border border-[#FF7A9A]/50 text-[#FF7A9A]'
-                        : camOn
-                          ? 'bg-[#53D6FF] text-[#061016]'
-                          : 'border border-[#27313B] text-[#B8C4CF]'
-                    }`}
+                    className={camLocked ? 'border-heart/50 text-heart' : undefined}
                   >
                     {camOn ? <Video size={14} /> : <VideoOff size={14} />}
                     {camLocked ? 'Host cam off' : camOn ? 'Cam on' : 'Cam'}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant={muted ? 'danger' : 'secondary'}
+                    size="compact"
                     disabled={muteLocked}
                     onClick={() => toggleMute()}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
-                      muted ? 'bg-red-500/90 text-white' : 'border border-[#27313B] text-[#B8C4CF]'
-                    }`}
                   >
                     {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
                     {muteLocked ? 'Host muted you' : muted ? 'Muted' : 'Mute'}
-                  </button>
+                  </Button>
                 </div>
               </div>
               {(muteLocked || camLocked) && (
-                <p className="text-[11px] text-[#FFB86B]">
+                <p className="studio-type-label normal-case tracking-normal text-lane-cohost-1">
                   {muteLocked && camLocked
                     ? 'Host muted you and turned the camera off. You cannot override until they unmute or allow camera.'
                     : muteLocked
@@ -1059,7 +1131,7 @@ export function GuestPortal({
                   value={camId}
                   disabled={recording || camLocked}
                   onChange={(e) => void changeCameraDevice(e.target.value)}
-                  className="w-full rounded-lg border border-[#27313B] bg-[#151B22] px-3 py-2 text-sm text-[#B8C4CF]"
+                  className="w-full rounded-control border border-divider bg-surface-raised px-3 py-2 text-sm text-silver-body"
                 >
                   <option value="">Default camera</option>
                   {cams.map((cam) => (
@@ -1071,22 +1143,22 @@ export function GuestPortal({
               )}
               {camStream && <CameraPreview stream={camStream} label="You · self-view" live={recording} />}
               <Meter label="You" peak={muted ? 0 : peak} clip={clip} />
-              <p className="text-[11px] text-[#7C8B97]">
+              <p className="studio-type-label normal-case tracking-normal text-silver">
                 Self-view only. Host sees your camera on their Guest card if the peer is up. ~720p cap.
               </p>
             </div>
 
-            <div className="rounded-2xl border border-[#1A232C] bg-[#080C10] p-4 space-y-3">
-              <p className="text-sm">
+            <div className="space-y-3 rounded-panel border border-divider bg-surface-sunken p-4">
+              <p className="studio-type-body text-white">
                 <span
-                  className={`inline-block h-2.5 w-2.5 rounded-full mr-2 ${
-                    talkback ? 'bg-[#53D6FF]' : 'bg-[#27313B]'
+                  className={`mr-2 inline-block h-2.5 w-2.5 rounded-full ${
+                    talkback ? 'bg-forged' : 'bg-divider'
                   }`}
                 />
                 Host{talkback ? ' · talkback' : ''}
               </p>
               <Meter label="Host" peak={talkback ? hostPeak : 0} clip={false} />
-              <p className="text-[11px] text-[#7C8B97]">
+              <p className="studio-type-label normal-case tracking-normal text-silver">
                 {talkback
                   ? 'Host talkback is in your headphones. It is not recorded on your take.'
                   : 'Talkback is off. You will hear the host when they toggle Talkback — not when they hit Record.'}
@@ -1094,28 +1166,28 @@ export function GuestPortal({
             </div>
 
             <div
-              className={`rounded-2xl border p-4 space-y-3 ${
+              className={`space-y-3 rounded-panel border p-4 ${
                 cueLive
-                  ? 'border-[#53D6FF]/50 bg-[#0A161C]'
-                  : 'border-[#1A232C] bg-[#080C10]'
+                  ? 'border-forged/50 bg-forged/5'
+                  : 'border-divider bg-surface-sunken'
               }`}
             >
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm">
+                <p className="studio-type-body text-white">
                   <span
-                    className={`inline-block h-2.5 w-2.5 rounded-full mr-2 ${
-                      cueLive ? 'bg-[#53D6FF]' : cueOn ? 'bg-[#FFB86B]' : 'bg-[#27313B]'
+                    className={`mr-2 inline-block h-2.5 w-2.5 rounded-full ${
+                      cueLive ? 'bg-forged' : cueOn ? 'bg-lane-cohost-1' : 'bg-divider'
                     }`}
                   />
                   Cue{cueLive ? ' · live' : cueOn ? ' · standing by' : ''}
                 </p>
                 {cueLive && (
-                  <span className="inline-flex items-center gap-1 text-[11px] font-mono text-[#8DEBFF]">
+                  <span className="studio-type-timecode inline-flex items-center gap-1 text-ice">
                     <Music2 size={12} /> LIVE
                   </span>
                 )}
               </div>
-              <label className="flex items-center gap-3 text-xs text-[#A9B8C6]">
+              <label className="studio-type-body flex items-center gap-3 text-silver">
                 Volume {cueVolume.toFixed(2)}
                 <input
                   type="range"
@@ -1124,11 +1196,11 @@ export function GuestPortal({
                   step={0.05}
                   value={cueVolume}
                   onChange={(e) => setCueVolume(Number(e.target.value))}
-                  className="flex-1 accent-[#53D6FF]"
+                  className="flex-1 accent-forged"
                 />
               </label>
-              <p className="text-[11px] text-[#7C8B97] flex items-start gap-2">
-                <Headphones size={14} className="text-[#8DEBFF] shrink-0 mt-0.5" />
+              <p className="studio-type-label flex items-start gap-2 normal-case tracking-normal text-silver">
+                <Headphones size={14} className="mt-0.5 shrink-0 text-ice" />
                 <span>
                   {cueLive
                     ? 'Program mix is in your headphones — other lanes, beds, SFX. It is not recorded on your take. Keep phones on so it does not leak into your mic.'
@@ -1141,62 +1213,82 @@ export function GuestPortal({
 
             <div className="flex flex-wrap gap-2">
               {canRetry && (
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="touch"
                   disabled={reconnecting}
                   onClick={() => void retryPeer()}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF] disabled:opacity-40"
                 >
                   <RefreshCw size={14} /> {reconnecting ? 'Reconnecting…' : 'Retry'}
-                </button>
+                </Button>
               )}
-              <button
-                type="button"
-                onClick={() => void leave()}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#FF7A9A]"
-              >
+              <Button variant="danger" size="touch" onClick={() => void leave()}>
                 <PhoneOff size={14} /> Leave
-              </button>
-              {backupUrl && (
+              </Button>
+              {/* When there's nothing wrong with the upload, keep the camera-backup
+                  download here; on failure it moves into the prominent card below. */}
+              {backupUrl && !uploadFailed && (
                 <a
                   href={backupUrl}
                   download="guest-camera.webm"
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
+                  className="studio-type-button inline-flex h-control-touch select-none items-center gap-2 rounded-control border border-divider bg-surface-raised px-4 text-white shadow-inset-top transition-colors duration-150 ease-calm hover:border-forged/60"
                 >
                   <Download size={14} /> Download camera take
                 </a>
               )}
-              {uploadFailed && !uploading && (
-                <button
-                  type="button"
-                  onClick={() => void flushPendingTakes()}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium"
-                >
-                  <RefreshCw size={14} /> Retry upload
-                </button>
-              )}
-              {uploading && (
-                <span className="text-xs text-[#FFB86B] self-center">{uploadStatus || 'Sending take…'}</span>
-              )}
             </div>
 
+            {/* Upload-failure prominence: a clear, reassuring card with Retry +
+                Download backup. The resilient-upload retry logic is unchanged. */}
+            {uploadFailed && !uploading && (
+              <div className="space-y-3 rounded-panel border border-heart/60 bg-heart/10 p-4">
+                <div className="flex items-start gap-2.5">
+                  <UploadCloud size={18} className="mt-0.5 shrink-0 text-heart" />
+                  <div className="space-y-1">
+                    <p className="studio-type-body font-medium text-white">
+                      Take not uploaded yet — it’s saved on this device.
+                    </p>
+                    <p className="studio-type-label normal-case tracking-normal text-silver-body">
+                      The take is held in memory until the host confirms it, and it also survives as
+                      the downloadable camera backup. Reconnect and tap Retry upload — nothing is lost.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="primary" size="touch" onClick={() => void flushPendingTakes()}>
+                    <RefreshCw size={14} /> Retry upload
+                  </Button>
+                  {backupUrl && (
+                    <a
+                      href={backupUrl}
+                      download="guest-camera.webm"
+                      className="studio-type-button inline-flex h-control-touch select-none items-center gap-2 rounded-control border border-divider bg-surface-raised px-4 text-white shadow-inset-top transition-colors duration-150 ease-calm hover:border-forged/60"
+                    >
+                      <Download size={14} /> Download backup
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+
             {(uploading || uploadFailed) && (
-              <div className="rounded-2xl border border-[#1A232C] bg-[#080C10] p-4 space-y-2">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className={uploadFailed ? 'text-[#FF7A9A]' : 'text-[#8DEBFF]'}>
+              <div className="space-y-2 rounded-panel border border-divider bg-surface-sunken p-4">
+                <div className="flex items-center justify-between">
+                  <span className={`studio-type-label normal-case tracking-normal ${uploadFailed ? 'text-heart' : 'text-ice'}`}>
                     {uploadFailed ? 'Upload paused — your take is saved on this device' : uploadStatus || 'Uploading take…'}
                   </span>
-                  <span className="font-mono text-[#A9B8C6]">{Math.round(uploadProgress * 100)}%</span>
+                  <span className="studio-type-timecode text-silver">{Math.round(uploadProgress * 100)}%</span>
                 </div>
-                <div className="h-2 rounded-full bg-[#151B22] overflow-hidden">
+                {/* Distinct paused/failed (heart red) vs uploading (forged blue). */}
+                <div className="h-2 overflow-hidden rounded-full bg-surface-raised">
                   <div
-                    className={`h-full transition-[width] duration-150 ${uploadFailed ? 'bg-[#FF5B73]' : 'bg-[#53D6FF]'}`}
+                    className={`h-full transition-[width] duration-150 ease-calm ${uploadFailed ? 'bg-heart' : 'bg-forged'}`}
                     style={{ width: `${Math.min(100, uploadProgress * 100)}%` }}
                   />
                 </div>
-                <p className="text-[11px] text-[#7C8B97]">
+                <p className="studio-type-label normal-case tracking-normal text-silver">
                   {uploadFailed
-                    ? 'The take is held in memory until the host confirms it. It also survives as the downloadable camera backup below. Reconnect and tap “Retry upload”.'
+                    ? 'Reconnect and tap Retry upload above. The take also survives as the downloadable camera backup.'
                     : 'Keep this tab open. If the network drops the upload retries automatically and resumes when you’re back online.'}
                 </p>
               </div>
@@ -1204,8 +1296,15 @@ export function GuestPortal({
           </div>
         )}
 
-        {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
-        {error && phase !== 'blocked' && <p className="text-sm text-[#FF7A9A]">{error}</p>}
+        {ok && <p className="studio-type-body text-ice">{ok}</p>}
+        {error && phase !== 'blocked' && !showDropBanner && !uploadFailed && (
+          <div className="rounded-control border border-heart/50 bg-heart/10 px-3 py-2">
+            <p className="studio-type-label inline-flex items-start gap-2 normal-case tracking-normal text-heart">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
+            </p>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1214,14 +1313,14 @@ export function GuestPortal({
 function Meter({ label, peak, clip }: { label: string; peak: number; clip: boolean }) {
   return (
     <div className="flex items-center gap-3">
-      <span className="w-10 text-[10px] uppercase tracking-wider text-[#7C8B97]">{label}</span>
-      <div className="h-2 flex-1 rounded-full bg-[#151B22] overflow-hidden">
+      <span className="studio-type-label w-10 text-silver">{label}</span>
+      <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-raised">
         <div
-          className={`h-full transition-[width] duration-75 ${clip ? 'bg-[#FF5B73]' : 'bg-[#53D6FF]'}`}
+          className={`h-full transition-[width] duration-75 ${clip ? 'bg-heart' : 'bg-forged'}`}
           style={{ width: `${Math.min(100, peak * 140)}%` }}
         />
       </div>
-      <span className={`text-xs font-mono ${clip ? 'text-[#FF7A9A]' : 'text-[#A9B8C6]'}`}>
+      <span className={`studio-type-timecode ${clip ? 'text-heart' : 'text-silver'}`}>
         {clip ? 'CLIP' : 'live'}
       </span>
     </div>

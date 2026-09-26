@@ -47,7 +47,8 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
           'disabled:pointer-events-none disabled:opacity-40',
           VARIANTS[variant],
           SIZES[size],
-          active && 'text-forged shadow-glow-subtle',
+          active &&
+            'bg-forged/15 text-forged shadow-glow-medium ring-1 ring-forged/60',
           className
         )}
         {...props}

@@ -39,6 +39,19 @@ export type { SliderProps } from './Slider';
 export { RecordButton } from './RecordButton';
 export type { RecordButtonProps, RecordState } from './RecordButton';
 
+// Form kit — token-styled inputs that drop in for the inline field strings.
+export { Input, Textarea, Select, Checkbox } from './Form';
+export type {
+  InputProps,
+  TextareaProps,
+  SelectProps,
+  CheckboxProps,
+} from './Form';
+
+// Toast — module-store based; mount <Toaster/> once, call toast() anywhere.
+export { toast, Toaster } from './Toast';
+export type { ToastOptions, ToastTone, ToastAction } from './Toast';
+
 // Lane colour helper lives with the podcast lib but is re-exported here
 // so the kit is a one-stop import for studio surfaces.
 export { laneColor, laneCssVar, LANE_IDS } from '@/lib/podcast/lanes';

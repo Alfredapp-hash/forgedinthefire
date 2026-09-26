@@ -255,7 +255,11 @@ export function BoothTile({
     <div
       className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-tile border bg-obsidian transition-[box-shadow,transform] duration-200 ease-calm ${
         active
-          ? 'z-10 scale-[1.02] border-forged/60 shadow-highlight-rim'
+          ? // Active speaker: a subtle lift (guarded — motion-safe only) plus the
+            // cyan glow rim. Reduced-motion users skip the scale and instead get
+            // a stronger, full-opacity forged border so "live" reads without any
+            // motion cue.
+            'z-10 border-forged shadow-highlight-rim motion-safe:scale-[1.02] motion-safe:border-forged/60'
           : muted
             ? 'border-heart/30 shadow-depth-md'
             : 'border-divider shadow-depth-md'
@@ -362,7 +366,7 @@ export function BoothTile({
             aria-pressed={muted}
             aria-label={muted ? `Unmute ${name}` : `Mute ${name}`}
             title={muted ? 'Unmute' : 'Mute'}
-            className={`flex h-8 w-8 items-center justify-center rounded-control border transition-colors ${
+            className={`flex h-8 w-8 items-center justify-center rounded-control border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ice ${
               muted
                 ? 'border-heart/60 bg-heart/15 text-heart hover:bg-heart/25'
                 : 'border-divider bg-surface-card text-silver-label hover:border-forged/40 hover:text-white'
@@ -376,7 +380,7 @@ export function BoothTile({
             aria-pressed={!cameraOn}
             aria-label={cameraOn ? `Turn off ${name} camera` : `Turn on ${name} camera`}
             title={cameraOn ? 'Camera off' : 'Camera on'}
-            className={`flex h-8 w-8 items-center justify-center rounded-control border transition-colors ${
+            className={`flex h-8 w-8 items-center justify-center rounded-control border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ice ${
               cameraOn
                 ? 'border-divider bg-surface-card text-silver-label hover:border-forged/40 hover:text-white'
                 : 'border-[#7A5A1E] bg-[#1A130A] text-[#FFC46B] hover:bg-[#241a0c]'

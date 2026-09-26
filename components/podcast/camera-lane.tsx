@@ -23,6 +23,7 @@ import {
   trackDisplayRatio,
 } from '@/lib/podcast/peaks'
 import type { SwitchEDL } from '@/lib/podcast/switch-edl'
+import { cameraDissolveSpans, clipHasDissolve } from '@/lib/podcast/camera-edit'
 import { TimelinePlayhead, useTrackDpr } from '@/components/podcast/session-timeline'
 import { Button, IconButton } from '@/components/studio-ui'
 import { laneColor, LANE_IDS, type LaneColor, type LaneId } from '@/lib/podcast/lanes'
@@ -54,7 +55,10 @@ type Props = {
   onSlip?: (delta: number) => void
   onMute?: () => void
   onJoin?: () => void
-  onDissolve?: () => void
+  /** Crossfade the selected clip into its neighbour over `seconds`. Configurable. */
+  onDissolve?: (seconds: number) => void
+  /** Remove the selected clip's dissolve (abut neighbour, clear facing fades). */
+  onClearDissolve?: () => void
   onStinger?: (where: 'playhead' | 'cut' | 'chapters') => void
   markers?: { time: number; label: string }[]
   disabled?: boolean
@@ -111,6 +115,7 @@ export function CameraLane({
   onMute,
   onJoin,
   onDissolve,
+  onClearDissolve,
   onStinger,
   markers,
   disabled,
@@ -125,6 +130,8 @@ export function CameraLane({
 }: Props) {
   const boardRef = useRef<HTMLDivElement>(null)
   const width = Math.max(480, Math.round(durationSec * pxPerSec))
+  // Configurable crossfade length for the Dissolve action (seconds).
+  const [dissolveSeconds, setDissolveSeconds] = useState(0.5)
   // Which switch marker is actively being dragged — drives the highlight rim.
   const [draggingSwitchId, setDraggingSwitchId] = useState<string | null>(null)
   const drag = useRef<
@@ -137,6 +144,11 @@ export function CameraLane({
   >(null)
   const selected = clips.find((c) => c.id === selectedId) || null
   const showBroken = Boolean(broken && linked)
+  // Clips whose OUT edge dissolves into the next same-lane clip — used to draw a
+  // crossfade cue on the clip. Read-only; the compositor renders the real fade.
+  const dissolveSpans = cameraDissolveSpans(clips)
+  const dissolveIds = new Set(dissolveSpans.map((s) => s.leftId))
+  const selectedHasDissolve = Boolean(selected && clipHasDissolve(clips, selected.id))
 
   // Every clip on this lane belongs to the same person; use it as the waveform + cut source.
   const personId = clips[0]?.personId ?? null
@@ -441,8 +453,8 @@ export function CameraLane({
                   key={clip.id}
                   data-cam-clip={clip.id}
                   title={`${kindLabel} ${formatClock(clip.offset)}–${formatClock(cameraClipEnd(clip))} · in ${formatClock(cameraSourceStart(clip))} · ${formatBytes(clip.bytes)}${clip.muted ? ' · muted' : ''}${clip.fadeIn || clip.fadeOut ? ` · fade ${clip.fadeIn || 0}/${clip.fadeOut || 0}` : ''}`}
-                  className={`studio-type-timecode absolute text-left leading-none truncate rounded-clip transition-shadow ${
-                    isSelected ? 'text-white shadow-highlight-rim' : 'text-silver-body shadow-depth-sm'
+                  className={`studio-type-timecode absolute text-left leading-none truncate rounded-clip cursor-grab active:cursor-grabbing transition-[box-shadow,transform,filter] duration-150 hover:-translate-y-px hover:brightness-110 hover:shadow-glow-subtle ${
+                    isSelected ? 'text-white shadow-highlight-rim ring-1 ring-ice/60' : 'text-silver-body shadow-depth-sm hover:shadow-depth-md'
                   } ${clip.muted ? 'opacity-40' : ''}`}
                   style={{
                     top: 6,
@@ -451,7 +463,7 @@ export function CameraLane({
                     width: box.width,
                     paddingLeft: 6,
                     paddingRight: 6,
-                    border: `1px solid ${isSelected ? 'transparent' : clipColor}`,
+                    border: `1px solid ${isSelected ? laneHue.base : clipColor}`,
                     background: clipFill,
                   }}
                   onPointerDown={(event) => {
@@ -467,6 +479,13 @@ export function CameraLane({
                     }
                   }}
                 >
+                  {dissolveIds.has(clip.id) && (
+                    <span
+                      aria-hidden
+                      className="absolute inset-y-0 right-0 w-3 rounded-r-clip bg-gradient-to-l from-ice/50 to-transparent pointer-events-none"
+                      title="Dissolve into next clip"
+                    />
+                  )}
                   <FilmSprockets color={sprocketColor} />
                   <span className="relative z-10">
                     {kind === 'title'
@@ -598,15 +617,38 @@ export function CameraLane({
           <Button size="dense" variant="ghost" disabled={disabled} onClick={onJoin}>
             Join
           </Button>
-          <Button
-            size="dense"
-            variant="ghost"
-            disabled={disabled || !selected}
-            onClick={onDissolve}
-            title="Overlap the next clip and fade — Kdenlive / MLT dissolve. Picture only."
-          >
-            Dissolve
-          </Button>
+          <span className="inline-flex items-center gap-1">
+            <Button
+              size="dense"
+              variant={selectedHasDissolve ? 'primary' : 'ghost'}
+              disabled={disabled || !selected}
+              onClick={() => onDissolve?.(dissolveSeconds)}
+              title="Overlap the next clip and crossfade — Kdenlive / MLT dissolve. Rendered on export. Picture only."
+            >
+              Dissolve
+            </Button>
+            <select
+              aria-label="Dissolve length"
+              className="h-control-dense rounded-control border border-divider bg-surface-raised px-1 text-[12px] text-white disabled:opacity-40"
+              value={dissolveSeconds}
+              disabled={disabled || !selected}
+              onChange={(e) => {
+                const s = Number(e.target.value)
+                setDissolveSeconds(s)
+                if (selectedHasDissolve) onDissolve?.(s)
+              }}
+            >
+              <option value={0.25}>0.25s</option>
+              <option value={0.5}>0.5s</option>
+              <option value={1}>1.0s</option>
+              <option value={1.5}>1.5s</option>
+            </select>
+            {selectedHasDissolve && onClearDissolve && (
+              <Button size="dense" variant="ghost" disabled={disabled} onClick={onClearDissolve} title="Remove this dissolve">
+                ✕
+              </Button>
+            )}
+          </span>
           {onStinger && (
             <>
               <Button

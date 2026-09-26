@@ -25,7 +25,9 @@
     --white: #f6fafc;
     --body-text: #b8c4cf;
     --silver: #a9b8c6;
-    --label: #7c8b97;
+    /* Bumped from #7c8b97 (failed WCAG AA on dark surfaces at 12px) to #9aabba
+       so uppercase labels clear ~6.7:1 on steel and ~8.5:1 on obsidian. */
+    --label: #9aabba;
 
     /* The heart. Sacred. The only warm colour the site spends freely — with one
        deliberate exception, Quick Exit, which borrows the heart's own deep

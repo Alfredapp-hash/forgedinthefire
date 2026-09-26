@@ -1,9 +1,9 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { CheckCircle2, Circle } from 'lucide-react'
-import { Button, Panel } from '@/components/studio-ui'
+import { CheckCircle2, Circle, X } from 'lucide-react'
+import { Button, Panel, Select, Toaster, toast } from '@/components/studio-ui'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
 import { StudioStageBar } from '@/components/podcast/studio-stage-bar'
 import { EpisodePlan, type QueueFilter } from '@/components/podcast/episode-plan'
@@ -34,6 +34,16 @@ type Props = {
 
 const PLANNED_STATUSES: EpisodeStatus[] = ['draft', 'recording', 'editing', 'review', 'scheduled']
 
+/** Maps a feed-compliance check id to the Plan-stage form field that fixes it.
+ *  Ids with no editable Plan field (audio enclosure, byte length, duration, mime)
+ *  are omitted — those are fixed in Record/Edit, not Plan. */
+const COMPLIANCE_FIELD: Record<string, string> = {
+  title: 'title',
+  summary: 'summary',
+  cover_url: 'cover',
+  chapters: 'chapters',
+}
+
 export function RecordingStudio({
   episodes,
   topics,
@@ -55,6 +65,26 @@ export function RecordingStudio({
   const [chapterTitle, setChapterTitle] = useState('')
   const [chapterStart, setChapterStart] = useState('0:00')
   const [uploadingCover, setUploadingCover] = useState(false)
+  // First-run guidance banner: explains the Plan→Record→Edit→Publish flow.
+  // Dismissal is remembered so seasoned hosts never see it again.
+  const [showTip, setShowTip] = useState(false)
+
+  useEffect(() => {
+    try {
+      setShowTip(window.localStorage.getItem('studio-flow-tip-dismissed') !== '1')
+    } catch {
+      setShowTip(true)
+    }
+  }, [])
+
+  function dismissTip() {
+    setShowTip(false)
+    try {
+      window.localStorage.setItem('studio-flow-tip-dismissed', '1')
+    } catch {
+      /* ignore storage failures */
+    }
+  }
 
   const episode = useMemo(
     () => episodes.find((ep) => ep.id === selectedId) || null,
@@ -103,21 +133,45 @@ export function RecordingStudio({
   const checks = useMemo(() => {
     if (!episode) return []
     // Feed-compliance blockers (must pass to publish) + advisory production items.
+    // `field` maps each item to the Plan-stage input it fixes, so a failing
+    // checklist row can jump the host straight to the thing to correct.
     const feed = (compliance?.checks ?? []).map((c) => ({
       ok: c.ok,
       label: c.detail && !c.ok ? `${c.label} — ${c.detail}` : c.label,
       required: c.required,
+      field: COMPLIANCE_FIELD[c.id] ?? null,
     }))
     return [
       ...feed,
-      { ok: Boolean(episode.show_notes), label: 'Show notes / script', required: false },
-      { ok: episode.episode_number != null, label: 'Episode number', required: false },
-      { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters added', required: false },
-      { ok: Boolean(episode.transcript), label: 'Transcript', required: false },
-      { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)', required: false },
-      { ok: Boolean(episode.topic_id), label: 'Linked studio topic', required: false },
+      { ok: Boolean(episode.show_notes), label: 'Show notes / script', required: false, field: 'notes' },
+      { ok: episode.episode_number != null, label: 'Episode number', required: false, field: 'epnum' },
+      { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters added', required: false, field: 'chapters' },
+      { ok: Boolean(episode.transcript), label: 'Transcript', required: false, field: 'transcript' },
+      { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)', required: false, field: 'sched' },
+      { ok: Boolean(episode.topic_id), label: 'Linked studio topic', required: false, field: 'topic' },
     ]
   }, [episode, compliance])
+
+  // Jump from a failing checklist row to the Plan-stage field that fixes it:
+  // switch to Plan, then focus/scroll the field once it has mounted.
+  function jumpToField(field: string | null) {
+    if (!field) return
+    setStage('plan')
+    if (!episode) return
+    const targetId = `plan-field-${field}-${episode.id}`
+    window.setTimeout(() => {
+      const el = document.getElementById(targetId)
+      if (!el) return
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      if (
+        el instanceof HTMLInputElement ||
+        el instanceof HTMLTextAreaElement ||
+        el instanceof HTMLSelectElement
+      ) {
+        el.focus({ preventScroll: true })
+      }
+    }, 60)
+  }
 
   function replaceEpisode(next: PodcastEpisode) {
     const exists = episodes.some((ep) => ep.id === next.id)
@@ -138,8 +192,11 @@ export function RecordingStudio({
       if (!res.ok) throw new Error(data.error || 'Save failed')
       replaceEpisode(normalizeEpisode(data))
       setOk(label)
+      toast({ title: label, tone: 'success' })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed')
+      const message = err instanceof Error ? err.message : 'Save failed'
+      setError(message)
+      toast({ title: 'Save failed', description: message, tone: 'error' })
     } finally {
       setSaving(false)
     }
@@ -160,9 +217,12 @@ export function RecordingStudio({
       replaceEpisode(created)
       onSelect(created.id)
       setOk(label)
+      toast({ title: label, tone: 'success' })
       return created
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create episode')
+      const message = err instanceof Error ? err.message : 'Could not create episode'
+      setError(message)
+      toast({ title: 'Could not create episode', description: message, tone: 'error' })
       return null
     } finally {
       setCreating(false)
@@ -173,6 +233,7 @@ export function RecordingStudio({
     const title = draftTitle.trim()
     if (!title) {
       setError('Give the episode a title before opening the studio')
+      toast({ title: 'Add a title first', description: 'The episode needs a title before it can open in the studio.', tone: 'error' })
       return
     }
     const created = await createEpisode(
@@ -230,9 +291,13 @@ export function RecordingStudio({
     }
     await saveEpisode(patch, 'Mix saved to this episode')
     if (!seconds) {
-      setError('Mix saved, but duration could not be measured — set it manually before publishing (RSS needs it)')
+      const message = 'Mix saved, but duration could not be measured — set it manually before publishing (RSS needs it)'
+      setError(message)
+      toast({ title: 'Duration missing', description: message, tone: 'error', duration: 8000 })
     } else if (!fileSize) {
-      setError('Mix saved, but file size is missing — re-upload before publishing')
+      const message = 'Mix saved, but file size is missing — re-upload before publishing'
+      setError(message)
+      toast({ title: 'File size missing', description: message, tone: 'error', duration: 8000 })
     }
   }
 
@@ -244,7 +309,9 @@ export function RecordingStudio({
       const asset = await uploadPodcastMedia(file, `${episode.title} cover`)
       await saveEpisode({ cover_url: asset.url }, 'Cover saved')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Cover upload failed')
+      const message = err instanceof Error ? err.message : 'Cover upload failed'
+      setError(message)
+      toast({ title: 'Cover upload failed', description: message, tone: 'error' })
     } finally {
       setUploadingCover(false)
     }
@@ -254,7 +321,14 @@ export function RecordingStudio({
     if (!episode) return
     const gate = checkFeedCompliance(episode)
     if (!gate.ok) {
-      setError(`Cannot publish — ${gate.blockers.map((b) => b.detail || b.label).join('; ')}`)
+      const blockers = gate.blockers.map((b) => b.detail || b.label).join('; ')
+      setError(`Cannot publish — ${blockers}`)
+      toast({
+        title: 'Publish blocked',
+        description: `Fix these first: ${blockers}`,
+        tone: 'error',
+        duration: 8000,
+      })
       return
     }
     await saveEpisode(
@@ -271,10 +345,12 @@ export function RecordingStudio({
     if (!episode) return
     if (status === 'published' && !episode.audio_url) {
       setError('Save a mix before publishing')
+      toast({ title: 'Save a mix before publishing', tone: 'error' })
       return
     }
     if (status === 'scheduled' && !episode.scheduled_for) {
       setError('Set a schedule time before marking this episode scheduled')
+      toast({ title: 'Set a schedule time first', description: 'Add a publish date before marking this scheduled.', tone: 'error' })
       return
     }
     void saveEpisode({ status })
@@ -296,6 +372,7 @@ export function RecordingStudio({
     const start_ms = parseTimestamp(chapterStart)
     if (!chapterTitle.trim() || start_ms == null) {
       setError('Chapter needs a title and start time like 1:30')
+      toast({ title: 'Chapter needs a title and start time', description: 'Use a start time like 1:30.', tone: 'error' })
       return
     }
     const next: PodcastChapter[] = [...(episode.chapters || []), { start_ms, title: chapterTitle.trim() }].sort(
@@ -324,6 +401,31 @@ export function RecordingStudio({
 
   return (
     <div className="space-y-4">
+      {/* Single Toaster mount for the whole studio: every surface's toast() renders here. */}
+      <Toaster />
+
+      {showTip && (
+        <Panel elevation="raised" className="flex items-start justify-between gap-4 p-4">
+          <div>
+            <p className="studio-type-label text-ice">How the studio works</p>
+            <p className="studio-type-body mt-1 text-silver-body">
+              Move an episode through four stages: <span className="text-white">Plan</span> the details,{' '}
+              <span className="text-white">Record</span> your takes, <span className="text-white">Edit</span> the mix,
+              then <span className="text-white">Publish</span> to the site and RSS. Everything you enter follows the
+              episode through every stage — use the stage bar to move between them.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={dismissTip}
+            aria-label="Dismiss tip"
+            className="studio-type-label -mr-1 -mt-1 inline-flex shrink-0 items-center gap-1 rounded-control px-2 py-1 text-silver-label transition-colors hover:text-white"
+          >
+            <X size={14} /> Got it
+          </button>
+        </Panel>
+      )}
+
       {!episode ? (
         // No episode loaded yet: show the Plan queue so the host can pick or write one.
         <>
@@ -389,15 +491,16 @@ export function RecordingStudio({
 
           {/* Status control + jump to the standalone episode page, on every stage. */}
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <select
+            <Select
+              aria-label="Episode status"
               value={episode.status}
               onChange={(e) => changeStatus(e.target.value as EpisodeStatus)}
-              className="studio-type-body rounded-control border border-divider bg-obsidian px-3 py-2 text-white shadow-inset-top transition-[border-color,box-shadow] duration-150 ease-calm focus:border-forged/60 focus:shadow-glow-subtle"
+              className="w-auto"
             >
               {EPISODE_PIPELINE.map((status) => (
                 <option key={status} value={status}>{status}</option>
               ))}
-            </select>
+            </Select>
             <Link
               href={`/admin/podcast/${episode.id}`}
               className="studio-type-button inline-flex items-center rounded-control border border-divider bg-surface-raised px-3 py-2 text-silver shadow-inset-top transition-[border-color,box-shadow] duration-150 ease-calm hover:border-forged/60 hover:text-white hover:shadow-glow-subtle"
@@ -449,6 +552,7 @@ export function RecordingStudio({
               checks={checks}
               complianceOk={Boolean(compliance?.ok)}
               blockersText={blockersText}
+              onJumpField={jumpToField}
               toLocalInput={toLocalInput}
             />
           )}
@@ -472,29 +576,46 @@ export function RecordingStudio({
                 </Button>
               </div>
               {blockersText && (
-                <p className="studio-type-label mb-4 rounded-control border border-heart/40 bg-heart/10 px-3 py-2 text-heart">
-                  Publish blocked · {blockersText}
-                </p>
+                <div className="mb-4 rounded-control border border-heart/40 bg-heart/10 px-3 py-2.5">
+                  <p className="studio-type-label text-heart">Publish blocked · {blockersText}</p>
+                  <p className="studio-type-body mt-1 text-silver-body">
+                    If a mix is missing or too quiet, re-record in <span className="text-white">Record</span> or re-mix in{' '}
+                    <span className="text-white">Edit</span>; metadata gaps jump to <span className="text-white">Plan</span>{' '}
+                    from the list below.
+                  </p>
+                </div>
               )}
               <ul className="grid gap-2 sm:grid-cols-2">
                 {checks.map((item) => {
                   const failing = item.required && !item.ok
-                  return (
-                    <li
-                      key={item.label}
-                      className={`studio-type-body flex items-center gap-2.5 rounded-control border px-3 py-2 ${
-                        failing
-                          ? 'border-heart/40 bg-heart/5 text-heart'
-                          : 'border-divider bg-obsidian/40 text-silver-body'
-                      }`}
-                    >
-                      {item.ok ? (
-                        <CheckCircle2 size={16} className="shrink-0 text-forged" />
-                      ) : (
-                        <Circle size={16} className={`shrink-0 ${item.required ? 'text-heart' : 'text-divider'}`} />
-                      )}
+                  const jumpable = !item.ok && Boolean(item.field)
+                  const icon = item.ok ? (
+                    <CheckCircle2 size={16} className="shrink-0 text-forged" />
+                  ) : (
+                    <Circle size={16} className={`shrink-0 ${item.required ? 'text-heart' : 'text-divider'}`} />
+                  )
+                  const rowClass = `studio-type-body flex w-full items-center gap-2.5 rounded-control border px-3 py-2 text-left transition-[border-color,box-shadow] duration-150 ease-calm ${
+                    failing
+                      ? 'border-heart/40 bg-heart/5 text-heart'
+                      : 'border-divider bg-obsidian/40 text-silver-body'
+                  } ${jumpable ? 'hover:border-forged/60 hover:shadow-glow-subtle' : ''}`
+                  const body = (
+                    <>
+                      {icon}
                       <span className="min-w-0 flex-1">{item.label}</span>
-                      {failing && <span className="studio-type-label shrink-0 text-heart">required</span>}
+                      {jumpable && <span className="studio-type-label shrink-0 text-ice">Fix →</span>}
+                      {failing && !jumpable && <span className="studio-type-label shrink-0 text-heart">required</span>}
+                    </>
+                  )
+                  return (
+                    <li key={item.label}>
+                      {jumpable ? (
+                        <button type="button" onClick={() => jumpToField(item.field)} className={rowClass}>
+                          {body}
+                        </button>
+                      ) : (
+                        <div className={rowClass}>{body}</div>
+                      )}
                     </li>
                   )
                 })}
@@ -519,6 +640,7 @@ export function RecordingStudio({
                 onMarkChapter={markChapterAt}
                 chapters={episode.chapters}
                 stage={stage}
+                onGoToStage={setStage}
               />
             </Panel>
           </div>

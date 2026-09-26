@@ -249,6 +249,61 @@ export function dissolveCameraPair(clips: CameraClip[], clipId: string, seconds 
   )
 }
 
+/**
+ * Detect a rendered dissolve between adjacent same-lane clips: two clips of the
+ * same person/kind/layer whose timeline seats overlap AND whose facing edges both
+ * carry a fade (as `dissolveCameraPair` writes). Returns the overlap band in
+ * session time so the lane can draw a labeled crossfade region. The compositor
+ * already renders this as a true crossfade via per-clip opacity — this is purely
+ * a read for visualization, never a mutation.
+ */
+export function cameraDissolveSpans(
+  clips: CameraClip[],
+): { start: number; end: number; seconds: number; leftId: string; rightId: string }[] {
+  const spans: { start: number; end: number; seconds: number; leftId: string; rightId: string }[] = []
+  const ordered = withCameraClips(clips, clips)
+  for (let i = 0; i < ordered.length - 1; i++) {
+    const a = ordered[i]
+    for (let j = i + 1; j < ordered.length; j++) {
+      const b = ordered[j]
+      if (
+        a.personId !== b.personId ||
+        cameraKind(a) !== cameraKind(b) ||
+        cameraLayer(a) !== cameraLayer(b) ||
+        cameraKind(a) !== 'camera'
+      )
+        continue
+      const overlap = cameraClipEnd(a) - b.offset
+      if (overlap > MIN_CLIP && (a.fadeOut || 0) > 0.01 && (b.fadeIn || 0) > 0.01) {
+        spans.push({ start: b.offset, end: cameraClipEnd(a), seconds: overlap, leftId: a.id, rightId: b.id })
+      }
+      break
+    }
+  }
+  return spans
+}
+
+/** True when this clip dissolves into (or from) an adjacent same-lane clip. */
+export function clipHasDissolve(clips: CameraClip[], clipId: string): boolean {
+  return cameraDissolveSpans(clips).some((s) => s.leftId === clipId || s.rightId === clipId)
+}
+
+/** Undo a dissolve: pull the right clip back to abut the left and clear the facing fades. */
+export function clearCameraDissolve(clips: CameraClip[], clipId: string): CameraClip[] {
+  const span = cameraDissolveSpans(clips).find((s) => s.leftId === clipId || s.rightId === clipId)
+  if (!span) return clips
+  const left = clips.find((c) => c.id === span.leftId)
+  if (!left) return clips
+  return withCameraClips(
+    clips,
+    clips.map((c) => {
+      if (c.id === span.leftId) return { ...c, fadeOut: 0 }
+      if (c.id === span.rightId) return { ...c, offset: cameraClipEnd(left), fadeIn: 0 }
+      return c
+    }),
+  )
+}
+
 const MAX_KEYFRAMES = 4
 
 export function setCameraKeyframes(clips: CameraClip[], clipId: string, keyframes: PictureKeyframe[]): CameraClip[] {

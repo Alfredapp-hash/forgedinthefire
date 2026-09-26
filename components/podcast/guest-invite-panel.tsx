@@ -1,7 +1,23 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Copy, Headphones, Link2, MicOff, Music2, Radio, RefreshCw, UserX, Video, VideoOff, Volume2 } from 'lucide-react'
+import {
+  AlertTriangle,
+  Copy,
+  Headphones,
+  Link2,
+  MicOff,
+  Music2,
+  Radio,
+  RefreshCw,
+  ShieldCheck,
+  UserX,
+  Video,
+  VideoOff,
+  Volume2,
+  WifiOff,
+} from 'lucide-react'
+import { Button, toast } from '@/components/studio-ui'
 import { openInputStream, stopStreams } from '@/lib/podcast/capture'
 import { createHostFallbackSendMix, type HostFallbackSendMix } from '@/lib/podcast/guest-cue'
 import {
@@ -51,12 +67,18 @@ type Props = {
 }
 
 const TONE_CLASS: Record<string, string> = {
-  live: 'text-[#7CFFB2]',
-  rec: 'text-[#FF7A9A]',
-  wait: 'text-[#FFB86B]',
-  warn: 'text-[#FFB86B]',
-  fail: 'text-[#FF7A9A]',
-  idle: 'text-[#A9B8C6]',
+  live: 'text-lane-cohost-2',
+  rec: 'text-heart',
+  wait: 'text-lane-cohost-1',
+  warn: 'text-lane-cohost-1',
+  fail: 'text-heart',
+  idle: 'text-silver',
+}
+
+function mmss(totalSeconds: number) {
+  const s = Math.max(0, Math.floor(totalSeconds))
+  const m = Math.floor(s / 60)
+  return `${m}:${String(s % 60).padStart(2, '0')}`
 }
 
 export function GuestInvitePanel({
@@ -87,6 +109,11 @@ export function GuestInvitePanel({
   const [reconnecting, setReconnecting] = useState(false)
   const [talkback, setTalkback] = useState(false)
   const [cueToGuest, setCueToGuest] = useState(false)
+  // Wall-clock of the last successful connect, plus the elapsed offset captured
+  // at the moment a drop/fail was detected — used only for the reassuring
+  // "disconnected at MM:SS" copy. Purely presentational; no transport impact.
+  const connectedAtRef = useRef<number | null>(null)
+  const [dropAtSec, setDropAtSec] = useState<number | null>(null)
   const iceCfgRef = useRef<StudioIceConfig | null>(null)
   const peerRef = useRef<RTCPeerConnection | null>(null)
   const afterRef = useRef(0)
@@ -350,6 +377,18 @@ export function GuestInvitePanel({
     }
   }
 
+  // Freeze the "disconnected at MM:SS" offset once per drop so the banner reads a
+  // stable timestamp. Presentational only — the reconnect logic is untouched.
+  function noteDrop() {
+    setDropAtSec((prev) => {
+      if (prev != null) return prev
+      const startedAt = connectedAtRef.current
+      const at = startedAt != null ? (Date.now() - startedAt) / 1000 : 0
+      toast({ title: `Guest disconnected at ${mmss(at)}`, description: 'Their audio so far is safe.', tone: 'error' })
+      return at
+    })
+  }
+
   function resetPeer(inviteId: string, iceServers?: RTCIceServer[]) {
     closePeer(peerRef.current, false)
     peerRef.current = null
@@ -381,21 +420,28 @@ export function GuestInvitePanel({
     peer.oniceconnectionstatechange = () => {
       setIce(peer.iceConnectionState)
       if (peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed') {
+        const wasDown = connectedAtRef.current == null
+        connectedAtRef.current = Date.now()
+        setDropAtSec(null)
         setReconnecting(false)
         void setAdminInviteState(inviteId, 'connected').catch(() => {})
+        if (wasDown) toast({ title: 'Guest connected', tone: 'success' })
       }
       if (peer.iceConnectionState === 'failed') {
+        noteDrop()
         setError(iceFailedHint(iceCfgRef.current?.turnConfigured || false))
         onRemoteStream(null)
         onRemoteVideo?.(false)
       }
       if (peer.iceConnectionState === 'disconnected') {
+        noteDrop()
         onRemoteStream(null)
         onRemoteVideo?.(false)
       }
     }
     peer.onconnectionstatechange = () => {
       if (peer.connectionState === 'failed') {
+        noteDrop()
         setError(iceFailedHint(iceCfgRef.current?.turnConfigured || false))
         onRemoteStream(null)
         onRemoteVideo?.(false)
@@ -465,6 +511,18 @@ export function GuestInvitePanel({
       setReconnecting(false)
       setError(err instanceof Error ? err.message : 'Could not reconnect')
     }
+  }
+
+  // Dismiss the drop banner and carry on without the guest. Non-destructive: the
+  // invite stays live so the guest can still reopen the same link and auto-sync;
+  // this only clears the recovery prompt and stops the host waiting on it.
+  function continueSolo() {
+    setDropAtSec(null)
+    setReconnecting(false)
+    setError(null)
+    onRemoteStream(null)
+    onRemoteVideo?.(false)
+    toast({ title: 'Continuing solo', description: 'Guest can rejoin on the same link anytime.', tone: 'success' })
   }
 
   async function createLink() {
@@ -553,36 +611,75 @@ export function GuestInvitePanel({
   const liveInvite = Boolean(live) && !live?.revoked && !live?.expired
   const guestInBooth = liveInvite && live?.state !== 'pending' && live?.state !== 'left'
   const canRetry = presence.phase === 'failed' || presence.phase === 'dropped'
+  const showDropBanner = liveInvite && (canRetry || dropAtSec != null)
 
   return (
-    <div className="rounded-xl border border-[#1A232C] bg-[#0A1016] p-3 space-y-2">
+    <div className="rounded-panel border border-divider bg-surface-sunken p-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <Link2 size={14} className="text-[#8DEBFF]" />
-        <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Remote guest</p>
-        <span className={`text-[11px] font-mono ${TONE_CLASS[presence.tone] || TONE_CLASS.idle}`}>
+        <Link2 size={14} className="text-ice" />
+        <p className="studio-type-label text-ice">Remote guest</p>
+        <span className={`studio-type-timecode ${TONE_CLASS[presence.tone] || TONE_CLASS.idle}`}>
           {presence.label}
         </span>
-        {live?.guestName && <span className="text-xs text-[#F6FAFC]">{live.guestName}</span>}
+        {live?.guestName && <span className="studio-type-body text-white">{live.guestName}</span>}
         {ice && (
-          <span className={`text-[11px] font-mono ${TONE_CLASS[conn.tone] || TONE_CLASS.idle}`}>
+          <span className={`studio-type-timecode ${TONE_CLASS[conn.tone] || TONE_CLASS.idle}`}>
             {conn.label}
           </span>
         )}
         {liveInvite && (
-          <span className={`text-[11px] font-mono ${TONE_CLASS[tally.tone] || TONE_CLASS.idle}`}>
+          <span className={`studio-type-timecode ${TONE_CLASS[tally.tone] || TONE_CLASS.idle}`}>
             {tally.label}
           </span>
         )}
       </div>
-      {stale && (
-        <div className="rounded-lg border border-[#FFB86B]/60 bg-[#241A0A] px-3 py-2 text-[11px] text-[#F2D68A]">
-          Guest not responding — no heartbeat for {Math.round(GUEST_STALE_MS / 1000)}s+. Their tab may
-          be closed, asleep, or offline. The peer may still show connected but audio/video could be
-          stale. Try Retry, or ask them to reopen the same invite link.
+      {/* Guest-drop recovery — prominent + reassuring. Reuses retryPeer (same
+          invite, no new transport) and a non-destructive Continue solo. */}
+      {showDropBanner && (
+        <div className="rounded-panel border border-heart/60 bg-heart/10 p-3 space-y-2.5">
+          <div className="flex items-start gap-2.5">
+            <WifiOff size={18} className="mt-0.5 shrink-0 text-heart" />
+            <div className="space-y-1">
+              <p className="studio-type-body font-medium text-white">
+                {dropAtSec != null
+                  ? `Guest disconnected at ${mmss(dropAtSec)} — your audio so far is safe.`
+                  : 'Guest disconnected — your audio so far is safe.'}
+              </p>
+              <p className="studio-type-label inline-flex items-center gap-1.5 normal-case tracking-normal text-silver-body">
+                <ShieldCheck size={13} className="text-lane-cohost-2" />
+                Reconnecting auto-syncs on the same invite — no new link, nothing lost.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="primary"
+              size="compact"
+              disabled={busy || reconnecting || !guestInBooth}
+              onClick={() => void retryPeer()}
+            >
+              <RefreshCw size={14} /> {reconnecting ? 'Reconnecting…' : 'Retry connection'}
+            </Button>
+            <Button variant="secondary" size="compact" disabled={busy} onClick={continueSolo}>
+              Continue solo
+            </Button>
+          </div>
+        </div>
+      )}
+      {stale && !showDropBanner && (
+        <div className="rounded-panel border border-lane-cohost-1/50 bg-lane-cohost-1/10 px-3 py-2">
+          <p className="studio-type-label inline-flex items-start gap-2 normal-case tracking-normal text-lane-cohost-1">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span>
+              Guest not responding — no heartbeat for {Math.round(GUEST_STALE_MS / 1000)}s+. Their tab
+              may be closed, asleep, or offline. The peer may still show connected but audio/video
+              could be stale. Try Retry, or ask them to reopen the same invite link.
+            </span>
+          </p>
         </div>
       )}
       {live && !live.revoked && !live.expired && (
-        <p className="text-[11px] text-[#7C8B97]">
+        <p className="studio-type-label normal-case tracking-normal text-silver">
           Mic {muteLocked ? 'host muted' : guestMuted ? 'guest muted' : 'live'}
           {' · '}
           Cam {camLocked ? 'host off' : guestCamOn ? 'on' : 'off'}
@@ -592,13 +689,13 @@ export function GuestInvitePanel({
         </p>
       )}
       {!episodeId ? (
-        <p className="text-xs text-[#A9B8C6]">Open an episode to send a guest link.</p>
+        <p className="studio-type-body text-silver">Open an episode to send a guest link.</p>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <label className="text-xs text-[#A9B8C6] flex items-center gap-2">
+          <label className="studio-type-body flex items-center gap-2 text-silver">
             Expires
             <select
-              className="rounded-lg border border-[#27313B] bg-[#151B22] px-2 py-1.5 text-sm text-[#B8C4CF]"
+              className="rounded-control border border-divider bg-surface-raised px-2 py-1.5 text-sm text-silver-body"
               value={hours}
               onChange={(e) => setHours(Number(e.target.value))}
             >
@@ -608,113 +705,84 @@ export function GuestInvitePanel({
               <option value={168}>7 days</option>
             </select>
           </label>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void createLink()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium disabled:opacity-40"
-          >
+          <Button variant="primary" size="compact" disabled={busy} onClick={() => void createLink()}>
             <Radio size={14} /> {live && !live.revoked && !live.expired ? 'New link' : 'Create invite'}
-          </button>
+          </Button>
           {freshUrl && (
-            <button
-              type="button"
-              onClick={() => void copyLink()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF]"
-            >
+            <Button variant="secondary" size="compact" onClick={() => void copyLink()}>
               <Copy size={14} /> {copied ? 'Copied' : 'Copy link'}
-            </button>
+            </Button>
           )}
           {live && !live.revoked && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void revokeLive()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#27313B] text-sm text-[#FF7A9A]"
-            >
+            <Button variant="danger" size="compact" disabled={busy} onClick={() => void revokeLive()}>
               <UserX size={14} /> Revoke
-            </button>
+            </Button>
           )}
         </div>
       )}
       {liveInvite && (
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
+          <Button
+            variant={muteLocked ? 'danger' : 'secondary'}
+            size="compact"
             disabled={busy}
             onClick={() => void setGuestMute(!muteLocked)}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
-              muteLocked
-                ? 'bg-red-500/90 text-white'
-                : 'border border-[#27313B] text-[#B8C4CF]'
-            }`}
           >
             {muteLocked ? <Volume2 size={14} /> : <MicOff size={14} />}
             {muteLocked ? 'Unmute guest' : 'Mute guest'}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
+            size="compact"
             disabled={busy}
             onClick={() => void setGuestCamera(camLocked)}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
-              camLocked
-                ? 'border border-[#FF7A9A]/50 text-[#FF7A9A]'
-                : 'border border-[#27313B] text-[#B8C4CF]'
-            }`}
+            className={camLocked ? 'border-heart/50 text-heart' : undefined}
           >
             {camLocked ? <Video size={14} /> : <VideoOff size={14} />}
             {camLocked ? 'Allow camera' : 'Camera off'}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant={talkback ? 'primary' : 'secondary'}
+            size="compact"
             disabled={busy || !guestInBooth}
             onClick={() => void setTalkbackOn(!talkback)}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
-              talkback
-                ? 'bg-[#53D6FF] text-[#061016]'
-                : 'border border-[#27313B] text-[#B8C4CF]'
-            } disabled:opacity-40`}
           >
             <Headphones size={14} /> {talkback ? 'Talkback on' : 'Talkback'}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant={cueLive ? 'primary' : 'secondary'}
+            size="compact"
             disabled={busy || !guestInBooth}
             onClick={() => setCueToGuestOn(!cueToGuest)}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
-              cueLive
-                ? 'bg-[#53D6FF] text-[#061016]'
-                : cueToGuest
-                  ? 'border border-[#53D6FF]/70 text-[#8DEBFF]'
-                  : 'border border-[#27313B] text-[#B8C4CF]'
-            } disabled:opacity-40`}
+            className={!cueLive && cueToGuest ? 'border-forged/70 text-ice' : undefined}
           >
             <Music2 size={14} /> {cueLive ? 'Cue live' : cueToGuest ? 'Cue armed' : 'Cue to guest'}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant={canRetry ? 'primary' : 'secondary'}
+            size="compact"
             disabled={busy || reconnecting || !guestInBooth}
             onClick={() => void retryPeer()}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm ${
-              canRetry
-                ? 'bg-[#53D6FF] text-[#061016]'
-                : 'border border-[#27313B] text-[#B8C4CF]'
-            } disabled:opacity-40`}
           >
             <RefreshCw size={14} /> {reconnecting ? 'Reconnecting…' : canRetry ? 'Retry' : 'Reconnect'}
-          </button>
+          </Button>
         </div>
       )}
       {freshUrl && (
-        <p className="text-[11px] font-mono text-[#8DEBFF] break-all">{freshUrl}</p>
+        <p className="studio-type-timecode break-all text-ice">{freshUrl}</p>
       )}
       {!turnConfigured && (
-        <div className="rounded-lg border border-[#E8B84B]/50 bg-[#221B0A] px-3 py-2 text-xs text-[#F2D68A]">
-          Relay (TURN) not configured. Guests on strict or office networks may fail to connect — set
-          TURN_URL, TURN_USERNAME, and TURN_CREDENTIAL, or have the guest use a phone hotspot.
+        <div className="rounded-panel border border-lane-cohost-1/50 bg-lane-cohost-1/10 px-3 py-2">
+          <p className="studio-type-label inline-flex items-start gap-2 normal-case tracking-normal text-lane-cohost-1">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span>
+              Relay (TURN) not configured. Guests on strict or office networks may fail to connect —
+              set TURN_URL, TURN_USERNAME, and TURN_CREDENTIAL, or have the guest use a phone hotspot.
+            </span>
+          </p>
         </div>
       )}
-      <p className="text-[11px] text-[#7C8B97]">
+      <p className="studio-type-label normal-case tracking-normal text-silver">
         Talkback is your mic in their phones. Cue to guest sends the live mix (other lanes, beds,
         SFX — not the Guest take being recorded) on a second audio line. Neither is laid on the
         Guest take or their local backup. Mute, camera-off, and Retry are unchanged. You keep
@@ -725,20 +793,14 @@ export function GuestInvitePanel({
         Retry uses the same invite — no new token. If the peer fails, their booth can still upload a
         camera file.
       </p>
-      {canRetry && (
-        <div className="rounded-lg border border-[#FF7A9A]/60 bg-[#2A1014] px-3 py-2 text-xs text-[#FFB3C3] space-y-2">
-          <p>{iceFailedHint(turnConfigured)}</p>
-          <button
-            type="button"
-            disabled={reconnecting}
-            onClick={() => void retryPeer()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium disabled:opacity-40"
-          >
-            <RefreshCw size={14} /> {reconnecting ? 'Reconnecting…' : 'Retry connection'}
-          </button>
+      {error && (
+        <div className="rounded-control border border-heart/50 bg-heart/10 px-3 py-2">
+          <p className="studio-type-label inline-flex items-start gap-2 normal-case tracking-normal text-heart">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span>{error}</span>
+          </p>
         </div>
       )}
-      {error && <p className="text-xs text-[#FF7A9A]">{error}</p>}
     </div>
   )
 }

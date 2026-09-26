@@ -25,7 +25,7 @@ const ON_ACCENT = '#061016'; // text on a bright blue fill
 const WHITE = '#F6FAFC';
 const BODY = '#B8C4CF';
 const SILVER = '#A9B8C6';
-const LABEL = '#7C8B97';
+const LABEL = '#9AABBA'; // bumped from #7C8B97 for WCAG AA on dark surfaces
 const HEART = '#FF5B73'; // sacred — heart only
 const HEART_TINT = '#FF5B73'; // kept as alias; functional states use ice blue
 

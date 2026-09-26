@@ -13,6 +13,7 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react'
+import { Button, Input, Panel, Toaster, toast } from '@/components/studio-ui'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
 import { measureAudioDuration, uploadPodcastMedia } from '@/lib/podcast/media-upload'
 import { checkFeedCompliance } from '@/lib/podcast/compliance'
@@ -38,6 +39,10 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
   const [chapterTitle, setChapterTitle] = useState('')
   const [chapterStart, setChapterStart] = useState('0:00')
   const [copied, setCopied] = useState<string | null>(null)
+  // Type-to-confirm delete modal + soft-delete/undo bookkeeping.
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmText, setConfirmText] = useState('')
+  const [deleting, setDeleting] = useState(false)
 
   async function load() {
     const [epRes, tps] = await Promise.all([
@@ -82,8 +87,11 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         ad_markers: Array.isArray(data.ad_markers) ? data.ad_markers : [],
       })
       setOk(label)
+      toast({ title: label, tone: 'success' })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed')
+      const message = err instanceof Error ? err.message : 'Save failed'
+      setError(message)
+      toast({ title: 'Save failed', description: message, tone: 'error' })
     } finally {
       setSaving(false)
     }
@@ -110,13 +118,19 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
           duration_seconds: seconds,
         }, 'Audio saved')
         if (!seconds) {
-          setError('Audio saved, but duration could not be measured — set it manually before publishing (RSS needs it)')
+          const message = 'Audio saved, but duration could not be measured — set it manually before publishing (RSS needs it)'
+          setError(message)
+          toast({ title: 'Duration missing', description: message, tone: 'error', duration: 8000 })
         } else if (!fileSize) {
-          setError('Audio saved, but file size is missing — re-upload before publishing')
+          const message = 'Audio saved, but file size is missing — re-upload before publishing'
+          setError(message)
+          toast({ title: 'File size missing', description: message, tone: 'error', duration: 8000 })
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed')
+      const message = err instanceof Error ? err.message : 'Upload failed'
+      setError(message)
+      toast({ title: 'Upload failed', description: message, tone: 'error' })
     } finally {
       setUploading(false)
     }
@@ -126,7 +140,9 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
     if (!episode) return
     const gate = checkFeedCompliance(episode)
     if (!gate.ok) {
-      setError(`Cannot publish — ${gate.blockers.map((b) => b.detail || b.label).join('; ')}`)
+      const blockers = gate.blockers.map((b) => b.detail || b.label).join('; ')
+      setError(`Cannot publish — ${blockers}`)
+      toast({ title: 'Publish blocked', description: `Fix these first: ${blockers}`, tone: 'error', duration: 8000 })
       return
     }
     await save(
@@ -139,16 +155,93 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
     )
   }
 
+  /**
+   * Safe delete: instead of a bare window.confirm + irreversible DELETE, we
+   *   1. require the host to type the title (type-to-confirm modal),
+   *   2. soft-delete by moving the episode to `archived` (reversible via PATCH),
+   *   3. show a 6s Undo toast that restores the prior status,
+   *   4. only hard-DELETE once the undo window elapses.
+   * The episode leaves the public feed immediately (archived), but nothing is
+   * destroyed until the host has had a real chance to undo.
+   */
   async function removeEpisode() {
     if (!episode) return
-    if (!window.confirm(`Delete “${episode.title}”? This cannot be undone.`)) return
-    const res = await fetch(`/api/admin/studio/episodes?id=${episode.id}`, { method: 'DELETE' })
-    const data = await res.json()
-    if (!res.ok) {
-      setError(data.error || 'Delete failed')
+    const target = episode
+    const priorStatus = target.status
+    setConfirmDelete(false)
+    setConfirmText('')
+    setDeleting(true)
+    setError(null)
+
+    // Step 1 — soft delete (archive) so it drops out of the feed but stays recoverable.
+    try {
+      const res = await fetch('/api/admin/studio/episodes', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: target.id, status: 'archived' }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || 'Delete failed')
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Delete failed'
+      setError(message)
+      setDeleting(false)
+      toast({ title: 'Delete failed', description: message, tone: 'error' })
       return
     }
-    router.push('/admin/podcast')
+
+    let undone = false
+
+    // Step 4 — hard delete after the undo window, unless the host undid it.
+    const purge = window.setTimeout(() => {
+      if (undone) return
+      void fetch(`/api/admin/studio/episodes?id=${target.id}`, { method: 'DELETE' }).finally(() => {
+        router.push('/admin/podcast')
+      })
+    }, 6000)
+
+    // Step 3 — Undo toast restores the prior status.
+    toast({
+      title: `Deleted “${target.title}”`,
+      description: 'Archived now, permanently removed in a moment.',
+      tone: 'neutral',
+      duration: 6000,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          undone = true
+          window.clearTimeout(purge)
+          setDeleting(false)
+          void fetch('/api/admin/studio/episodes', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: target.id, status: priorStatus }),
+          })
+            .then((res) => {
+              if (!res.ok) throw new Error('Restore failed')
+              return res.json()
+            })
+            .then((data) => {
+              setEpisode({
+                ...data,
+                chapters: Array.isArray(data.chapters) ? data.chapters : [],
+                keywords: Array.isArray(data.keywords) ? data.keywords : [],
+                ad_markers: Array.isArray(data.ad_markers) ? data.ad_markers : [],
+              })
+              toast({ title: 'Restored', tone: 'success' })
+            })
+            .catch(() => {
+              toast({
+                title: 'Could not restore',
+                description: 'Reopen the episode from All episodes to check its status.',
+                tone: 'error',
+              })
+            })
+        },
+      },
+    })
   }
 
   async function duplicateEpisode() {
@@ -159,10 +252,21 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
       const res = await fetch(`/api/admin/studio/episodes/${episode.id}/duplicate`, { method: 'POST' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Duplicate failed')
-      router.push(`/admin/podcast/${data.id}`)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Duplicate failed')
+      toast({
+        title: 'Episode duplicated',
+        description: 'A copy is ready to edit.',
+        tone: 'success',
+        action: {
+          label: 'Open copy',
+          onClick: () => router.push(`/admin/podcast/${data.id}`),
+        },
+      })
       setSaving(false)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Duplicate failed'
+      setError(message)
+      setSaving(false)
+      toast({ title: 'Duplicate failed', description: message, tone: 'error' })
     }
   }
 
@@ -177,6 +281,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
     const start_ms = parseTimestamp(chapterStart)
     if (!chapterTitle.trim() || start_ms == null) {
       setError('Chapter needs a title and start time like 1:30 or 0:01:05')
+      toast({ title: 'Chapter needs a title and start time', description: 'Use a start time like 1:30 or 0:01:05.', tone: 'error' })
       return
     }
     const next: PodcastChapter[] = [...(episode.chapters || []), { start_ms, title: chapterTitle.trim() }]
@@ -211,17 +316,33 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
       ok: c.ok,
       label: c.detail && !c.ok ? `${c.label} — ${c.detail}` : c.label,
       required: c.required,
+      field: COMPLIANCE_FIELD[c.id] ?? null,
     }))
     return [
       ...feed,
-      { ok: Boolean(episode.show_notes), label: 'Show notes', required: false },
-      { ok: episode.episode_number != null, label: 'Episode number', required: false },
-      { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters', required: false },
-      { ok: Boolean(episode.transcript), label: 'Transcript → VTT in RSS', required: false },
-      { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)', required: false },
-      { ok: Boolean(episode.topic_id), label: 'Linked biweekly topic', required: false },
+      { ok: Boolean(episode.show_notes), label: 'Show notes', required: false, field: 'notes' },
+      { ok: episode.episode_number != null, label: 'Episode number', required: false, field: 'epnum' },
+      { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters', required: false, field: 'chapters' },
+      { ok: Boolean(episode.transcript), label: 'Transcript → VTT in RSS', required: false, field: 'transcript' },
+      { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)', required: false, field: 'sched' },
+      { ok: Boolean(episode.topic_id), label: 'Linked biweekly topic', required: false, field: 'topic' },
     ]
   }, [episode, compliance])
+
+  // Scroll/focus the field a failing checklist row fixes.
+  function jumpToField(field: string | null) {
+    if (!field || !episode) return
+    const el = document.getElementById(`ep-field-${field}`)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (
+      el instanceof HTMLInputElement ||
+      el instanceof HTMLTextAreaElement ||
+      el instanceof HTMLSelectElement
+    ) {
+      el.focus({ preventScroll: true })
+    }
+  }
 
   if (!episode) {
     return <p className="text-[#A9B8C6] flex items-center gap-2"><Loader2 className="animate-spin" size={16} /> Loading episode…</p>
@@ -229,11 +350,59 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
+      <Toaster />
+
+      {confirmDelete && episode && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-obsidian/70 p-4 backdrop-blur"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-episode-title"
+        >
+          <Panel elevation="raised" className="w-full max-w-md p-6">
+            <p id="delete-episode-title" className="studio-type-section !text-[16px] text-white">
+              Delete this episode?
+            </p>
+            <p className="studio-type-body mt-2 text-silver-body">
+              This removes “{episode.title}” from the site and RSS. You&rsquo;ll get a few seconds to undo before it&rsquo;s
+              permanently deleted. Type the episode title to confirm.
+            </p>
+            <div className="mt-4">
+              <Input
+                autoFocus
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder={episode.title}
+                aria-label="Type the episode title to confirm deletion"
+              />
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                size="compact"
+                onClick={() => { setConfirmDelete(false); setConfirmText('') }}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                size="compact"
+                disabled={confirmText.trim() !== episode.title.trim()}
+                onClick={() => void removeEpisode()}
+              >
+                <Trash2 size={14} /> Delete episode
+              </Button>
+            </div>
+          </Panel>
+        </div>
+      )}
+
       <Link href="/admin/podcast" className="inline-flex items-center gap-2 text-sm text-[#8DEBFF]">
         <ArrowLeft size={14} /> All episodes
       </Link>
       <header className="flex flex-col md:flex-row md:items-start justify-between gap-4">
         <input
+          id="ep-field-title"
           defaultValue={episode.title}
           onBlur={(e) => e.target.value.trim() && e.target.value !== episode.title && void save({ title: e.target.value.trim() })}
           className="flex-1 bg-transparent text-2xl font-bold text-[#F6FAFC] focus:outline-none"
@@ -245,6 +414,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
               const status = e.target.value as EpisodeStatus
               if (status === 'published' && !episode.audio_url) {
                 setError('Upload or record audio before publishing')
+                toast({ title: 'Add audio before publishing', tone: 'error' })
                 return
               }
               void save({ status })
@@ -279,11 +449,12 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
           </button>
           <button
             type="button"
-            onClick={() => void removeEpisode()}
-            className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-red-300"
+            onClick={() => { setConfirmText(''); setConfirmDelete(true) }}
+            disabled={deleting}
+            className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-red-300 disabled:opacity-40"
           >
             <Trash2 size={14} />
-            Delete
+            {deleting ? 'Deleting…' : 'Delete'}
           </button>
         </div>
       </header>
@@ -296,6 +467,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         </Field>
         <Field label="Topic">
           <select
+            id="ep-field-topic"
             value={episode.topic_id || ''}
             onChange={(e) => void save({ topic_id: e.target.value || null })}
             className={input}
@@ -308,7 +480,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
           <input type="number" defaultValue={episode.season} onBlur={(e) => void save({ season: Number(e.target.value) })} className={input} />
         </Field>
         <Field label="Episode number">
-          <input type="number" defaultValue={episode.episode_number ?? ''} onBlur={(e) => void save({ episode_number: e.target.value })} className={input} />
+          <input id="ep-field-epnum" type="number" defaultValue={episode.episode_number ?? ''} onBlur={(e) => void save({ episode_number: e.target.value })} className={input} />
         </Field>
         <Field label="Episode type">
           <select
@@ -334,6 +506,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         </Field>
         <Field label="Schedule publish (local)">
           <input
+            id="ep-field-sched"
             type="datetime-local"
             defaultValue={toLocalInput(episode.scheduled_for)}
             onBlur={(e) => {
@@ -355,7 +528,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         </Field>
         <div className="md:col-span-2">
           <Field label="Summary">
-            <textarea defaultValue={episode.summary || ''} rows={2} onBlur={(e) => void save({ summary: e.target.value })} className={input} />
+            <textarea id="ep-field-summary" defaultValue={episode.summary || ''} rows={2} onBlur={(e) => void save({ summary: e.target.value })} className={input} />
           </Field>
         </div>
         <div className="md:col-span-2">
@@ -365,12 +538,12 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         </div>
         <div className="md:col-span-2">
           <Field label="Show notes">
-            <textarea defaultValue={episode.show_notes || ''} rows={5} onBlur={(e) => void save({ show_notes: e.target.value })} className={input} />
+            <textarea id="ep-field-notes" defaultValue={episode.show_notes || ''} rows={5} onBlur={(e) => void save({ show_notes: e.target.value })} className={input} />
           </Field>
         </div>
         <div className="md:col-span-2">
           <Field label="Transcript">
-            <textarea defaultValue={episode.transcript || ''} rows={6} onBlur={(e) => void save({ transcript: e.target.value })} className={input} />
+            <textarea id="ep-field-transcript" defaultValue={episode.transcript || ''} rows={6} onBlur={(e) => void save({ transcript: e.target.value })} className={input} />
           </Field>
         </div>
         <div className="md:col-span-2">
@@ -396,11 +569,11 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         )}
       </section>
 
-      <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-3">
+      <section id="ep-field-chapters" className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-3">
         <p className="text-sm font-medium text-[#F6FAFC]">Chapters</p>
         <ul className="space-y-2">
           {(episode.chapters || []).map((ch, idx) => (
-            <li key={`${ch.start_ms}-${idx}`} className="flex items-center justify-between gap-3 text-sm text-[#B8C4CF]">
+            <li key={`ch-${ch.start_ms}-${ch.title || idx}`} className="flex items-center justify-between gap-3 text-sm text-[#B8C4CF]">
               <span><span className="text-[#8DEBFF]">{formatMs(ch.start_ms)}</span> — {ch.title}</span>
               <button type="button" onClick={() => removeChapter(idx)} className="text-red-300 text-xs">Remove</button>
             </li>
@@ -451,7 +624,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
                 Hosted on forgedinthefireohio.org media storage · served via /podcast and RSS to Apple, Spotify, Amazon
               </p>
             </div>
-            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF] cursor-pointer">
+            <label id="ep-field-cover" className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF] cursor-pointer">
               Upload cover art
               <input type="file" accept="image/*" className="hidden" onChange={(e) => {
                 const file = e.target.files?.[0]
@@ -534,18 +707,35 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
           </p>
         )}
         <ul className="space-y-2">
-          {checks.map((item) => (
-            <li
-              key={item.label}
-              className={`flex items-center gap-2 text-sm ${item.required && !item.ok ? 'text-red-300' : 'text-[#B8C4CF]'}`}
-            >
-              {item.ok
-                ? <CheckCircle2 size={16} className="text-[#53D6FF]" />
-                : <Circle size={16} className={item.required ? 'text-red-400' : 'text-[#27313B]'} />}
-              {item.label}
-              {item.required && !item.ok && <span className="text-[10px] uppercase tracking-wide">required</span>}
-            </li>
-          ))}
+          {checks.map((item) => {
+            const failing = item.required && !item.ok
+            const jumpable = !item.ok && Boolean(item.field)
+            const icon = item.ok
+              ? <CheckCircle2 size={16} className="text-[#53D6FF]" />
+              : <Circle size={16} className={item.required ? 'text-red-400' : 'text-[#27313B]'} />
+            const cls = `flex items-center gap-2 text-sm ${failing ? 'text-red-300' : 'text-[#B8C4CF]'}`
+            return (
+              <li key={item.label}>
+                {jumpable ? (
+                  <button
+                    type="button"
+                    onClick={() => jumpToField(item.field)}
+                    className={`${cls} w-full text-left hover:text-[#8DEBFF]`}
+                  >
+                    {icon}
+                    <span className="flex-1">{item.label}</span>
+                    <span className="text-[10px] uppercase tracking-wide text-[#53D6FF]">Fix →</span>
+                  </button>
+                ) : (
+                  <div className={cls}>
+                    {icon}
+                    <span className="flex-1">{item.label}</span>
+                    {failing && <span className="text-[10px] uppercase tracking-wide">required</span>}
+                  </div>
+                )}
+              </li>
+            )
+          })}
         </ul>
         {saving && <p className="text-xs text-[#A9B8C6] mt-3">Saving…</p>}
       </section>
@@ -563,6 +753,14 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const input = 'w-full rounded-lg border border-[#27313B] bg-[#05070A] px-3 py-2 text-sm text-[#F6FAFC]'
+
+/** Maps a feed-compliance check id to the field that fixes it (ep-field-<field>). */
+const COMPLIANCE_FIELD: Record<string, string> = {
+  title: 'title',
+  summary: 'summary',
+  cover_url: 'cover',
+  chapters: 'chapters',
+}
 
 function parseTimestamp(value: string): number | null {
   const parts = value.trim().split(':').map(Number)

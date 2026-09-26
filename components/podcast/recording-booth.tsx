@@ -58,13 +58,18 @@ function mmss(totalSec: number): string {
  * Responsive grid class for an equal tile layout that stays balanced from 1 up
  * to ~6 participants (beyond that it wraps to a dense 3-wide grid).
  *   1 → full · 2 → side-by-side · 3-4 → 2×2 · 5-6 → 3×2
+ *
+ * On phones (<640px) every case collapses to a SINGLE column so tiles stay
+ * tappable; the stage scrolls vertically (see the grid container) rather than
+ * cramming 3-across into a narrow viewport. Row auto-sizing + a per-tile min
+ * height keep each tile a usable size on small screens.
  */
 function gridClass(count: number): string {
-  if (count <= 1) return 'grid-cols-1 grid-rows-1'
-  if (count === 2) return 'grid-cols-1 grid-rows-2 sm:grid-cols-2 sm:grid-rows-1'
+  if (count <= 1) return 'grid-cols-1 sm:grid-rows-1'
+  if (count === 2) return 'grid-cols-1 sm:grid-cols-2 sm:grid-rows-1'
   if (count <= 4) return 'grid-cols-1 sm:grid-cols-2'
   if (count <= 6) return 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
-  return 'grid-cols-2 lg:grid-cols-3'
+  return 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -237,10 +242,26 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
 
   // Drive the native modal so the booth sits in the browser top layer (above
   // native <select> popups and everything else) and the page behind goes inert.
+  // `<dialog showModal>` traps Tab within the dialog natively; we add the focus
+  // RETURN (native dialogs don't restore focus to the trigger) and move initial
+  // focus into the dialog so keyboard users start inside the trap.
   const dialogRef = useRef<HTMLDialogElement | null>(null)
+  const triggerRef = useRef<HTMLElement | null>(null)
   useEffect(() => {
     const dlg = dialogRef.current
-    if (open && mounted && dlg && !dlg.open) dlg.showModal()
+    if (open && mounted && dlg && !dlg.open) {
+      triggerRef.current = (document.activeElement as HTMLElement | null) ?? null
+      dlg.showModal()
+      const initial = dlg.querySelector<HTMLElement>('[data-autofocus]')
+      initial?.focus()
+    }
+    return () => {
+      const trigger = triggerRef.current
+      if (trigger && typeof trigger.focus === 'function' && trigger.isConnected) {
+        trigger.focus()
+      }
+      triggerRef.current = null
+    }
   }, [open, mounted])
 
   if (!open || !mounted) return null
@@ -265,17 +286,22 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
         </div>
 
         <div className="flex items-center gap-4">
-          {/* Layout toggle: Grid (default) vs Auto (active-speaker). */}
-          <SegmentedControl
-            aria-label="Camera layout"
-            size="dense"
-            value={layout}
-            onValueChange={setLayout}
-            options={[
-              { value: 'grid', label: 'Grid' },
-              { value: 'auto', label: 'Auto' },
-            ]}
-          />
+          {/* Layout toggle: Grid (default) vs Auto (active-speaker). The Auto
+              hint ("Active speaker becomes the main camera") is surfaced via a
+              native tooltip on the group and folded into the group's accessible
+              name, since the SegmentedControl exposes no per-option aria. */}
+          <span title="Auto: the active speaker becomes the main camera">
+            <SegmentedControl
+              aria-label="Camera layout — Auto makes the active speaker the main camera"
+              size="dense"
+              value={layout}
+              onValueChange={setLayout}
+              options={[
+                { value: 'grid', label: 'Grid' },
+                { value: 'auto', label: 'Auto' },
+              ]}
+            />
+          </span>
 
           {countIn ? (
             <div className="flex items-center gap-2" aria-live="assertive">
@@ -303,8 +329,10 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
         </div>
       </header>
 
-      {/* Participant stage */}
-      <main className="relative min-h-0 flex-1 overflow-hidden p-4">
+      {/* Participant stage. On phones the grid stacks single-column and scrolls
+          vertically (overflow-y-auto), so tiles never get crushed; from sm up it
+          is a fixed, non-scrolling equal grid. */}
+      <main className="relative min-h-0 flex-1 overflow-y-auto p-4 sm:overflow-hidden">
         {tiles.length === 0 ? (
           <div className="studio-type-body flex h-full w-full items-center justify-center rounded-tile border border-dashed border-divider text-silver-label">
             No participants in the booth yet.
@@ -334,11 +362,11 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
             {/* PIP strip — everyone else, overlaid along the bottom. With just
                 the host, this is empty and the MAIN fills the stage. */}
             {pipParticipants.length > 0 ? (
-              <div className="pointer-events-none absolute inset-x-3 bottom-3 flex justify-end gap-3">
+              <div className="pointer-events-none absolute inset-x-3 bottom-3 flex justify-end gap-2 overflow-x-auto sm:gap-3">
                 {pipParticipants.map((p) => (
                   <div
                     key={p.id}
-                    className="pointer-events-auto aspect-video w-40 shrink-0 overflow-hidden rounded-tile shadow-depth-lg sm:w-48 lg:w-56"
+                    className="pointer-events-auto aspect-video w-32 shrink-0 overflow-hidden rounded-tile shadow-depth-lg sm:w-48 lg:w-56"
                   >
                     <BoothTile
                       id={p.id}
@@ -362,7 +390,9 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
             ) : null}
           </div>
         ) : (
-          <div className={`grid h-full w-full gap-4 ${gridClass(tiles.length)}`}>
+          <div
+            className={`grid w-full gap-4 [grid-auto-rows:minmax(theme(spacing.44),1fr)] sm:h-full sm:[grid-auto-rows:1fr] ${gridClass(tiles.length)}`}
+          >
             {tiles.map((p) => (
               <BoothTile
                 key={p.id}
@@ -431,13 +461,27 @@ export function RecordingBooth(props: RecordingBoothProps): React.JSX.Element | 
         {/* Primary record / stop — the signature tactile RecordButton, with a
             label so the affordance reads clearly in the control bar. */}
         <div className="flex items-center gap-3">
-          <RecordButton
-            state={recording ? 'recording' : 'idle'}
-            size={52}
-            disabled={!canRecord}
-            aria-label={recording ? 'Stop recording' : 'Start recording'}
-            onClick={onToggleRecord}
-          />
+          {/* The RecordButton is the booth's primary action, so it takes initial
+              focus when the dialog opens. During count-in the big countdown
+              number is overlaid on the button so the beat reads at a glance. */}
+          <div className="relative">
+            <RecordButton
+              state={recording ? 'recording' : countIn ? 'armed' : 'idle'}
+              size={52}
+              disabled={!canRecord}
+              aria-label={recording ? 'Stop recording' : 'Start recording'}
+              onClick={onToggleRecord}
+              data-autofocus
+            />
+            {countIn && countdownSec != null ? (
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 flex items-center justify-center text-xl font-semibold tabular-nums text-white drop-shadow"
+              >
+                {countdownSec}
+              </span>
+            ) : null}
+          </div>
           <span className="studio-type-button hidden text-silver-label sm:inline">
             {recording ? 'Stop' : 'Record'}
           </span>

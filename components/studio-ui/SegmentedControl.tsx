@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef, type KeyboardEvent } from 'react';
 import { cn } from '@/lib/utils';
 
 export interface SegmentedOption<T extends string> {
@@ -19,6 +20,10 @@ export interface SegmentedControlProps<T extends string> {
 /**
  * An iOS-style segmented control: a graphite well with a sliding-feel
  * selected pill. Token-driven; state is owned by the caller.
+ *
+ * Keyboard: ArrowLeft/ArrowRight (and Up/Down) move a roving focus through
+ * the radios and commit the value, wrapping at the ends — the standard
+ * radiogroup pattern. Only the checked radio is in the tab order.
  */
 export function SegmentedControl<T extends string>({
   options,
@@ -29,6 +34,40 @@ export function SegmentedControl<T extends string>({
   ...rest
 }: SegmentedControlProps<T>) {
   const h = size === 'dense' ? 'h-control-dense' : 'h-control-compact';
+  const btnRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const move = (fromIndex: number, delta: number) => {
+    const n = options.length;
+    if (n === 0) return;
+    const next = (fromIndex + delta + n) % n;
+    const opt = options[next];
+    onValueChange(opt.value);
+    btnRefs.current[next]?.focus();
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    switch (e.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        e.preventDefault();
+        move(index, 1);
+        break;
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        e.preventDefault();
+        move(index, -1);
+        break;
+      case 'Home':
+        e.preventDefault();
+        move(-1, 1);
+        break;
+      case 'End':
+        e.preventDefault();
+        move(0, -1);
+        break;
+    }
+  };
+
   return (
     <div
       role="radiogroup"
@@ -39,15 +78,20 @@ export function SegmentedControl<T extends string>({
         className
       )}
     >
-      {options.map((opt) => {
+      {options.map((opt, index) => {
         const selected = opt.value === value;
         return (
           <button
             key={opt.value}
+            ref={(el) => {
+              btnRefs.current[index] = el;
+            }}
             type="button"
             role="radio"
             aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
             onClick={() => onValueChange(opt.value)}
+            onKeyDown={(e) => onKeyDown(e, index)}
             className={cn(
               'studio-type-button rounded-[6px] px-3',
               h,

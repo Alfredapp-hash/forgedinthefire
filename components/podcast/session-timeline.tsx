@@ -20,11 +20,22 @@ export type SessionTimelineProps = {
   pxPerSec: number
   selectedId: string | null
   selectedClipId: string | null
+  /** All clips in the current multi-selection (includes the primary clip). */
+  selectedClipIds?: Set<string>
+  /** Snap active — draws a subtle grid tint hint on lanes. Visual only. */
+  snap?: boolean
+  /** Loop transport active — draws the labeled loop-zone band across the ruler. */
+  loop?: boolean
   range: { start: number; end: number }
-  onSelect: (trackId: string, clipId: string | null) => void
+  /** Additive = Cmd/Ctrl-click (toggle clip in the multi-selection). */
+  onSelect: (trackId: string, clipId: string | null, additive?: boolean) => void
   onPlayhead: (sec: number) => void
+  /** Fired once at the start of a move/trim/roll drag so the host can snapshot undo. */
+  onEditStart?: () => void
   onMoveClip: (trackId: string, clipId: string, offset: number) => void
   onTrimClip: (trackId: string, clipId: string, edge: 'in' | 'out', time: number) => void
+  /** Roll trim: Shift+drag an edge trims the neighbour, preserving total length. */
+  onRollTrim?: (trackId: string, clipId: string, edge: 'in' | 'out', time: number) => void
   onRange: (start: number, end: number, trackId: string) => void
   /** Scope lanes to one person. Primary editor is per-person, not one shared board. */
   personId?: string | null
@@ -115,11 +126,16 @@ export function SessionTimeline({
   pxPerSec,
   selectedId,
   selectedClipId,
+  selectedClipIds,
+  snap = false,
+  loop = false,
   range,
   onSelect,
   onPlayhead,
+  onEditStart,
   onMoveClip,
   onTrimClip,
+  onRollTrim,
   onRange,
   personId = null,
   durationSec,
@@ -142,7 +158,7 @@ export function SessionTimeline({
   const boardRef = useRef<HTMLDivElement>(null)
   const drag = useRef<
     | { kind: 'move'; trackId: string; clipId: string; startX: number; startOffset: number; moved: boolean }
-    | { kind: 'trim'; trackId: string; clipId: string; edge: 'in' | 'out' }
+    | { kind: 'trim'; trackId: string; clipId: string; edge: 'in' | 'out'; roll: boolean }
     | { kind: 'range'; trackId: string; anchor: number }
     | { kind: 'seek' }
     | null
@@ -207,7 +223,8 @@ export function SessionTimeline({
       const delta = (event.clientX - d.startX) / pxPerSec
       onMoveClip(d.trackId, d.clipId, Math.max(0, d.startOffset + delta))
     } else if (d.kind === 'trim') {
-      onTrimClip(d.trackId, d.clipId, d.edge, t)
+      if (d.roll && onRollTrim) onRollTrim(d.trackId, d.clipId, d.edge, t)
+      else onTrimClip(d.trackId, d.clipId, d.edge, t)
     } else if (d.kind === 'range') {
       onRange(Math.min(d.anchor, t), Math.max(d.anchor, t), d.trackId)
       onPlayhead(t)
@@ -244,11 +261,15 @@ export function SessionTimeline({
   ) {
     event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
-    onSelect(track.id, clip.id)
+    // Cmd/Ctrl-click toggles multi-selection; a plain click replaces it.
+    onSelect(track.id, clip.id, event.metaKey || event.ctrlKey)
     if (edge) {
-      drag.current = { kind: 'trim', trackId: track.id, clipId: clip.id, edge }
+      onEditStart?.()
+      // Shift+drag an edge = roll trim (moves the boundary with the neighbour).
+      drag.current = { kind: 'trim', trackId: track.id, clipId: clip.id, edge, roll: event.shiftKey }
       return
     }
+    onEditStart?.()
     drag.current = {
       kind: 'move',
       trackId: track.id,
@@ -274,6 +295,9 @@ export function SessionTimeline({
   const showPersonLabel = !embedded && !personId
   const rulerH = showRuler ? 24 : 0
   const selBox = snapSpan(selStart * pxPerSec, selEnd * pxPerSec, 2)
+  // Loop-zone band: a labeled translucent region on the ruler when loop is armed
+  // over a real range. Purely presentational; the transport owns the loop logic.
+  const showLoopBand = loop && hasRange && showRuler
 
   const board = (
     <div
@@ -318,6 +342,20 @@ export function SessionTimeline({
               width: selBox.width,
             }}
           />
+        )}
+
+        {showLoopBand && (
+          <div
+            className="absolute z-20 pointer-events-none rounded-clip border-x-2 border-ice/70 bg-ice/10"
+            style={{ top: 0, height: rulerH, left: selBox.left, width: selBox.width }}
+          >
+            <span
+              className="studio-type-label absolute left-1 top-1/2 -translate-y-1/2 rounded-clip bg-ice/20 px-1 leading-none text-ice"
+              style={{ maxWidth: Math.max(0, selBox.width - 6) }}
+            >
+              ⟲ Loop {formatClock(selStart)}–{formatClock(selEnd)}
+            </span>
+          </div>
         )}
 
         {rows.map(({ person, lane }, rowIndex) => {
@@ -380,10 +418,16 @@ export function SessionTimeline({
                     )}
                     {clips.length === 0 && (
                       <div
-                        className="studio-type-label absolute h-9 rounded-clip border border-dashed px-2 flex items-center text-silver-label"
-                        style={{ left: embedded ? 52 : 8, minWidth: 72, top: 8, borderColor: hue.border }}
+                        className="studio-type-label absolute h-9 rounded-clip border border-dashed px-2 flex items-center text-silver-label transition-colors"
+                        style={{
+                          left: embedded ? 52 : 8,
+                          minWidth: 72,
+                          top: 8,
+                          borderColor: hue.border,
+                          background: `${hue.laneBg}`,
+                        }}
                       >
-                        empty — arm or record
+                        ready — arm or record
                       </div>
                     )}
                     {clips.map((clip) => (
@@ -393,7 +437,13 @@ export function SessionTimeline({
                         clip={clip}
                         laneColor={hue}
                         pxPerSec={pxPerSec}
-                        selected={selectedId === track.id && (selectedClipId === clip.id || !selectedClipId)}
+                        selected={
+                          selectedClipIds
+                            ? selectedClipIds.has(clip.id) ||
+                              (selectedId === track.id && !selectedClipId && selectedClipIds.size === 0)
+                            : selectedId === track.id && (selectedClipId === clip.id || !selectedClipId)
+                        }
+                        multi={Boolean(selectedClipIds && selectedClipIds.size > 1 && selectedClipIds.has(clip.id))}
                         dim={
                           track.muted ||
                           clip.muted ||
@@ -469,6 +519,7 @@ function Clip({
   laneColor,
   pxPerSec,
   selected,
+  multi = false,
   dim,
   onPointerDown,
   onPointerMove,
@@ -481,6 +532,8 @@ function Clip({
   laneColor: LaneColor
   pxPerSec: number
   selected: boolean
+  /** Part of a multi-selection (>1 clip) — draws an accent ring. */
+  multi?: boolean
   dim: boolean
   onPointerDown: (e: React.PointerEvent) => void
   onPointerMove: (e: React.PointerEvent) => void
@@ -493,8 +546,12 @@ function Clip({
   return (
     <div
       data-clip={clip.id}
-      className={`group absolute overflow-hidden rounded-clip transition-shadow transition-transform duration-150 will-change-transform hover:-translate-y-px ${
-        selected ? 'shadow-highlight-rim' : 'shadow-depth-sm hover:shadow-depth-md'
+      className={`group absolute overflow-hidden rounded-clip cursor-grab active:cursor-grabbing transition-[box-shadow,transform,filter] duration-150 will-change-transform hover:-translate-y-px hover:brightness-110 hover:shadow-glow-subtle ${
+        selected
+          ? multi
+            ? 'shadow-highlight-rim ring-2 ring-ice/80'
+            : 'shadow-highlight-rim ring-1 ring-ice/60'
+          : 'shadow-depth-sm hover:shadow-depth-md'
       }`}
       style={{
         left: box.left,
@@ -502,7 +559,7 @@ function Clip({
         height: 40,
         top: 0,
         background: laneColor.clipFill,
-        border: `1px solid ${laneColor.border}`,
+        border: `1px solid ${selected ? laneColor.base : laneColor.border}`,
         opacity: !track.buffer && dim ? 0.45 : dim ? 0.7 : 1,
       }}
       onPointerDown={onPointerDown}

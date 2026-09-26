@@ -40,7 +40,13 @@ export const Fader = forwardRef<HTMLInputElement, FaderProps>(function Fader(
         max={max}
         value={value}
         defaultValue={defaultValue}
-        className={cn('studio-fader h-full', className)}
+        className={cn(
+          // Comfortable touch target on small screens (~32px effective width),
+          // relaxing to the native 24px cap from sm up. Only widens the hit
+          // area — the visible thumb/track sizing stays in CSS.
+          'studio-fader h-full !w-8 sm:!w-6',
+          className
+        )}
         style={
           { '--studio-slider-fill': `${pct}%`, ...style } as React.CSSProperties
         }
