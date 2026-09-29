@@ -1,5 +1,8 @@
 /** Offline AudioBuffer effects for the podcast studio (GarageBand-style chain). */
 
+import { deEssChannels, gateChannels, type DeEssOptions, type GateOptions } from '@/lib/podcast/engine/dynamics'
+import { applyTruePeakLimiter } from '@/lib/studio/loudness'
+
 export type EffectId =
   | 'normalize'
   | 'noise_gate'
@@ -20,12 +23,12 @@ export type EffectId =
 
 export const EFFECT_META: { id: EffectId; label: string; hint: string }[] = [
   { id: 'normalize', label: 'Normalize', hint: 'Peak to −1 dB' },
-  { id: 'noise_gate', label: 'Noise gate', hint: 'Cut quiet room hiss' },
+  { id: 'noise_gate', label: 'Noise gate', hint: 'Cut quiet room hiss (attack / hold / release)' },
   { id: 'highpass', label: 'Rumble cut', hint: 'High-pass ~80 Hz' },
   { id: 'presence', label: 'Presence', hint: 'Vocal clarity ~3 kHz' },
-  { id: 'deess', label: 'De-ess', hint: 'Tame harsh S sounds' },
+  { id: 'deess', label: 'De-ess', hint: 'Dynamic 5–8 kHz de-esser' },
   { id: 'compress', label: 'Compress', hint: 'Even out dynamics' },
-  { id: 'limit', label: 'Limiter', hint: 'Soft clip peaks' },
+  { id: 'limit', label: 'Limiter', hint: 'True-peak limiter, −1 dBTP' },
   { id: 'room', label: 'Room', hint: 'Short convolution reverb' },
   { id: 'hall', label: 'Hall', hint: 'Longer room tail' },
   { id: 'echo', label: 'Echo', hint: 'Delay with feedback' },
@@ -51,30 +54,28 @@ export function normalizeBuffer(buffer: AudioBuffer, targetPeak = 0.89) {
   const gain = targetPeak / peak
   for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
     const data = buffer.getChannelData(ch)
-    for (let i = 0; i < data.length; i++) data[i] = Math.max(-1, Math.min(1, data[i] * gain))
+    for (let i = 0; i < data.length; i++) data[i] *= gain
   }
   return buffer
 }
 
-/** Simple amplitude gate — zeros samples below threshold with short attack/release. */
-export function noiseGate(buffer: AudioBuffer, threshold = 0.02, holdSamples = 256) {
-  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-    const data = buffer.getChannelData(ch)
-    let open = false
-    let hold = 0
-    for (let i = 0; i < data.length; i++) {
-      const a = Math.abs(data[i])
-      if (a >= threshold) {
-        open = true
-        hold = holdSamples
-      } else if (hold > 0) {
-        hold--
-      } else {
-        open = false
-      }
-      if (!open) data[i] = 0
-    }
-  }
+function channelsOf(buffer: AudioBuffer) {
+  return Array.from({ length: buffer.numberOfChannels }, (_, ch) => buffer.getChannelData(ch))
+}
+
+/**
+ * Noise gate with attack / hold / release and hysteresis (stereo-linked, in place).
+ * `holdSamples` is kept for compatibility; default hold is 50 ms.
+ */
+export function noiseGate(buffer: AudioBuffer, threshold = 0.02, holdSamples?: number, opts: GateOptions = {}) {
+  const holdMs = holdSamples !== undefined ? (holdSamples / buffer.sampleRate) * 1000 : opts.holdMs
+  gateChannels(channelsOf(buffer), buffer.sampleRate, { ...opts, threshold, holdMs })
+  return buffer
+}
+
+/** Look-ahead true-peak limiter at `ceilingDb` (in place). */
+export function truePeakLimit(buffer: AudioBuffer, ceilingDb = -1) {
+  applyTruePeakLimiter({ sampleRate: buffer.sampleRate, channels: channelsOf(buffer) }, { ceilingDb })
   return buffer
 }
 
@@ -132,17 +133,11 @@ export async function presenceBoost(buffer: AudioBuffer): Promise<AudioBuffer> {
   })
 }
 
-/** Soft de-esser: cut a narrow band around 6–7 kHz. */
-export async function deEss(buffer: AudioBuffer): Promise<AudioBuffer> {
-  return runOffline(buffer, (ctx, source) => {
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'peaking'
-    filter.frequency.value = 6500
-    filter.Q.value = 2.5
-    filter.gain.value = -5
-    source.connect(filter)
-    return filter
-  })
+/** Dynamic de-esser: 5–8 kHz sidechain drives a band cut only on sibilant moments. */
+export async function deEss(buffer: AudioBuffer, opts: DeEssOptions = {}): Promise<AudioBuffer> {
+  const out = cloneBuffer(buffer)
+  deEssChannels(channelsOf(out), out.sampleRate, opts)
+  return out
 }
 
 export async function compress(buffer: AudioBuffer): Promise<AudioBuffer> {
@@ -316,7 +311,7 @@ export async function applyEffect(buffer: AudioBuffer, id: EffectId): Promise<Au
     case 'compress':
       return compress(buffer)
     case 'limit':
-      return softLimit(buffer)
+      return truePeakLimit(buffer)
     case 'room':
       return convolveReverb(buffer, 0.85, 2.4, 0.28)
     case 'hall':
@@ -362,11 +357,10 @@ export function cloneBuffer(buffer: AudioBuffer): AudioBuffer {
   return copy
 }
 
-export function bufferFromBlob(blob: Blob): Promise<AudioBuffer> {
-  return blob.arrayBuffer().then(async (data) => {
-    const ctx = new AudioContext()
-    const buffer = await ctx.decodeAudioData(data.slice(0))
-    void ctx.close()
-    return buffer
-  })
+export async function bufferFromBlob(blob: Blob): Promise<AudioBuffer> {
+  const { decodeAudio } = await import('@/lib/podcast/audio')
+  return decodeAudio(await blob.arrayBuffer())
 }
+
+/** Effects that modify their input buffer in place (callers must clone to keep the source). */
+export const IN_PLACE_EFFECTS: ReadonlySet<EffectId> = new Set<EffectId>(['normalize', 'noise_gate', 'limit'])
