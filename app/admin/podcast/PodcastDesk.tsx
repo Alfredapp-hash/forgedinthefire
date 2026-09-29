@@ -26,9 +26,11 @@ import type {
 import { DISTRIBUTION_LABELS, EPISODE_PIPELINE } from '@/lib/studio/types'
 import { PODCAST } from '@/lib/podcast-meta'
 import { RecordingStudio } from './RecordingStudio'
+import { LiveControlRoom } from '@/components/podcast/live-control-room'
+import { Toaster } from '@/components/studio-ui'
 import { setAdminPath } from '@/lib/fbot/path-signal'
 
-type DeskTab = 'studio' | 'episodes' | 'show' | 'distribution' | 'analytics' | 'private' | 'embeds'
+type DeskTab = 'studio' | 'live' | 'episodes' | 'show' | 'distribution' | 'analytics' | 'private' | 'embeds'
 
 type AnalyticsPayload = {
   days: number
@@ -55,10 +57,14 @@ const PIPELINE_COLS: EpisodeStatus[] = [
   'published',
 ]
 
-const DESK_TABS: DeskTab[] = ['studio', 'episodes', 'show', 'distribution', 'analytics', 'private', 'embeds']
+const DESK_TABS: DeskTab[] = ['studio', 'live', 'episodes', 'show', 'distribution', 'analytics', 'private', 'embeds']
 
 export function PodcastDesk() {
   const [tab, setTab] = useState<DeskTab>('studio')
+  // The live room holds a camera, a guest call and (while on air) the WHIP publisher: once opened it
+  // stays mounted (hidden) when another tab is shown, so a tab switch never drops the stream.
+  const [liveVisited, setLiveVisited] = useState(false)
+  if (tab === 'live' && !liveVisited) setLiveVisited(true)
   const [studioEpisodeId, setStudioEpisodeId] = useState('')
   const [episodes, setEpisodes] = useState<PodcastEpisode[]>([])
   const [topics, setTopics] = useState<ContentTopic[]>([])
@@ -287,6 +293,7 @@ export function PodcastDesk() {
 
   const tabs: { id: DeskTab; label: string; icon: typeof Mic2 }[] = [
     { id: 'studio', label: 'Production room', icon: AudioLines },
+    { id: 'live', label: 'Live show', icon: Radio },
     { id: 'episodes', label: 'Episodes', icon: Mic2 },
     { id: 'show', label: 'Show', icon: Settings2 },
     { id: 'distribution', label: 'Distribution', icon: Globe2 },
@@ -350,6 +357,14 @@ export function PodcastDesk() {
           onSelect={selectStudioEpisode}
           onEpisodesChange={setEpisodes}
         />
+      )}
+
+      {/* Live show: stay mounted after the first visit so switching tabs never drops a live stream. */}
+      {(tab === 'live' || liveVisited) && (
+        <div hidden={tab !== 'live'}>
+          {tab === 'live' && <Toaster />}
+          <LiveControlRoom episodes={episodes} />
+        </div>
       )}
 
       {tab === 'episodes' && (
