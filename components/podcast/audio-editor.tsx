@@ -93,6 +93,8 @@ import { renderMaster } from '@/lib/podcast/master'
 import { useWakeLock } from '@/components/podcast/studio/use-wake-lock'
 import { useLeaveGuard } from '@/components/podcast/studio/leave-guard'
 import { watchInputs } from '@/components/podcast/studio/track-watchdog'
+import { createLiveStore, LiveStoreContext } from '@/components/podcast/studio/live-store'
+import { LiveMeters } from '@/components/podcast/studio/live-readouts'
 import {
   describeExportRange,
   replaceWarning,
@@ -365,8 +367,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [camWarnFor, setCamWarnFor] = useState<string | null>(null)
   const [camStorageHint, setCamStorageHint] = useState<string | null>(null)
   const camWarnedRef = useRef(false)
-  const [inputPeaks, setInputPeaks] = useState<Record<string, number>>({})
-  const [clipHolds, setClipHolds] = useState<Record<string, boolean>>({})
+  /** Input meters + record clock live OUTSIDE React state (≤15 Hz to subscribers). */
+  const liveStore = useMemo(() => createLiveStore(), [])
   const [matchLufs, setMatchLufs] = useState(true)
   const [loudness, setLoudness] = useState<{ lufs: number; peakDb: number } | null>(null)
   const [recClock, setRecClock] = useState(0)
@@ -931,14 +933,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           ]
           const meterKey = names.join(' + ') || (key === REMOTE_GUEST_KEY ? 'Guest' : 'Mic')
           return attachInputMeter(stream, (peak) => {
-            setInputPeaks((prev) => ({ ...prev, [meterKey]: peak }))
+            liveStore.setPeak(meterKey, peak)
             if (peak >= 0.98) {
-              setClipHolds((prev) => ({ ...prev, [meterKey]: true }))
+              liveStore.setClip(meterKey, true)
               const timers = clipTimerRef.current
               if (timers[meterKey]) window.clearTimeout(timers[meterKey])
-              timers[meterKey] = window.setTimeout(() => {
-                setClipHolds((prev) => ({ ...prev, [meterKey]: false }))
-              }, 1600)
+              timers[meterKey] = window.setTimeout(() => liveStore.setClip(meterKey, false), 1600)
             }
           })
         })
@@ -997,18 +997,27 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       recRafRef.current = null
       return
     }
+    // Every frame goes to the live store; React state only ~10×/s so the editor is not
+    // re-rendered 60 times a second for a clock that shows whole seconds.
+    let lastState = 0
     const tick = () => {
       const elapsed = (performance.now() - recStartedAtRef.current) / 1000
       const t = punchRef.current + Math.max(0, elapsed)
-      setRecClock(t)
-      setHead(t)
+      liveStore.set({ recClock: t, playhead: t })
+      playheadRef.current = t
+      const now = performance.now()
+      if (now - lastState >= 100) {
+        lastState = now
+        setRecClock(t)
+        setHead(t)
+      }
       recRafRef.current = requestAnimationFrame(tick)
     }
     recRafRef.current = requestAnimationFrame(tick)
     return () => {
       if (recRafRef.current) cancelAnimationFrame(recRafRef.current)
     }
-  }, [recording, setHead])
+  }, [recording, setHead, liveStore])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1759,7 +1768,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setRecTally(countInBeats > 0 ? 'count-in' : 'rec')
     setError(null)
     setOk(null)
-    setInputPeaks({})
+    liveStore.resetPeaks()
     stopMix()
 
     try {
@@ -1803,14 +1812,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         if (!stream) return () => {}
         const meterKey = job.sharedNames.join(' + ') || 'mic'
         return attachInputMeter(stream, (peak) => {
-          setInputPeaks((prev) => ({ ...prev, [meterKey]: peak }))
+          liveStore.setPeak(meterKey, peak)
           if (peak >= 0.98) {
-            setClipHolds((prev) => ({ ...prev, [meterKey]: true }))
+            liveStore.setClip(meterKey, true)
             const timers = clipTimerRef.current
             if (timers[meterKey]) window.clearTimeout(timers[meterKey])
-            timers[meterKey] = window.setTimeout(() => {
-              setClipHolds((prev) => ({ ...prev, [meterKey]: false }))
-            }, 1600)
+            timers[meterKey] = window.setTimeout(() => liveStore.setClip(meterKey, false), 1600)
           }
         })
       })
@@ -3830,25 +3837,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </div>
           {(recording || anyArmed) && (
             <div className="space-y-1.5">
-              {Object.keys(inputPeaks).length === 0 && (
-                <div className="flex items-center gap-3">
-                  <Meter level={0} aria-label="Input level" className="flex-1" />
-                  <span className="studio-type-timecode text-silver">{recording ? `in ${formatClock(recClock)}` : 'idle'}</span>
-                </div>
-              )}
-              {Object.entries(inputPeaks).map(([key, peak]) => (
-                <div key={key} className="flex items-center gap-3">
-                  <span className="studio-type-label w-16 truncate text-[#7C8B97]">{key}</span>
-                  <Meter
-                    level={Math.min(1, peak * 1.4)}
-                    aria-label={`${key} input level`}
-                    className={clipHolds[key] ? 'shadow-rec' : undefined}
-                  />
-                  <span className={`studio-type-timecode ${clipHolds[key] ? 'text-heart' : 'text-silver'}`}>
-                    {clipHolds[key] ? 'CLIP' : recording ? `in ${formatClock(recClock)}` : 'idle'}
-                  </span>
-                </div>
-              ))}
+              <LiveStoreContext.Provider value={liveStore}>
+                <LiveMeters recording={recording} />
+              </LiveStoreContext.Provider>
             </div>
           )}
           {recHint && (
