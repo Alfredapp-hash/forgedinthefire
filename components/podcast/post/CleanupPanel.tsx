@@ -95,6 +95,8 @@ export function CleanupPanel({ episode, disabled, save, publishAudio, revert, on
 
   const sourceRef = useRef<{ url: string; buffer: AudioBuffer } | null>(null)
   const [loadingSource, setLoadingSource] = useState(false)
+  /** Duration of the decoded source (state, so it can drive the render). */
+  const [sourceDuration, setSourceDuration] = useState(0)
   const getSource = useCallback(async () => {
     const url = episode.audio_url
     if (!url) throw new Error('Upload the episode audio first.')
@@ -103,6 +105,7 @@ export function CleanupPanel({ episode, disabled, save, publishAudio, revert, on
     try {
       const buffer = await decodeUrl(url)
       sourceRef.current = { url, buffer }
+      setSourceDuration(buffer.duration)
       return buffer
     } catch {
       throw new Error('Could not load the episode audio into the browser (check the file plays and that storage allows downloads).')
@@ -204,7 +207,7 @@ export function CleanupPanel({ episode, disabled, save, publishAudio, revert, on
   const acceptedCuts = useMemo(() => combineCuts(textEdit.cuts, fillerCuts), [textEdit.cuts, fillerCuts])
   const bleepCount = acceptedHits.length + protect.manual.length
   const planEmpty = !bleepCount && !regions.length && !acceptedCuts.length
-  const duration = episode.duration_seconds || sourceRef.current?.buffer.duration || words[words.length - 1]?.e || 0
+  const duration = episode.duration_seconds || sourceDuration || words[words.length - 1]?.e || 0
   const hasGuest = episodeHasGuest(episode, { guestConsent })
   const migrated = 'guest_final_cut_approved' in episode
   const protectedReviewed = Boolean(episode.protected_words_reviewed_at)
@@ -293,6 +296,7 @@ export function CleanupPanel({ episode, disabled, save, publishAudio, revert, on
     // bleeps and cuts are baked in, terms stay so a second pass can catch anything missed.
     if (ok) {
       sourceRef.current = null
+      setSourceDuration(0)
       setTextEdit({ cuts: [], speakers: remapSpeakers(textEdit.speakers, render.plan.cuts, src) })
     }
   }

@@ -324,9 +324,13 @@ export function TranscriptEditor({ words, state, onChange, fillerCuts, fillerRan
   const [follow, setFollow] = useState(true)
   const [loading, setLoading] = useState(false)
   const wordsRef = useRef(words)
-  wordsRef.current = words
   const planRef = useRef({ cuts: allCuts, mutes: protectedRanges })
-  planRef.current = { cuts: allCuts, mutes: protectedRanges }
+  useEffect(() => {
+    wordsRef.current = words
+  }, [words])
+  useEffect(() => {
+    planRef.current = { cuts: allCuts, mutes: protectedRanges }
+  }, [allCuts, protectedRanges])
   const lastIdx = useRef(-1)
 
   useEffect(() => () => playerRef.current?.dispose(), [])

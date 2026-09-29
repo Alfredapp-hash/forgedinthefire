@@ -19,6 +19,12 @@ type Props = {
   consent?: GuestConsentStatus | null
 }
 
+function Done({ ok }: { ok: boolean }) {
+  return ok
+    ? <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-lane-cohost-2" aria-label="Done" />
+    : <Circle size={16} className="mt-0.5 shrink-0 text-silver" aria-label="Not yet" />
+}
+
 /** True when the episode has a guest (named, flagged, or with booth consent). */
 export function signoffsApply(episode: PodcastEpisode & EpisodeSafetyFields, consent: GuestConsentStatus | null | undefined) {
   const recorded = consent?.available ? consent : null
@@ -106,9 +112,6 @@ export function GuestSignoffs({ episode, disabled, signOff, consent = null }: Pr
     episode.guest_final_cut_approved_by ? `recorded by ${episode.guest_final_cut_approved_by}` : '',
     episode.guest_final_cut_audio_hash ? `file ${episode.guest_final_cut_audio_hash.slice(0, 12)}…` : 'file fingerprint not recorded',
   ].filter(Boolean).join(' · ')
-
-  const Done = ({ ok }: { ok: boolean }) =>
-    ok ? <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-lane-cohost-2" aria-label="Done" /> : <Circle size={16} className="mt-0.5 shrink-0 text-silver" aria-label="Not yet" />
 
   return (
     <div id="guest-signoffs" className="space-y-3">

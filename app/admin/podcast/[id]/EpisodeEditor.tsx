@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -17,6 +17,12 @@ import { Button, Input, Panel, Toaster, toast } from '@/components/studio-ui'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
 import { measureAudioDuration, uploadPodcastMedia } from '@/lib/podcast/media-upload'
 import { checkFeedCompliance } from '@/lib/podcast/compliance'
+// ── Clean-up & safety (AI + survivor-safety stream) ──────────────────────────
+import { CleanupPanel, type PostSnapshot } from '@/components/podcast/post/CleanupPanel'
+import { deletePreviousAudio, loadSafetyRecord, patchSafety as patchSafetyRecord, type SafetyPatch } from '@/lib/podcast/safety/client'
+import type { SafetyRecord } from '@/lib/podcast/safety/record'
+import type { EpisodeSafetyFields, GuestConsentStatus } from '@/lib/studio/release'
+// ────────────────────────────────────────────────────────────────────────────
 import type {
   ContentTopic,
   PodcastAdMarker,
@@ -44,54 +50,190 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
   const [confirmText, setConfirmText] = useState('')
   const [deleting, setDeleting] = useState(false)
 
+  // ── Clean-up & safety: private plan, sign-offs, consent, revert ────────────
+  const episodeRef = useRef<PodcastEpisode | null>(null)
+  useEffect(() => {
+    episodeRef.current = episode
+  }, [episode])
+  /** Private Clean-up & safety plan (protected terms + decisions). null until loaded. */
+  const [safety, setSafety] = useState<{ available: boolean; record: SafetyRecord | null } | null>(null)
+  useEffect(() => {
+    let live = true
+    loadSafetyRecord(episodeId)
+      .then((r) => live && setSafety({ available: r.available, record: r.record }))
+      .catch(() => live && setSafety({ available: false, record: null }))
+    return () => { live = false }
+  }, [episodeId])
+
+  /** Consent guests gave in the booth (optional endpoint; null when it is not deployed). */
+  const [guestConsent, setGuestConsent] = useState<GuestConsentStatus | null>(null)
+  const loadConsent = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/studio/episodes/${episodeId}/consent`, { cache: 'no-store' })
+      const data = (await res.json().catch(() => null)) as GuestConsentStatus | null
+      setGuestConsent(res.ok && data && typeof data.available === 'boolean' ? data : null)
+    } catch {
+      setGuestConsent(null)
+    }
+  }, [episodeId])
+  useEffect(() => {
+    void loadConsent()
+    const onFocus = () => void loadConsent()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [loadConsent])
+
+  /** Plan changes and sign-offs go through /api/admin/podcast/safety (stamped + hashed server-side). */
+  const patchSafety = useCallback(async (patch: SafetyPatch, label?: string) => {
+    const isSignoff =
+      patch.guest_final_cut !== undefined || patch.transcript_reviewed !== undefined ||
+      patch.protected_words_reviewed !== undefined || patch.guest_consent_confirmed !== undefined
+    if (isSignoff) {
+      setSaving(true)
+      setError(null)
+    }
+    try {
+      const res = await patchSafetyRecord(episodeId, patch)
+      if (res.episode) setEpisode(normalizeEpisode(res.episode))
+      if (res.record) setSafety((s) => ({ available: true, record: res.record ?? s?.record ?? null }))
+      if (label) {
+        setOk(label)
+        toast({ title: label, tone: 'success' })
+      }
+      return res
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Save failed'
+      setError(message)
+      toast({ title: 'Save failed', description: message, tone: 'error' })
+      return null
+    } finally {
+      if (isSignoff) setSaving(false)
+    }
+  }, [episodeId])
+
+  /** Permanently delete the replaced original upload (may contain unbleeped names). */
+  async function deletePrevious() {
+    setError(null)
+    try {
+      const res = await deletePreviousAudio(episodeId)
+      if (res.episode) setEpisode(normalizeEpisode(res.episode))
+      const label = res.deleted
+        ? 'Original upload deleted from media storage'
+        : res.reason === 'still_in_use'
+          ? 'That file is still used by another episode — only the revert was removed'
+          : res.reason === 'not_project_storage'
+            ? 'That file is not in this project’s storage — only the revert was removed'
+            : 'Nothing to delete'
+      setOk(label)
+      toast({ title: label, tone: 'success' })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not delete the previous audio'
+      setError(message)
+      toast({ title: 'Delete failed', description: message, tone: 'error' })
+    }
+  }
+
+  /** One-click revert of the last Clean-up & safety render. */
+  async function revertCleanup() {
+    const current = episodeRef.current as (PodcastEpisode & EpisodeSafetyFields) | null
+    if (!current?.audio_url_previous) return
+    if (!window.confirm('Go back to the audio from before the last clean-up? Bleeps and voice disguise from that clean-up will be undone.')) return
+    const snap = (current.post_edit_snapshot || null) as PostSnapshot | null
+    const patch: Record<string, unknown> = {
+      audio_url: current.audio_url_previous,
+      audio_url_previous: null,
+      post_edit_snapshot: null,
+    }
+    if (snap) {
+      patch.audio_mime = snap.audio_mime
+      patch.file_size = snap.file_size
+      patch.duration_seconds = snap.duration_seconds
+      patch.transcript = snap.transcript ?? ''
+      patch.transcript_words = snap.transcript_words
+      patch.chapters = snap.chapters
+    }
+    await save(patch, 'Reverted to the previous audio')
+  }
+
+  /** Upload a rendered "safe version" and PATCH audio fields + `extra` (transcript, chapters, snapshot). */
+  async function publishAudio(file: File, duration: number, extra: Record<string, unknown>, label: string) {
+    setUploading(true)
+    setError(null)
+    try {
+      const asset = await uploadPodcastMedia(file, episodeRef.current?.title || file.name)
+      const seconds = (duration > 0 ? Math.round(duration) : null) ?? (await measureAudioDuration(asset.url))
+      const saved = await save({
+        audio_url: asset.url,
+        audio_mime: asset.mime_type || file.type || 'audio/mpeg',
+        file_size: asset.size_bytes || file.size,
+        duration_seconds: seconds ?? episodeRef.current?.duration_seconds ?? null,
+        ...extra,
+      }, label)
+      return Boolean(saved)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Upload failed'
+      setError(message)
+      toast({ title: 'Upload failed', description: message, tone: 'error' })
+      return false
+    } finally {
+      setUploading(false)
+    }
+  }
+  // ────────────────────────────────────────────────────────────────────────────
+
   async function load() {
     const [epRes, tps] = await Promise.all([
       fetch(`/api/admin/studio/episodes/${episodeId}`).then((r) => r.json()),
       fetch('/api/admin/studio/topics').then((r) => r.json()),
     ])
     if (Array.isArray(tps)) setTopics(tps)
-    if (epRes?.id) {
-      setEpisode({
-        ...epRes,
-        chapters: Array.isArray(epRes.chapters) ? epRes.chapters : [],
-        keywords: Array.isArray(epRes.keywords) ? epRes.keywords : [],
-        ad_markers: Array.isArray(epRes.ad_markers) ? epRes.ad_markers : [],
-        episode_type: epRes.episode_type || 'full',
-        visibility: epRes.visibility || 'public',
-        show_notes: epRes.show_notes ?? null,
-        guest_name: epRes.guest_name ?? null,
-        guest_bio: epRes.guest_bio ?? null,
-        scheduled_for: epRes.scheduled_for ?? null,
-      })
-    } else setError(epRes.error || 'Episode not found')
+    if (epRes?.id) setEpisode(normalizeEpisode(epRes))
+    else setError(epRes.error || 'Episode not found')
   }
 
   useEffect(() => { void load() }, [episodeId])
 
-  async function save(patch: Record<string, unknown>, label = 'Saved') {
-    if (!episode) return
+  async function save(patch: Record<string, unknown>, label = 'Saved'): Promise<PodcastEpisode | null> {
+    const current = episodeRef.current
+    if (!current) return null
     setSaving(true)
     setError(null)
     try {
-      const res = await fetch('/api/admin/studio/episodes', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: episode.id, ...patch }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Save failed')
-      setEpisode({
-        ...data,
-        chapters: Array.isArray(data.chapters) ? data.chapters : [],
-        keywords: Array.isArray(data.keywords) ? data.keywords : [],
-        ad_markers: Array.isArray(data.ad_markers) ? data.ad_markers : [],
-      })
+      // Post-production columns are not on the episodes PATCH whitelist: they go through the
+      // safety route (which also stamps sign-offs server-side). Audio fields go first so a
+      // snapshot always refers to the file that was just replaced.
+      const rowPatch: Record<string, unknown> = {}
+      const safetyPatch: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(patch)) {
+        if (SAFETY_ROW_KEYS.has(k)) safetyPatch[k] = v
+        else rowPatch[k] = v
+      }
+      let data: PodcastEpisode | null = null
+      if (Object.keys(rowPatch).length) {
+        const res = await fetch('/api/admin/studio/episodes', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: current.id, ...rowPatch }),
+        })
+        const json = await res.json()
+        if (!res.ok) throw new Error(json.error || 'Save failed')
+        data = json
+      }
+      if (Object.keys(safetyPatch).length) {
+        const res = await patchSafetyRecord(current.id, safetyPatch as SafetyPatch)
+        if (res.episode) data = res.episode
+        if (res.record) setSafety((s) => ({ available: true, record: res.record ?? s?.record ?? null }))
+      }
+      const next = data ? normalizeEpisode(data) : current
+      setEpisode(next)
       setOk(label)
       toast({ title: label, tone: 'success' })
+      return next
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Save failed'
       setError(message)
       toast({ title: 'Save failed', description: message, tone: 'error' })
+      return null
     } finally {
       setSaving(false)
     }
@@ -111,11 +253,17 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         // Preserve an existing duration rather than clobbering it with null.
         const seconds = measured ?? episode?.duration_seconds ?? null
         const fileSize = asset.size_bytes || file.size
+        // New audio content: timed captions and the protected-terms review no longer apply.
+        const reset: Record<string, unknown> = {}
+        const current = episodeRef.current as (PodcastEpisode & EpisodeSafetyFields) | null
+        if (current && Array.isArray(current.transcript_words) && current.transcript_words.length) reset.transcript_words = null
+        if (current?.protected_words_reviewed_at) reset.protected_words_reviewed = false
         await save({
           audio_url: asset.url,
           audio_mime: asset.mime_type || file.type,
           file_size: fileSize,
           duration_seconds: seconds,
+          ...reset,
         }, 'Audio saved')
         if (!seconds) {
           const message = 'Audio saved, but duration could not be measured — set it manually before publishing (RSS needs it)'
@@ -224,12 +372,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
               return res.json()
             })
             .then((data) => {
-              setEpisode({
-                ...data,
-                chapters: Array.isArray(data.chapters) ? data.chapters : [],
-                keywords: Array.isArray(data.keywords) ? data.keywords : [],
-                ad_markers: Array.isArray(data.ad_markers) ? data.ad_markers : [],
-              })
+              setEpisode(normalizeEpisode(data))
               toast({ title: 'Restored', tone: 'success' })
             })
             .catch(() => {
@@ -332,7 +475,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
   // Scroll/focus the field a failing checklist row fixes.
   function jumpToField(field: string | null) {
     if (!field || !episode) return
-    const el = document.getElementById(`ep-field-${field}`)
+    const el = document.getElementById(field.startsWith('cleanup-') ? field : `ep-field-${field}`)
     if (!el) return
     el.scrollIntoView({ behavior: 'smooth', block: 'center' })
     if (
@@ -664,6 +807,24 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         />
       </section>
 
+      {/* ── Clean-up & safety: transcription, bleeps, voice disguise, text edits — all in the browser ── */}
+      <CleanupPanel
+        episode={episode as PodcastEpisode & EpisodeSafetyFields}
+        disabled={saving || uploading || deleting}
+        save={save}
+        publishAudio={publishAudio}
+        revert={revertCleanup}
+        onError={(message) => {
+          setError(message)
+          toast({ title: message, tone: 'error', duration: 8000 })
+        }}
+        guestConsent={guestConsent}
+        safety={safety}
+        patchSafety={patchSafety}
+        deletePrevious={deletePrevious}
+      />
+      {/* ── end Clean-up & safety ── */}
+
       <section className="rounded-2xl border border-[#27313B] bg-[#151B22] p-5 space-y-3">
         <p className="text-sm font-medium text-[#F6FAFC] flex items-center gap-2">
           <Code2 size={14} /> Share · embed · RSS item
@@ -760,6 +921,31 @@ const COMPLIANCE_FIELD: Record<string, string> = {
   summary: 'summary',
   cover_url: 'cover',
   chapters: 'chapters',
+  // Survivor-safety items live in the Clean-up & safety flow (ids are section anchors).
+  guest_final_cut: 'cleanup-signoffs',
+  guest_review_required: 'cleanup-signoffs',
+  protected_words: 'cleanup-protect',
+  transcript_review: 'cleanup-transcribe',
+}
+
+/** Episode columns that must go through /api/admin/podcast/safety (not on the episodes PATCH whitelist). */
+const SAFETY_ROW_KEYS = new Set(['transcript_words', 'audio_url_previous', 'post_edit_snapshot', 'protected_words_reviewed', 'guest_consent_confirmed'])
+
+/** Fill the array/nullable fields the editor relies on; keeps every other column (safety, loudness…). */
+function normalizeEpisode(row: Record<string, unknown>): PodcastEpisode {
+  const r = row as PodcastEpisode & Record<string, unknown>
+  return {
+    ...r,
+    chapters: Array.isArray(r.chapters) ? r.chapters : [],
+    keywords: Array.isArray(r.keywords) ? r.keywords : [],
+    ad_markers: Array.isArray(r.ad_markers) ? r.ad_markers : [],
+    episode_type: r.episode_type || 'full',
+    visibility: r.visibility || 'public',
+    show_notes: r.show_notes ?? null,
+    guest_name: r.guest_name ?? null,
+    guest_bio: r.guest_bio ?? null,
+    scheduled_for: r.scheduled_for ?? null,
+  }
 }
 
 function parseTimestamp(value: string): number | null {
