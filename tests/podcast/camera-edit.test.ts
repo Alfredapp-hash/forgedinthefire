@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
-  addProgramCut,
   deleteCameraRange,
   dissolveCameraPair,
   joinAdjacentCamera,
-  rippleProgramCuts,
   slipCameraClip,
+  splitAllCameraAt,
   splitCameraAt,
   trimCameraClip,
 } from '@/lib/podcast/camera-edit'
@@ -87,7 +86,7 @@ describe('deleteCameraRange (ripple cuts)', () => {
   })
 })
 
-describe('dissolve + program cuts', () => {
+describe('dissolve', () => {
   it('dissolve overlaps the next clip and sets matching fades', () => {
     const a = cam({ offset: 0, duration: 6 })
     const b = cam({ offset: 6, duration: 6, sourceStart: 6, trimStart: 6, sourceDuration: 12 })
@@ -98,23 +97,30 @@ describe('dissolve + program cuts', () => {
     expect(nb.fadeIn).toBe(1)
     expect(nb.offset).toBe(5)
   })
+})
 
-  it('redundant cuts are dropped; ripple pulls later cuts', () => {
-    let cuts = addProgramCut([], 2, 'guest')
-    cuts = addProgramCut(cuts, 5, 'guest') // same scene → dropped
-    cuts = addProgramCut(cuts, 8, 'pip')
-    expect(cuts.map((c) => [c.at, c.scene])).toEqual([
-      [2, 'guest'],
-      [8, 'pip'],
+describe('splitAllCameraAt', () => {
+  it('razors every lane (and overlay layer) spanning the time, not just the first hit', () => {
+    const clips = [
+      cam({ offset: 0, duration: 10, personId: 'host' }),
+      cam({ offset: 0, duration: 10, personId: 'guest' }),
+      cam({ offset: 2, duration: 4, personId: 'host', layer: 'overlay' }),
+    ]
+    const out = splitAllCameraAt(clips, 5)
+    expect(spans(out, 'host').sort((a, b) => a[0] - b[0] || a[1] - b[1])).toEqual([
+      [0, 5, 0],
+      [2, 3, 0],
+      [5, 1, 3],
+      [5, 5, 5],
     ])
-    const rippled = rippleProgramCuts(cuts, 3, 5)
-    expect(rippled.map((c) => [c.at, c.scene])).toEqual([
-      [2, 'guest'],
-      [6, 'pip'],
+    expect(spans(out, 'guest')).toEqual([
+      [0, 5, 0],
+      [5, 5, 5],
     ])
   })
 
-  it('cut at the start scene is redundant', () => {
-    expect(addProgramCut([], 3, 'host', 0, 'host')).toEqual([])
+  it('returns the same array when nothing spans the time', () => {
+    const clips = [cam({ offset: 0, duration: 10 })]
+    expect(splitAllCameraAt(clips, 20)).toBe(clips)
   })
 })

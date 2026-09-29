@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { deleteRange, rippleDeleteSession, rippleTime } from '@/lib/podcast/edit'
-import { rippleProgramCuts } from '@/lib/podcast/camera-edit'
+import { mainAt, rippleSwitchEdl, type SwitchEDL } from '@/lib/podcast/switch-edl'
 import { AV_SYNC_SLOP, avDriftForPerson } from '@/lib/podcast/av-sync'
-import { cameraClipEnd, programStateAt, type CameraClip, type ProgramCut } from '@/lib/podcast/camera'
+import { cameraClipEnd, type CameraClip } from '@/lib/podcast/camera'
 import { createEmptyTrack, clipsOf, type StudioTrack } from '@/lib/podcast/multitrack'
 
 function fakeBuffer(duration: number) {
@@ -64,15 +64,15 @@ describe('rippleTime', () => {
   })
 })
 
-describe('rippleDeleteSession keeps audio, camera and scene cuts in sync', () => {
+describe('rippleDeleteSession keeps audio, camera and switch cuts in sync', () => {
   const session = () => ({
     tracks: [voice('host', 0, 60, 'g1'), voice('guest', 0, 60, 'g2')],
     cameras: [cam('host', 0, 60, 'g1'), cam('guest', 0, 60, 'g2')],
-    programCuts: [
-      { id: 'c1', at: 5, scene: 'guest' },
-      { id: 'c2', at: 30, scene: 'pip' },
-      { id: 'c3', at: 45, scene: 'host' },
-    ] as ProgramCut[],
+    switchEdl: [
+      { id: 'c1', atSec: 5, mainId: 'guest', reason: 'auto' },
+      { id: 'c2', atSec: 30, mainId: 'host', reason: 'auto' },
+      { id: 'c3', atSec: 45, mainId: 'guest', reason: 'manual' },
+    ] as SwitchEDL,
   })
 
   it('removes the same span from every lane and closes the gap', () => {
@@ -95,7 +95,7 @@ describe('rippleDeleteSession keeps audio, camera and scene cuts in sync', () =>
       expect(pics[1].sourceStart).toBeCloseTo(25)
       expect(cameraClipEnd(pics[1])).toBeCloseTo(55)
     }
-    expect(out.programCuts.map((c) => [c.id, c.at])).toEqual([
+    expect(out.switchEdl.map((c) => [c.id, c.atSec])).toEqual([
       ['c1', 5],
       ['c2', 25],
       ['c3', 40],
@@ -133,12 +133,12 @@ describe('rippleDeleteSession keeps audio, camera and scene cuts in sync', () =>
     expect(picAt(30)).toBeCloseTo(37)
   })
 
-  it('the scene on air when the removed section ends is still on air when playback resumes', () => {
-    // Cut to PIP at 30 sits inside the removed 28–35 range.
+  it('the camera on air when the removed section ends is still on air when playback resumes', () => {
+    // Cut to host at 30 sits inside the removed 28–35 range.
     const out = rippleDeleteSession(session(), 28, 35)
-    expect(programStateAt(out.programCuts, 28.5, 'host').scene).toBe('pip')
-    // Before the edit, source time 36 was PIP; after, it lives at 29.
-    expect(programStateAt(out.programCuts, 29, 'host').scene).toBe('pip')
+    expect(mainAt(out.switchEdl, 28.5, 'host')).toBe('host')
+    // Before the edit, source time 36 was host; after, it lives at 29.
+    expect(mainAt(out.switchEdl, 29, 'host')).toBe('host')
   })
 
   it('shifts volume automation and best-take ranges with the audio', () => {
@@ -161,18 +161,26 @@ describe('rippleDeleteSession keeps audio, camera and scene cuts in sync', () =>
   })
 })
 
-describe('rippleProgramCuts', () => {
+describe('rippleSwitchEdl', () => {
   it('collapses several cuts inside the gap to the last one', () => {
-    const cuts: ProgramCut[] = [
-      { id: 'a', at: 12, scene: 'guest' },
-      { id: 'b', at: 14, scene: 'pip' },
-      { id: 'c', at: 30, scene: 'host' },
+    const cuts: SwitchEDL = [
+      { id: 'a', atSec: 12, mainId: 'guest', reason: 'auto' },
+      { id: 'b', atSec: 14, mainId: 'cam3', reason: 'auto' },
+      { id: 'c', atSec: 30, mainId: 'host', reason: 'auto' },
     ]
-    const out = rippleProgramCuts(cuts, 10, 20, 'host')
-    expect(out.map((c) => [c.id, c.at, c.scene])).toEqual([
-      ['b', 10, 'pip'],
+    const out = rippleSwitchEdl(cuts, 10, 20)
+    expect(out.map((c) => [c.id, c.atSec, c.mainId])).toEqual([
+      ['b', 10, 'cam3'],
       ['c', 20, 'host'],
     ])
+  })
+
+  it('drops a same-camera cut left redundant by the collapse', () => {
+    const cuts: SwitchEDL = [
+      { id: 'a', atSec: 5, mainId: 'guest', reason: 'auto' },
+      { id: 'b', atSec: 14, mainId: 'guest', reason: 'auto' },
+    ]
+    expect(rippleSwitchEdl(cuts, 10, 20).map((c) => c.id)).toEqual(['a'])
   })
 })
 

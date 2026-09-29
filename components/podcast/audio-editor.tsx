@@ -2668,10 +2668,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setBusy(mode === 'pip' ? 'Encoding Host + Guest PIP…' : 'Encoding A-roll…')
     setError(null)
     try {
-      const prepared = await tracksWithInserts(tracks)
-      let mixed = mixdownTracks(prepared)
-      mixed = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
-      if (matchLufs) mixed = applyGainAndFades(mixed, gainForTargetLufs(measureLoudness(mixed).lufs, PODCAST_LUFS), 0, 0)
+      const mixed = await buildMasterMix(false)
       const overlays = cameraClips.filter((c) => cameraLayer(c) === 'overlay')
       const { blob, realtime: usedRealtime } = await renderPictureMix({
         mode,
@@ -2808,6 +2805,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       notifyError('Nothing to export', 'Record or import onto a track first')
       return
     }
+    if (!confirmReplaceAudio(resolveExportRange('full', range, sessionLen))) return
     setError(null)
     setOk(null)
     const notes: string[] = []
@@ -2865,10 +2863,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     try {
       const prepared = await tracksWithInserts(tracks)
       const files: { name: string; data: Uint8Array }[] = []
-      let mixed = mixdownTracks(prepared)
-      mixed = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
-      if (matchLufs) mixed = applyGainAndFades(mixed, gainForTargetLufs(measureLoudness(mixed).lufs, PODCAST_LUFS), 0, 0)
-      const mixBytes = new Uint8Array(await (await encodeMp3(mixed)).arrayBuffer())
+      // Same master render as the feed file (mixdown → gain/fades → loudness → true-peak limiter).
+      const mixed = await buildMasterMix(false)
+      const mixBytes = new Uint8Array(await (await encodeMp3(mixed, { tags: { title } })).arrayBuffer())
       files.push({ name: `${slugFile(title)}-mix.mp3`, data: mixBytes })
       for (const track of prepared) {
         if (!track.buffer) continue
@@ -2906,16 +2903,41 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
    */
   async function buildMasterMix(scopeToRange: boolean): Promise<AudioBuffer> {
     const prepared = await tracksWithInserts(tracks)
-    const mixedRaw =
-      scopeToRange && range.end > range.start + 0.05 && range.end < sessionLen - 0.05
-        ? mixdownTracks(prepared, { startSec: range.start, endSec: range.end })
-        : mixdownTracks(prepared)
-    let mixed = applyGainAndFades(mixedRaw, masterGain, masterFadeIn, masterFadeOut)
-    if (matchLufs) {
-      const loud = measureLoudness(mixed)
-      mixed = applyGainAndFades(mixed, gainForTargetLufs(loud.lufs, PODCAST_LUFS), 0, 0)
+    // Whole episode unless the host explicitly chose "Selection only" (and one exists).
+    const win = resolveExportRange(scopeToRange ? exportScope : 'full', range, sessionLen)
+    const { buffer, lufs, truePeakDb } = await renderMaster(prepared, {
+      startSec: win.isFull ? undefined : win.start,
+      endSec: win.isFull ? undefined : win.end,
+      matchLufs,
+      targetLufs: PODCAST_LUFS,
+      gainDb: masterGain > 0 ? 20 * Math.log10(masterGain) : -80,
+      fadeInSec: masterFadeIn,
+      fadeOutSec: masterFadeOut,
+    })
+    if (Number.isFinite(lufs)) setLoudness({ lufs, peakDb: truePeakDb })
+    return buffer
+  }
+
+  /** The export window the standalone audio export will use (for the UI readout + confirms). */
+  const exportWindow = resolveExportRange(exportScope, range, sessionLen)
+  const hasSelection = selectionOf(range, sessionLen) != null && !resolveExportRange('selection', range, sessionLen).isFull
+
+  /**
+   * Saving over existing episode audio asks first; over a published episode it asks harder.
+   * A far-too-short selection export is called out in the same dialog.
+   */
+  function confirmReplaceAudio(win: ReturnType<typeof resolveExportRange>): boolean {
+    const notes: string[] = []
+    const short = shortExportWarning(win, sessionLen)
+    if (short) notes.push(short)
+    const warn = replaceWarning({ hasExistingAudio: Boolean(audioUrl), published: episodeStatus === 'published' })
+    if (warn === 'published') {
+      notes.push('This episode is already published. Saving replaces the audio listeners get from the feed.')
+    } else if (warn === 'replace') {
+      notes.push('This replaces the audio already saved on this episode.')
     }
-    return applyEffect(mixed, 'limit')
+    if (notes.length === 0) return true
+    return window.confirm(`${notes.join('\n\n')}\n\nSave ${describeExportRange(win)}?`)
   }
 
   /**
@@ -2935,6 +2957,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       setError('Nothing to export — record or import onto a track first')
       return
     }
+    // The combined action already confirmed; the standalone export confirms here.
+    if (!prebuiltMaster && !confirmReplaceAudio(exportWindow)) return
     if (manageBusy) {
       setBusy(thenPublish ? 'Mixing, saving & preparing publish…' : kind === 'wav' ? 'Mixing WAV…' : 'Mixing MP3…')
       setError(null)
@@ -2942,11 +2966,19 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
     try {
       // Reuse the shared master when the combined action already built it; otherwise
-      // build one here (honoring a selected range for the standalone audio export).
+      // build one here (honoring an explicit "Selection only" for the standalone export).
       const mixed = prebuiltMaster ?? (await buildMasterMix(true))
       const after = measureLoudness(mixed)
       if (Number.isFinite(after.lufs)) setLoudness({ lufs: after.lufs, peakDb: after.peakDb })
-      const blob = kind === 'wav' ? encodeWav(mixed) : await encodeMp3(mixed)
+      const blob =
+        kind === 'wav'
+          ? encodeWav(mixed)
+          : await encodeMp3(mixed, {
+              tags: {
+                title,
+                chapters: (chapters || []).map((c) => ({ title: c.title, startSec: c.start_ms / 1000 })),
+              },
+            })
       const ext = kind === 'wav' ? 'wav' : 'mp3'
       const file = new File(
         [blob],
@@ -3001,6 +3033,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       }
 
       await onExported(file, durationSeconds)
+      setDirty(false)
       if (warnings.length) {
         notifyError('Saved — check before publish', warnings.join(' · '))
       }
@@ -4817,7 +4850,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         {/* Master bus / playhead */}
         <div>
           <p className="studio-type-label text-ice mb-2">
-            Playhead {formatClock(playhead)} · export {formatClock(range.start)} – {formatClock(range.end)}
+            Playhead {formatClock(playhead)} · save {describeExportRange(exportWindow)}
           </p>
           <button
             type="button"
@@ -5136,6 +5169,23 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             <input type="checkbox" checked={matchLufs} onChange={(e) => setMatchLufs(e.target.checked)} />
             Match {PODCAST_LUFS} LUFS
           </label>
+          {hasSelection && (
+            <span className="inline-flex items-center gap-2 text-xs text-[#A9B8C6]">
+              <SegmentedControl
+                size="dense"
+                aria-label="What the audio-only export saves"
+                options={[
+                  { value: 'full', label: 'Whole episode' },
+                  { value: 'selection', label: 'Selection only' },
+                ]}
+                value={exportScope}
+                onValueChange={setExportScope}
+              />
+              <span title="Applies to the Audio only buttons. Export episode always saves the whole episode.">
+                {describeExportRange(exportWindow)}
+              </span>
+            </span>
+          )}
           <Button
             variant="secondary"
             size="compact"
