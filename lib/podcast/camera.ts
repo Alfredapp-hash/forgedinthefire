@@ -82,6 +82,32 @@ export type CameraClip = {
   keyframes?: PictureKeyframe[]
 }
 
+/** Human message for getUserMedia failures (denied, missing, busy, insecure). */
+export function mediaErrorMessage(err: unknown, device: 'camera' | 'microphone' = 'camera'): string {
+  const name = err instanceof DOMException || err instanceof Error ? err.name : ''
+  const noun = device === 'camera' ? 'Camera' : 'Microphone'
+  switch (name) {
+    case 'NotAllowedError':
+    case 'PermissionDeniedError':
+      return `${noun} permission was denied. Click the lock/camera icon in the address bar, allow the ${device}, then try again.`
+    case 'NotFoundError':
+    case 'DevicesNotFoundError':
+      return `No ${device} was found. Plug one in (or pick another device) and try again.`
+    case 'NotReadableError':
+    case 'TrackStartError':
+      return `The ${device} is busy or blocked by the system. Close other apps using it (Zoom, Meet, OBS) and try again.`
+    case 'OverconstrainedError':
+    case 'ConstraintNotSatisfiedError':
+      return `The selected ${device} is not available any more. Pick “Default” or another device.`
+    case 'SecurityError':
+      return `${noun} is blocked on this page. It needs HTTPS (or localhost) and must not be disabled by browser policy.`
+    case 'AbortError':
+      return `${noun} failed to start. Try again, or reconnect the device.`
+    default:
+      return err instanceof Error && err.message ? err.message : `${noun} access failed`
+  }
+}
+
 export function newSyncGroupId() {
   return `av_${Math.random().toString(36).slice(2, 10)}`
 }

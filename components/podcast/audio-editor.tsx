@@ -77,8 +77,10 @@ import {
   REC_MODE_META,
   attachInputMeter,
   computePunchAlignmentOffset,
+  createSessionContext,
   decodePunchAlignment,
   playCountIn,
+  punchAlignSec,
   punchInTime,
   sharedPunchInTime,
   sleep,
@@ -87,6 +89,18 @@ import {
   type CueHandle,
   type RecMode,
 } from '@/lib/podcast/record-session'
+import { renderMaster } from '@/lib/podcast/master'
+import { useWakeLock } from '@/components/podcast/studio/use-wake-lock'
+import { useLeaveGuard } from '@/components/podcast/studio/leave-guard'
+import { watchInputs } from '@/components/podcast/studio/track-watchdog'
+import {
+  describeExportRange,
+  replaceWarning,
+  resolveExportRange,
+  selectionOf,
+  shortExportWarning,
+  type ExportScope,
+} from '@/components/podcast/studio/export-range'
 import {
   checkStorageQuota,
   clearRecoverableTakes,
@@ -133,6 +147,7 @@ import { SessionTimeline } from '@/components/podcast/session-timeline'
 import { GuestInvitePanel } from '@/components/podcast/guest-invite-panel'
 import { RecordingBooth, type BoothParticipant } from '@/components/podcast/recording-booth'
 import { ShortcutsHelpModal } from '@/components/podcast/shortcuts-help-modal'
+import { RecoveryBanner } from '@/components/podcast/studio/recovery-banner'
 import type { GuestTallyPhase } from '@/lib/podcast/guest-types'
 import { CameraClipReview, CameraLane } from '@/components/podcast/camera-lane'
 import { CameraPreview } from '@/components/podcast/camera-preview'
@@ -244,6 +259,8 @@ type Props = {
   /** Optional stage navigator. When supplied, a successful Record-stage export
    *  surfaces a "View in editor" toast action that jumps to the Edit stage. */
   onGoToStage?: (stage: StudioStage) => void
+  /** Episode status; 'published' makes "replace the episode audio" a stronger confirm. */
+  episodeStatus?: string | null
 }
 
 type Snapshot = {
@@ -276,7 +293,7 @@ function snapshotTracks(tracks: StudioTrack[]): StudioTrack[] {
   }))
 }
 
-export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage, onGoToStage }: Props) {
+export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage, onGoToStage, episodeStatus }: Props) {
   // Stage gating. `stage == null` keeps legacy behavior (show everything). These
   // are presentational only — nothing below unmounts on a stage switch, so a live
   // recording, its checkpoints, and all editor state persist across stages.
@@ -363,6 +380,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [crashTakes, setCrashTakes] = useState<CheckpointMeta[]>([])
   /** Recording watchdog — updated by capture ticks; UI reads via recWatchdogRef. */
   const [recFlowStalled, setRecFlowStalled] = useState(false)
+  /** Device / permission watchdog: a mic unplugged, muted by the OS, or permission pulled mid-take. */
+  const [inputLost, setInputLost] = useState<string | null>(null)
+  const inputWatchStopRef = useRef<(() => void) | null>(null)
+  /** One 48 kHz AudioContext per recording session: cue playback + every mic share its clock. */
+  const sessionCtxRef = useRef<AudioContext | null>(null)
+  /** What "Save mix" exports. Whole episode by default; a selection only when asked explicitly. */
+  const [exportScope, setExportScope] = useState<ExportScope>('full')
+  /** Edits since the last saved mix (takes are still backed up on this computer). */
+  const [dirty, setDirty] = useState(false)
+  const mountedEditsRef = useRef(false)
 
   const recorderRef = useRef<LaneCapture[]>([])
   const capturesRef = useRef<LaneCapture[]>([])
@@ -464,6 +491,18 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   }, [])
 
   cueToGuestRef.current = cueToGuest
+
+  // Keep the screen awake while recording; confirm before leaving with a live take or unsaved mix.
+  useWakeLock(recording)
+  useLeaveGuard({ recording, unsaved: dirty })
+  useEffect(() => {
+    // The first tracks/cameras value is the mount (or restore) — only later changes are edits.
+    if (!mountedEditsRef.current) {
+      mountedEditsRef.current = true
+      return
+    }
+    if (tracks.some((t) => t.buffer) || cameraClips.length > 0) setDirty(true)
+  }, [tracks, cameraClips])
 
   const publishGuestCue = useCallback((handle: CueHandle | null) => {
     setGuestCueStream(handle?.stream ?? null)
@@ -791,6 +830,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       abortRef.current?.abort()
       if (recRafRef.current) cancelAnimationFrame(recRafRef.current)
       if (watchdogRafRef.current) window.clearInterval(watchdogRafRef.current)
+      inputWatchStopRef.current?.()
+      inputWatchStopRef.current = null
+      void sessionCtxRef.current?.close().catch(() => {})
+      sessionCtxRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -1780,10 +1823,19 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         /* ignore */
       }
 
+      // One shared 48 kHz context for the count-in, the cue mix and every mic capture, so
+      // their frame clocks are directly comparable (sample-accurate punch alignment).
+      let sessionCtx = sessionCtxRef.current
+      if (!sessionCtx || sessionCtx.state === 'closed') {
+        sessionCtx = createSessionContext()
+        sessionCtxRef.current = sessionCtx
+      }
+      await sessionCtx.resume().catch(() => {})
+
       if (countInBeats > 0) {
         setRecTally('count-in')
         setOk('Count-in…')
-        await playCountIn(countInBeats, bpm, ac.signal)
+        await playCountIn(countInBeats, bpm, ac.signal, sessionCtx)
       }
 
       setRecTally('rec')
@@ -1795,6 +1847,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           excludeIds,
           gain: cueGain,
           monitor: cueEnabled,
+          context: sessionCtx,
         })
         cueRef.current = cue
         publishGuestCue(cue)
@@ -1805,9 +1858,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
 
       const recTrim = Math.max(0, prerollSec)
-      const captureRate = cueRef.current?.ctx.sampleRate || sampleRateProbe()
+      const captureRate = sessionCtx.sampleRate || cueRef.current?.ctx.sampleRate || sampleRateProbe()
       watchdogsRef.current = []
-      const captures = await Promise.all(
+      // Per-lane failure isolation: one mic that will not open must not cancel the others.
+      const settled = await Promise.allSettled(
         jobs.map(async (job) => {
           const stream = streams.get(job.key)
           if (!stream) {
@@ -1839,9 +1893,29 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           return {
             job,
             checkpoint,
-            capture: await startLaneCapture(job.lane.id, stream, { checkpoint, watchdog }),
+            capture: await startLaneCapture(job.lane.id, stream, { checkpoint, watchdog, context: sessionCtx }),
           }
         }),
+      )
+      const captures = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+      const laneFailures = settled.flatMap((r, i) =>
+        r.status === 'rejected'
+          ? [`${jobs[i].sharedNames.join(' + ') || 'Voice'}: ${r.reason instanceof Error ? r.reason.message : 'could not start'}`]
+          : [],
+      )
+      if (captures.length === 0) {
+        throw new Error(laneFailures[0] || 'No microphone could be started')
+      }
+      if (laneFailures.length) {
+        notifyError('Recording without every voice', `${laneFailures.join(' · ')} — the other mics are rolling.`)
+      }
+      // Device / permission watchdog: unplugged mic, OS mute, permission pulled, Safari interruption.
+      inputWatchStopRef.current?.()
+      setInputLost(null)
+      inputWatchStopRef.current = watchInputs(
+        captures.map((c) => ({ label: c.job.sharedNames.join(' + ') || 'Mic', stream: streams.get(c.job.key)! })),
+        (label, reason) => setInputLost(`${label} ${reason}`),
+        [sessionCtx],
       )
       capturesRef.current = captures.map((c) => c.capture)
       recorderRef.current = captures.map((c) => c.capture)
@@ -1849,10 +1923,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       const camCaptures = camJobs.map((job) => startCameraCapture(job.person.id, job.stream))
       cameraCapturesRef.current = camCaptures
 
+      const cueForAlign = cueRef.current
       void Promise.all([
-        Promise.all(captures.map((c) => c.capture.done)),
+        Promise.allSettled(captures.map((c) => c.capture.done)),
         Promise.all(camCaptures.map((c) => c.done.catch(() => new Blob()))),
-      ]).then(async ([blobs, camBlobs]) => {
+      ]).then(async ([blobResults, camBlobs]) => {
+        const blobs = blobResults.map((r) => (r.status === 'fulfilled' ? r.value : null))
         finishRecCleanup()
         stopLocalRecordStreams()
         recorderRef.current = []
@@ -1873,19 +1949,37 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         )
         try {
           pushHistory()
-          const decoded: { lane: StudioTrack; buffer: AudioBuffer; sharedNames: string[] }[] = []
+          const decoded: { lane: StudioTrack; buffer: AudioBuffer; sharedNames: string[]; late: number }[] = []
           for (let i = 0; i < captures.length; i++) {
             const blob = blobs[i]
-            if (!blob || blob.size < 64) continue
-            let buffer = await bufferFromBlob(blob)
-            if (recTrim > 0.04) {
-              if (buffer.duration <= recTrim + 0.08) continue
-              buffer = sliceBuffer(buffer, recTrim, buffer.duration)
+            const capture = captures[i].capture
+            // Worklet captures hand back their float result directly (no WAV decode round-trip).
+            let buffer = capture.buffer?.() || null
+            if (!buffer) {
+              if (!blob || blob.size < 64) continue
+              buffer = await bufferFromBlob(blob)
+            }
+            // Preroll + device/round-trip latency (+ cue-vs-capture frame delta when they share a
+            // clock). Negative = the capture began after the punch point: lay it later, don't trim.
+            const align = capture.timing
+              ? punchAlignSec({
+                  prerollSec: recTrim,
+                  capture,
+                  cue: cueForAlign,
+                  compensateLatency: captures[i].job.key !== REMOTE_GUEST_KEY,
+                })
+              : recTrim
+            const trim = Math.max(0, align)
+            const late = Math.max(0, -align)
+            if (trim > 0.04) {
+              if (buffer.duration <= trim + 0.08) continue
+              buffer = sliceBuffer(buffer, trim, buffer.duration)
             }
             decoded.push({
               lane: captures[i].job.lane,
               buffer,
               sharedNames: captures[i].job.sharedNames,
+              late,
             })
           }
           if (decoded.length === 0 && camCaptures.length === 0) {
@@ -1900,13 +1994,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             let next = prev
             const laidIds: string[] = []
             const cleanup = voiceIsolate ? VOICE_CLEANUP_INSERTS.map((s) => ({ ...s })) : null
-            for (const { lane, buffer, sharedNames } of decoded) {
+            for (const { lane, buffer, sharedNames, late } of decoded) {
               const person = people.find((p) => p.id === lane.personId)
               const reuse =
                 replaceArmed && lane.buffer
                   ? next.find((t) => t.id === lane.id)
                   : emptyTakeForPerson(next, lane.personId) || (lane.buffer ? null : next.find((t) => t.id === lane.id))
-              const offset = replaceArmed && reuse?.buffer ? reuse.offset : punch
+              const offset = (replaceArmed && reuse?.buffer ? reuse.offset : punch) + late
               const syncGroup = newSyncGroupId()
               const takeLabel =
                 sharedNames.length > 1
@@ -1947,12 +2041,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   personId: lane.personId,
                   take,
                   color: person?.color || lane.color,
-                  offset: punch,
+                  offset,
                   armed: true,
                   volume: 1,
                   listen: true,
                   inserts: cleanup || [],
-                  clips: [fullClipForBuffer(buffer, punch, 0.05, 0.15, syncGroup)],
+                  clips: [fullClipForBuffer(buffer, offset, 0.05, 0.15, syncGroup)],
                 })
                 made.buffer = cloneAudioBuffer(buffer)
                 made.url = bufferToUrl(buffer)
@@ -2078,6 +2172,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   }
 
   function finishRecCleanup() {
+    inputWatchStopRef.current?.()
+    inputWatchStopRef.current = null
     cueRef.current?.stop()
     cueRef.current = null
     publishGuestCue(mixRef.current)
@@ -3106,43 +3202,27 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
       <div className="p-4 space-y-4">
         {showRecord && (recover || crashTakes.length > 0) && sessionStatus === 'offer' && (
-          <div className="rounded-xl border border-[#53D6FF]/40 bg-[#0A1820] px-4 py-3 flex flex-wrap items-center gap-3">
-            {crashTakes.length > 0 && (
-              <p className="text-sm text-[#FFB86B] flex-1 min-w-[12rem] w-full">
-                A previous session ended mid-take. {crashTakes.length} in-progress recording
-                {crashTakes.length === 1 ? '' : 's'} ({crashTakes.map((t) => t.label).join(', ')}) were
-                checkpointed and can be recovered.
-              </p>
-            )}
-            {recover && (
-              <p className="text-sm text-[#F6FAFC] flex-1 min-w-[12rem]">
-                Recover {recover.takeCount} take{recover.takeCount === 1 ? '' : 's'}
-                {recover.cameraCount
-                  ? ` + ${recover.cameraCount} camera file${recover.cameraCount === 1 ? '' : 's'}`
-                  : ''}{' '}
-                ({formatClock(recover.durationSec)}) saved {new Date(recover.savedAt).toLocaleTimeString()} on
-                this computer.
-              </p>
-            )}
-            {crashTakes.length > 0 && (
-              <button type="button" className={primary} onClick={() => void restoreCrashTakes()}>
-                Recover in-progress take
-              </button>
-            )}
-            {recover && (
-              <button type="button" className={primary} onClick={() => void restoreSavedSession()}>
-                Restore
-              </button>
-            )}
-            <button type="button" className={btn} onClick={() => dismissRecover(false)}>
-              Keep empty
-            </button>
-            <button type="button" className={btn} onClick={() => dismissRecover(true)}>
-              Discard saved
-            </button>
-          </div>
+          <RecoveryBanner
+            episodeId={episodeId}
+            saved={recover}
+            crashTakes={crashTakes}
+            busy={busy != null}
+            onRestoreCrashTakes={() => void restoreCrashTakes()}
+            onRestoreSession={() => void restoreSavedSession()}
+            onDecideLater={() => dismissRecover(false)}
+            onDelete={() => dismissRecover(true)}
+            onOk={(m) => notifyOk(m)}
+            onError={(m) => notifyError(m)}
+          />
         )}
 
+        {showRecord && recording && inputLost && (
+          <div className="rounded-xl border border-[#FF7A9A]/60 bg-[#20101A] px-4 py-3" role="alert">
+            <p className="text-sm text-[#FF7A9A]">
+              {inputLost}. The take keeps recording what still arrives — reconnect the device, or stop and re-record.
+            </p>
+          </div>
+        )}
         {showRecord && recording && recFlowStalled && (
           <div className="rounded-xl border border-[#FF7A9A]/60 bg-[#20101A] px-4 py-3">
             <p className="text-sm text-[#FF7A9A]">
