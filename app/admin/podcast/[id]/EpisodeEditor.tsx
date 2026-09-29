@@ -15,6 +15,8 @@ import {
 } from 'lucide-react'
 import { Button, Input, Panel, Toaster, toast } from '@/components/studio-ui'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
+import { ClipMaker } from '@/components/podcast/post/clip-maker'
+import { PODCAST } from '@/lib/podcast-meta'
 import { measureAudioDuration, uploadPodcastMedia } from '@/lib/podcast/media-upload'
 import { checkFeedCompliance } from '@/lib/podcast/compliance'
 import type {
@@ -739,6 +741,24 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
         </ul>
         {saving && <p className="text-xs text-[#A9B8C6] mt-3">Saving…</p>}
       </section>
+
+      {/* ── Share clips: 15–90 s audiograms cut from the finished audio, rendered in the browser.
+             Protected names stay bleeped and captioned "[removed]". Last block of the Publish area. ── */}
+      <Panel elevation="raised" className="space-y-4 p-5">
+        <div className="space-y-1">
+          <p className="studio-type-section !text-[14px]">Share clips</p>
+          <p className="studio-type-body text-[12px] text-silver">
+            Cut a short vertical, square or wide clip with animated captions for social posts. Saved clips show on the public episode page.
+          </p>
+        </div>
+        <ClipMaker
+          key={episode.id}
+          episode={episode}
+          showTitle={PODCAST.title}
+          coverUrl={episode.cover_url || PODCAST.image}
+          disabled={saving || uploading}
+        />
+      </Panel>
     </div>
   )
 }
