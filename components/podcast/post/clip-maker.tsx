@@ -100,7 +100,7 @@ export function ClipMaker({ episode, showTitle, coverUrl, safety: safetyProp, di
   const words = useMemo(() => cleanWords(episode.transcript_words), [episode.transcript_words])
   const sentences = useMemo(() => transcriptSentences(words), [words])
   const redactions = useMemo(() => redactionsFor(words, safety?.record ?? null), [words, safety?.record])
-  const terms = safety?.record?.protected_terms ?? []
+  const terms = useMemo(() => safety?.record?.protected_terms ?? [], [safety?.record])
   const durationHint = episode.duration_seconds || 0
 
   const [audio, setAudio] = useState<AudioBuffer | null>(null)
@@ -183,7 +183,6 @@ export function ClipMaker({ episode, showTitle, coverUrl, safety: safetyProp, di
   const clipAudio = useMemo(() => {
     if (!audio || !check.ok) return null
     return sliceClipAudio(audio, range.startSec, range.endSec, inClip)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audio, range.startSec, range.endSec, inClip, check.ok])
   const clipPeaks = useMemo(
     () => (clipAudio ? computePeaks(clipAudio.channels, clipAudio.sampleRate, 0, clipLen) : null),
