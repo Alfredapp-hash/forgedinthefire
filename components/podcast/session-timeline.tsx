@@ -435,7 +435,7 @@ export function SessionTimeline({
                           background: `${hue.laneBg}`,
                         }}
                       >
-                        ready — arm or record
+                        {track.armed ? 'armed — press Record' : 'no take yet'}
                       </div>
                     )}
                     {clips.map((clip) => (

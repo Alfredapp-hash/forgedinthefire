@@ -148,7 +148,7 @@ export function checkFeedCompliance(ep: CompliancePayload): ComplianceResult {
   const hasAudio = Boolean(ep.audio_url && String(ep.audio_url).trim())
   checks.push({
     id: 'audio_url',
-    label: 'Audio enclosure URL',
+    label: 'Episode audio file',
     ok: hasAudio,
     required: true,
   })
@@ -156,28 +156,28 @@ export function checkFeedCompliance(ep: CompliancePayload): ComplianceResult {
   const size = Number(ep.file_size ?? 0)
   checks.push({
     id: 'file_size',
-    label: 'Enclosure byte length (Apple RSS)',
+    label: 'Audio file size',
     ok: size > 0,
-    detail: size > 0 ? undefined : 'Re-save the mix so the RSS enclosure length is > 0',
+    detail: size > 0 ? undefined : 'Export the episode again so the file size is known (Apple RSS needs it)',
     required: true,
   })
 
   const duration = Number(ep.duration_seconds ?? 0)
   checks.push({
     id: 'duration',
-    label: 'Duration measured',
+    label: 'Episode length',
     ok: duration > 0,
-    detail: duration > 0 ? undefined : 'Duration must be > 0 seconds',
+    detail: duration > 0 ? undefined : 'Export the episode so its length is measured',
     required: true,
   })
 
   const mime = (ep.audio_mime || '').toLowerCase()
   checks.push({
     id: 'audio_mime',
-    label: 'Audio MIME type',
+    label: 'Audio file type',
     // Only fail when audio exists but the mime is a value directories reject.
     ok: !hasAudio || mime === '' || AUDIO_MIME_ALLOW.has(mime),
-    detail: hasAudio && mime && !AUDIO_MIME_ALLOW.has(mime) ? `Unsupported enclosure type: ${mime}` : undefined,
+    detail: hasAudio && mime && !AUDIO_MIME_ALLOW.has(mime) ? `Unsupported audio file type: ${mime}` : undefined,
     required: true,
   })
 
@@ -192,9 +192,9 @@ export function checkFeedCompliance(ep: CompliancePayload): ComplianceResult {
 
   checks.push({
     id: 'cover_url',
-    label: 'Cover art present',
+    label: 'Cover art',
     ok: Boolean(ep.cover_url && String(ep.cover_url).trim()),
-    detail: ep.cover_url ? undefined : 'Apple/Spotify require square art >= 1400x1400',
+    detail: ep.cover_url ? undefined : 'Apple and Spotify need square art, at least 1400×1400',
     required: true,
   })
 

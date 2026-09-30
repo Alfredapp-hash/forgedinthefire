@@ -3926,7 +3926,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </Button>
           </div>
           </div>
-          {showRecord && (Object.keys(cameraStreams).length > 0 ||
+          {!showRecord ? null : (Object.keys(cameraStreams).length > 0 ||
             (remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest))) ||
             cameraClips.length > 0) ? (
             <div className="flex items-start gap-2 shrink-0">
@@ -4849,7 +4849,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                     </button>
                   )}
                 </div>
-                {showEdit && mixerTrack && (
+                {showEdit && mixerTrack && (advanced || lane.some((t) => t.buffer)) && (
                   <div
                     className={`rounded-control border p-2.5 space-y-2 transition-shadow ${
                       selected?.id === mixerTrack.id
