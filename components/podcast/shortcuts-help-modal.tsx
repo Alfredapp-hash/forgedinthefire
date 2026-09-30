@@ -4,7 +4,7 @@ import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 
 import { Button, Kbd, Panel } from '@/components/studio-ui'
-import { STUDIO_SHORTCUTS } from '@/lib/podcast/shortcuts'
+import { SHORTCUT_SCOPE_NOTE, STUDIO_HOW_IT_WORKS, STUDIO_SHORTCUTS } from '@/lib/podcast/shortcuts'
 
 /** Store that never emits — used only to distinguish server vs client render. */
 function subscribeNoop(): () => void {
@@ -64,18 +64,18 @@ export function ShortcutsHelpModal({ open, onClose }: Props): React.JSX.Element 
   const overlay = (
     <dialog
       ref={dialogRef}
-      aria-label="Keyboard shortcuts"
+      aria-label="Keyboard shortcuts and help"
       onCancel={(e) => {
         e.preventDefault()
         onClose()
       }}
       className="m-auto w-full max-w-2xl bg-transparent p-0 text-white backdrop:bg-obsidian/70"
     >
-      <Panel elevation="floating" className="overflow-hidden">
+      <Panel elevation="floating" className="max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between gap-4 border-b border-divider px-5 py-4">
           <div>
             <p className="studio-type-label text-ice">Studio</p>
-            <h2 className="studio-type-section mt-0.5 !text-[18px]">Keyboard shortcuts</h2>
+            <h2 className="studio-type-section mt-0.5 !text-[18px]">Shortcuts &amp; how it works</h2>
           </div>
           <Button
             variant="secondary"
@@ -87,6 +87,8 @@ export function ShortcutsHelpModal({ open, onClose }: Props): React.JSX.Element 
             Close
           </Button>
         </div>
+
+        <p className="studio-type-body border-b border-divider px-5 py-3 text-silver-body">{SHORTCUT_SCOPE_NOTE}</p>
 
         <div className="grid gap-x-8 gap-y-6 px-5 py-5 sm:grid-cols-2">
           {STUDIO_SHORTCUTS.map((group) => (
@@ -103,6 +105,20 @@ export function ShortcutsHelpModal({ open, onClose }: Props): React.JSX.Element 
             </section>
           ))}
         </div>
+
+        <section className="border-t border-divider px-5 py-5" aria-labelledby="studio-how-it-works">
+          <h3 id="studio-how-it-works" className="studio-type-column mb-2.5 text-ice">
+            How the studio works
+          </h3>
+          <div className="space-y-2">
+            {STUDIO_HOW_IT_WORKS.map((item) => (
+              <details key={item.title} className="rounded-control border border-divider bg-obsidian px-3 py-2">
+                <summary className="studio-type-body cursor-pointer text-white">{item.title}</summary>
+                <p className="studio-type-body mt-2 text-silver-body">{item.body}</p>
+              </details>
+            ))}
+          </div>
+        </section>
       </Panel>
     </dialog>
   )
