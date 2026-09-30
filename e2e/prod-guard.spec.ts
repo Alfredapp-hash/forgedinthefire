@@ -1,6 +1,9 @@
+import { createRequire } from 'node:module'
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { test, expect } from '@playwright/test'
+
+const nodeRequire = createRequire(__filename)
 
 /**
  * The /dev/* harnesses must hard-404 in production. Every page under app/dev calls
@@ -27,7 +30,12 @@ async function withNodeEnv<T>(value: string, fn: () => Promise<T> | T) {
 }
 
 test('devOnly() throws Next not-found in production and passes in development', async () => {
-  const { devOnly } = await import('../app/dev/dev-only')
+  // Playwright only transpiles files under testDir; app/dev-only.ts is raw ESM/TS.
+  // Load it the same way scripts/check-podcast-rss.cjs loads lib/*.ts.
+  const jiti = nodeRequire('jiti')(__filename, { interopDefault: true }) as (id: string) => {
+    devOnly: () => void
+  }
+  const { devOnly } = jiti(path.join(__dirname, '../app/dev/dev-only.ts'))
   await withNodeEnv('development', () => expect(() => devOnly()).not.toThrow())
   await withNodeEnv('production', () => {
     let thrown: unknown = null
