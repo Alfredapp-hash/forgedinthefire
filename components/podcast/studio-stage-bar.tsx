@@ -74,14 +74,14 @@ export function StudioStageBar({ episode, stage, onStageChange, progress }: Prop
         <div className="min-w-0">
           <p className="studio-type-label text-ice">Now in the studio</p>
           <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
-            <span className="studio-type-section truncate !text-[18px]">{episode.title}</span>
+            <h1 className="studio-type-section truncate !text-[18px]">{episode.title}</h1>
             {seLabel && (
               <Chip tone="neutral" className="shrink-0">
                 {seLabel}
               </Chip>
             )}
             <Chip tone="accent" className="shrink-0 capitalize">
-              {episode.status}
+              {episode.status.replace(/_/g, ' ')}
             </Chip>
           </div>
         </div>
@@ -109,6 +109,11 @@ export function StudioStageBar({ episode, stage, onStageChange, progress }: Prop
                     : undefined
                 }
                 aria-current={active ? 'step' : undefined}
+                // Stable accessible name: the visible label swaps its number for a
+                // check mark as steps complete, but the name never changes, so
+                // screen-reader users and tests can rely on it.
+                aria-label={`${STUDIO_STAGE_LABEL[s]} — step ${i + 1}`}
+                title={done ? `${STUDIO_STAGE_LABEL[s]} — done` : undefined}
                 onClick={() => onStageChange(s)}
                 className={`studio-type-button flex shrink-0 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-[8px] px-2.5 py-2 transition-[background-color,color,box-shadow,transform] duration-150 ease-calm sm:flex-1 lg:flex-none lg:px-4 ${
                   active

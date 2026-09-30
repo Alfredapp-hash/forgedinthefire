@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { CheckCircle2, Circle, X } from 'lucide-react'
 import { Button, Panel, Select, Toaster, toast } from '@/components/studio-ui'
@@ -9,7 +9,7 @@ import { StudioStageBar } from '@/components/podcast/studio-stage-bar'
 import { EpisodePlan, type QueueFilter } from '@/components/podcast/episode-plan'
 import { measureAudioDuration, uploadPodcastMedia } from '@/lib/podcast/media-upload'
 import { checkFeedCompliance } from '@/lib/podcast/compliance'
-import { type StudioStage } from '@/lib/podcast/stage'
+import { STUDIO_STAGE_LABEL, type StudioStage } from '@/lib/podcast/stage'
 import type {
   ContentTopic,
   EpisodeStatus,
@@ -36,12 +36,35 @@ const PLANNED_STATUSES: EpisodeStatus[] = ['draft', 'recording', 'editing', 'rev
 
 /** Maps a feed-compliance check id to the Plan-stage form field that fixes it.
  *  Ids with no editable Plan field (audio enclosure, byte length, duration, mime)
- *  are omitted — those are fixed in Record/Edit, not Plan. */
+ *  are fixed by exporting a mix — see COMPLIANCE_STAGE. */
 const COMPLIANCE_FIELD: Record<string, string> = {
   title: 'title',
   summary: 'summary',
   cover_url: 'cover',
   chapters: 'chapters',
+}
+
+/** Checks with no Plan field still get a "Fix →": they jump to the stage that
+ *  produces the missing thing (a saved mix fixes the audio file, size and duration). */
+const COMPLIANCE_STAGE: Record<string, StudioStage> = {
+  audio_url: 'edit',
+  file_size: 'edit',
+  duration: 'edit',
+  audio_mime: 'edit',
+}
+
+/** Plain-language episode status labels (the raw enum is snake_case). */
+const STATUS_LABEL: Record<string, string> = {
+  draft: 'Draft',
+  recording: 'Recording',
+  editing: 'Editing',
+  review: 'In review',
+  scheduled: 'Scheduled',
+  published: 'Published',
+  archived: 'Archived',
+}
+function statusLabel(status: string) {
+  return STATUS_LABEL[status] ?? status.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
 }
 
 export function RecordingStudio({
@@ -68,6 +91,18 @@ export function RecordingStudio({
   // First-run guidance banner: explains the Plan→Record→Edit→Publish flow.
   // Dismissal is remembered so seasoned hosts never see it again.
   const [showTip, setShowTip] = useState(false)
+  /** Unsaved timeline edits in the editor — used to warn before leaving to the episode page. */
+  const [editorDirty, setEditorDirty] = useState(false)
+  /** Stage heading receives focus on every stage change (WCAG 2.4.3) — skipped on mount. */
+  const stageHeadingRef = useRef<HTMLHeadingElement | null>(null)
+  const stageMountedRef = useRef(false)
+  useEffect(() => {
+    if (!stageMountedRef.current) {
+      stageMountedRef.current = true
+      return
+    }
+    stageHeadingRef.current?.focus({ preventScroll: false })
+  }, [stage])
 
   useEffect(() => {
     try {
@@ -140,15 +175,16 @@ export function RecordingStudio({
       label: c.detail && !c.ok ? `${c.label} — ${c.detail}` : c.label,
       required: c.required,
       field: COMPLIANCE_FIELD[c.id] ?? null,
+      stage: COMPLIANCE_STAGE[c.id] ?? null,
     }))
     return [
       ...feed,
-      { ok: Boolean(episode.show_notes), label: 'Show notes / script', required: false, field: 'notes' },
-      { ok: episode.episode_number != null, label: 'Episode number', required: false, field: 'epnum' },
-      { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters added', required: false, field: 'chapters' },
-      { ok: Boolean(episode.transcript), label: 'Transcript', required: false, field: 'transcript' },
-      { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)', required: false, field: 'sched' },
-      { ok: Boolean(episode.topic_id), label: 'Linked studio topic', required: false, field: 'topic' },
+      { ok: Boolean(episode.show_notes), label: 'Show notes / script', required: false, field: 'notes', stage: null },
+      { ok: episode.episode_number != null, label: 'Episode number', required: false, field: 'epnum', stage: null },
+      { ok: (episode.chapters?.length || 0) > 0, label: 'Chapters added', required: false, field: 'chapters', stage: null },
+      { ok: Boolean(episode.transcript), label: 'Transcript', required: false, field: 'transcript', stage: null },
+      { ok: episode.status !== 'scheduled' || Boolean(episode.scheduled_for), label: 'Schedule time (if scheduled)', required: false, field: 'sched', stage: null },
+      { ok: Boolean(episode.topic_id), label: 'Linked studio topic', required: false, field: 'topic', stage: null },
     ]
   }, [episode, compliance])
 
@@ -429,8 +465,8 @@ export function RecordingStudio({
       {!episode ? (
         // No episode loaded yet: show the Plan queue so the host can pick or write one.
         <>
-          {error && <p className="text-sm text-red-300">{error}</p>}
-          {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
+          {error && <p className="text-sm text-red-300" role="alert">{error}</p>}
+          {ok && <p className="text-sm text-[#8DEBFF]" role="status">{ok}</p>}
           <EpisodePlan
             topics={topics}
             queuedEpisodes={queuedEpisodes}
@@ -498,20 +534,40 @@ export function RecordingStudio({
               className="w-auto"
             >
               {EPISODE_PIPELINE.map((status) => (
-                <option key={status} value={status}>{status}</option>
+                <option key={status} value={status}>{statusLabel(status)}</option>
               ))}
             </Select>
             <Link
               href={`/admin/podcast/${episode.id}`}
+              onClick={(e) => {
+                // Takes autosave on this computer, but the mix is not saved to the
+                // episode until Export — warn before leaving with unsaved edits.
+                if (
+                  editorDirty &&
+                  !window.confirm('You have edits that are not saved to the episode yet. Leave the studio anyway?')
+                ) {
+                  e.preventDefault()
+                }
+              }}
               className="studio-type-button inline-flex items-center rounded-control border border-divider bg-surface-raised px-3 py-2 text-silver shadow-inset-top transition-[border-color,box-shadow] duration-150 ease-calm hover:border-forged/60 hover:text-white hover:shadow-glow-subtle"
             >
               Episode page
             </Link>
           </div>
 
-          {error && <p className="studio-type-body text-heart">{error}</p>}
-          {ok && <p className="studio-type-body text-ice">{ok}</p>}
-          {saving && <p className="studio-type-label text-silver-label">Saving…</p>}
+          {/* Stage heading: the focus target on every stage change, and the page's h2 landmark. */}
+          <h2
+            ref={stageHeadingRef}
+            tabIndex={-1}
+            className="studio-type-label text-ice outline-none focus-visible:ring-2 focus-visible:ring-ice/60 rounded-control"
+          >
+            {STUDIO_STAGE_LABEL[stage]}
+            <span className="sr-only"> stage</span>
+          </h2>
+
+          {error && <p className="studio-type-body text-heart" role="alert">{error}</p>}
+          {ok && <p className="studio-type-body text-ice" role="status">{ok}</p>}
+          {saving && <p className="studio-type-label text-silver-label" role="status">Saving…</p>}
 
           {/* Plan stage: queue + all metadata + checklist. */}
           {stage === 'plan' && (
@@ -557,7 +613,32 @@ export function RecordingStudio({
             />
           )}
 
-          {/* Publish stage: compliance summary + publish CTA, on top of the mounted editor. */}
+          {/*
+            Editor stays MOUNTED across record/edit/publish so the live session and
+            recording state are never dropped. During Plan we hide it (never unmount)
+            so the plan metadata gets the full width. The editor renders its own
+            record/edit/publish content from the `stage` prop.
+          */}
+          <div className={stage === 'plan' ? 'hidden' : ''} aria-hidden={stage === 'plan'}>
+            <Panel elevation="raised" className="p-5">
+              <StagedAudioEditor
+                episodeId={episode.id}
+                audioUrl={episode.audio_url}
+                title={episode.title}
+                episodeStatus={episode.status}
+                onExported={saveMix}
+                onPublished={publish}
+                onMarkChapter={markChapterAt}
+                chapters={episode.chapters}
+                stage={stage}
+                onGoToStage={setStage}
+                onDirtyChange={setEditorDirty}
+              />
+            </Panel>
+          </div>
+
+          {/* Publish stage: compliance summary + publish CTA. Sits BELOW the editor's export
+              buttons so the thing that fixes "no audio" (Export episode) is never off-screen. */}
           {stage === 'publish' && (
             <Panel elevation="raised" className="p-6">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -588,7 +669,7 @@ export function RecordingStudio({
               <ul className="grid gap-2 sm:grid-cols-2">
                 {checks.map((item) => {
                   const failing = item.required && !item.ok
-                  const jumpable = !item.ok && Boolean(item.field)
+                  const jumpable = !item.ok && Boolean(item.field || item.stage)
                   const icon = item.ok ? (
                     <CheckCircle2 size={16} className="shrink-0 text-forged" />
                   ) : (
@@ -603,14 +684,22 @@ export function RecordingStudio({
                     <>
                       {icon}
                       <span className="min-w-0 flex-1">{item.label}</span>
-                      {jumpable && <span className="studio-type-label shrink-0 text-ice">Fix →</span>}
+                      {jumpable && (
+                        <span className="studio-type-label shrink-0 text-ice">
+                          {item.field ? 'Fix →' : `Fix in ${STUDIO_STAGE_LABEL[item.stage as StudioStage]} →`}
+                        </span>
+                      )}
                       {failing && !jumpable && <span className="studio-type-label shrink-0 text-heart">required</span>}
                     </>
                   )
                   return (
                     <li key={item.label}>
                       {jumpable ? (
-                        <button type="button" onClick={() => jumpToField(item.field)} className={rowClass}>
+                        <button
+                          type="button"
+                          onClick={() => (item.field ? jumpToField(item.field) : item.stage && setStage(item.stage))}
+                          className={rowClass}
+                        >
                           {body}
                         </button>
                       ) : (
@@ -622,29 +711,6 @@ export function RecordingStudio({
               </ul>
             </Panel>
           )}
-
-          {/*
-            Editor stays MOUNTED across record/edit/publish so the live session and
-            recording state are never dropped. During Plan we hide it (never unmount)
-            so the plan metadata gets the full width. The editor renders its own
-            record/edit/publish content from the `stage` prop.
-          */}
-          <div className={stage === 'plan' ? 'hidden' : ''} aria-hidden={stage === 'plan'}>
-            <Panel elevation="raised" className="p-5">
-              <StagedAudioEditor
-                episodeId={episode.id}
-                audioUrl={episode.audio_url}
-                title={episode.title}
-                episodeStatus={episode.status}
-                onExported={saveMix}
-                onPublished={publish}
-                onMarkChapter={markChapterAt}
-                chapters={episode.chapters}
-                stage={stage}
-                onGoToStage={setStage}
-              />
-            </Panel>
-          </div>
         </>
       )}
     </div>
