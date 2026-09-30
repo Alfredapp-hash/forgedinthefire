@@ -302,7 +302,15 @@ export function SessionTimeline({
   const board = (
     <div
       ref={boardRef}
-      className="overflow-x-auto"
+      // Focusable + named: keyboard users can reach and scroll the board, and the
+      // single-letter editing shortcuts fire while it (or nothing) has focus.
+      tabIndex={rulerOnly ? undefined : 0}
+      role={rulerOnly ? undefined : 'region'}
+      aria-label={
+        rulerOnly ? undefined : scopedPeople.length === 1 ? `Timeline for ${scopedPeople[0].name}` : 'Timeline'
+      }
+      data-timeline
+      className="overflow-x-auto rounded-clip outline-none focus-visible:ring-2 focus-visible:ring-ice/60"
       onScroll={(e) => onScrollLeft?.(e.currentTarget.scrollLeft)}
       onPointerMove={onBoardPointerMove}
       onPointerUp={onBoardPointerUp}
@@ -587,14 +595,14 @@ function Clip({
       </span>
       <button
         type="button"
-        aria-label="Trim in"
-        className="absolute left-0 top-0 h-full w-2 cursor-ew-resize z-10 bg-transparent"
+        aria-label={`Trim start of ${track.name}`}
+        className="absolute left-0 top-0 z-10 h-full w-2.5 cursor-ew-resize rounded-l-clip bg-transparent hover:bg-white/15 focus-visible:bg-white/25"
         onPointerDown={onTrimIn}
       />
       <button
         type="button"
-        aria-label="Trim out"
-        className="absolute right-0 top-0 h-full w-2 cursor-ew-resize z-10 bg-transparent"
+        aria-label={`Trim end of ${track.name}`}
+        className="absolute right-0 top-0 z-10 h-full w-2.5 cursor-ew-resize rounded-r-clip bg-transparent hover:bg-white/15 focus-visible:bg-white/25"
         onPointerDown={onTrimOut}
       />
     </div>

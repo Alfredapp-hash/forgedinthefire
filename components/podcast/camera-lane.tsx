@@ -312,7 +312,11 @@ export function CameraLane({
       {clips.length > 0 && (
         <div
           ref={boardRef}
-          className="overflow-x-auto"
+          tabIndex={0}
+          role="region"
+          aria-label="Picture timeline"
+          data-timeline
+          className="overflow-x-auto rounded-clip outline-none focus-visible:ring-2 focus-visible:ring-ice/60"
           onScroll={(e) => onScrollLeft?.(e.currentTarget.scrollLeft)}
           onPointerMove={onBoardPointerMove}
           onPointerUp={onBoardPointerUp}
