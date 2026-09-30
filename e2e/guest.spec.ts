@@ -44,6 +44,8 @@ test.describe('guest booth (/dev/guest)', () => {
     await gotoHarness(page, GUEST_URL())
 
     await expect(guest.title(page)).toBeVisible()
+    // Consent step ("Before we start") comes first on this branch; continue into the lobby.
+    await guest.consentContinue(page).click({ timeout: 10_000 }).catch(() => {})
     await expect(guest.greenRoom(page)).toBeVisible()
     await expect(guest.join(page)).toBeVisible()
     // Nothing touched the microphone on load — the guest chooses when.
@@ -72,9 +74,7 @@ test.describe('guest booth (/dev/guest)', () => {
     await expect(guest.leave(page)).toHaveCount(0)
   })
 
-  test.fixme('consent screen ("Before we start") renders before the green room (guests stream)', async ({ page }) => {
-    // Sprint-2 adds a recording-consent step ahead of the lobby. The base goes straight to
-    // the green room. Re-enable when components/podcast/guest-portal.tsx gains the consent phase.
+  test('consent screen ("Before we start") renders before the green room', async ({ page }) => {
     await mockGuestBasics(page)
     await gotoHarness(page, GUEST_URL())
     await expect(guest.consentHeading(page)).toBeVisible()

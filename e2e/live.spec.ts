@@ -8,6 +8,10 @@ async function mockLive(page: Page) {
     json(route, { configured: false, provider: null, host: null, bearer: false, defaultHlsUrl: null, defaultWhepUrl: null }),
   )
   await page.route(/\/api\/admin\/podcast\/live(\?.*)?$/, (route) => json(route, { sessions: [] }))
+  await page.route(/\/api\/admin\/podcast\/live\/destinations/, (route) => json(route, { destinations: [] }))
+  await page.route(/\/api\/podcast\/live\/chat/, (route) => json(route, { messages: [], pinned: null }))
+  await page.route(/\/api\/podcast\/live(\?.*)?$/, (route) => json(route, { live: null }))
+  await page.route(/\/api\/admin\/studio\/episodes/, (route) => json(route, { episodes: [] }))
   await page.route(/\/api\/admin\/podcast\/invites/, (route) => json(route, { invites: [] }))
 }
 

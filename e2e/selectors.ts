@@ -71,13 +71,14 @@ export const guest = {
   /** Sprint-2 consent screen (guest stream) — absent on the GarageBand base. */
   consentHeading: (page: Page) => page.getByRole('heading', { name: /before we start/i }),
   consentContinue: (page: Page) => page.getByRole('button', { name: /i understand/i }),
-  greenRoom: (page: Page) => page.getByText(/green room/i).first(),
-  name: (page: Page) => page.getByRole('textbox', { name: /display name|first name or nickname/i }),
+  /** Lobby heading: "Get ready" on this branch (was "Green room"). */
+  greenRoom: (page: Page) => page.getByText(/green room|get ready/i).first(),
+  name: (page: Page) => page.getByRole('textbox', { name: /display name|first name or nickname|your name for the host/i }),
   headphones: (page: Page) => page.getByRole('checkbox', { name: /headphones/i }),
   join: (page: Page) => page.getByRole('button', { name: /^join/i }),
   testMic: (page: Page) => page.getByRole('button', { name: /test microphone/i }),
-  /** Inline error text. The base renders it as a plain <p>, not role=alert (see the UX audit). */
-  error: (page: Page) => guest.root(page).getByText(/enter the name|enter a name|headphones so the host mix|invite has expired|invite is closed/i).first(),
+  /** Inline error text (rendered inside a role=alert Notice on this branch). */
+  error: (page: Page) => guest.root(page).getByRole('alert').first(),
   blocked: (page: Page) => guest.root(page).getByText(/expired|closed|revoked/i).first(),
   leave: (page: Page) => guest.root(page).getByRole('button', { name: /^leave$/i }),
 }
@@ -85,5 +86,6 @@ export const guest = {
 export const live = {
   root: (page: Page) => page.getByTestId('dev-live'),
   placeholder: (page: Page) => live.root(page).getByRole('status'),
-  goLive: (page: Page) => page.getByRole('button', { name: /^go live$/i }),
+  /** "Go live" / "Go live (unavailable — see why below)" when no provider is configured. */
+  goLive: (page: Page) => page.getByRole('button', { name: /^go live/i }),
 }
