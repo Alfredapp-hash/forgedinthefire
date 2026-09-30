@@ -635,6 +635,7 @@ export function RecordingStudio({
                 episodeId={episode.id}
                 audioUrl={episode.audio_url}
                 title={episode.title}
+                episodeStatus={episode.status}
                 onExported={saveMix}
                 onPublished={publish}
                 onMarkChapter={markChapterAt}

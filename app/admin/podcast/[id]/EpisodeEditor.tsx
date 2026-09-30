@@ -791,6 +791,7 @@ export function EpisodeEditor({ episodeId }: { episodeId: string }) {
           episodeId={episode.id}
           audioUrl={episode.audio_url}
           title={episode.title}
+          episodeStatus={episode.status}
           chapters={episode.chapters}
           onMarkChapter={(seconds) => {
             const title = chapterTitle.trim() || `Chapter ${(episode.chapters?.length || 0) + 1}`
