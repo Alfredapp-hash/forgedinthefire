@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { guessApp } from '@/lib/podcast'
 
-/** Public play/download beacon for first-party podcast analytics */
+const EVENT_TYPES = new Set(['play', 'embed_play'])
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Public play beacon for first-party podcast analytics (web player + embed). */
 export async function POST(request: Request) {
   try {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -10,21 +14,25 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unavailable' }, { status: 503 })
     }
 
-    const body = (await request.json()) as Record<string, unknown>
-    const episodeId = body.episode_id ? String(body.episode_id) : null
-    if (!episodeId) {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>
+    const episodeId = String(body.episode_id || '')
+    if (!UUID.test(episodeId)) {
       return NextResponse.json({ error: 'episode_id required' }, { status: 400 })
     }
+    const showId = body.show_id && UUID.test(String(body.show_id)) ? String(body.show_id) : null
+    const eventType = EVENT_TYPES.has(String(body.event_type)) ? String(body.event_type) : 'play'
 
-    const ua = String(body.user_agent || request.headers.get('user-agent') || '')
-    const supabase = createClient(url, key)
+    // Trust the request's own UA, not a client-supplied one.
+    const ua = request.headers.get('user-agent') || ''
+    const country = request.headers.get('x-country') || request.headers.get('x-nf-geo-country') || null
+    const supabase = createClient(url, key, { auth: { persistSession: false } })
     const { error } = await supabase.from('podcast_analytics_events').insert({
       episode_id: episodeId,
-      show_id: body.show_id ? String(body.show_id) : null,
-      event_type: String(body.event_type || 'play'),
+      show_id: showId,
+      event_type: eventType,
       user_agent: ua.slice(0, 500) || null,
-      app_name: guessApp(ua),
-      country: body.country ? String(body.country) : null,
+      app_name: eventType === 'embed_play' ? 'Embed player' : guessApp(ua),
+      country,
     })
 
     if (error) {
@@ -36,16 +44,4 @@ export async function POST(request: Request) {
     console.error('Podcast event error:', err)
     return NextResponse.json({ ok: false }, { status: 200 })
   }
-}
-
-function guessApp(ua: string) {
-  const s = ua.toLowerCase()
-  if (s.includes('spotify')) return 'Spotify'
-  if (s.includes('applecoremedia') || s.includes('podcasts')) return 'Apple Podcasts'
-  if (s.includes('overcast')) return 'Overcast'
-  if (s.includes('pocket casts') || s.includes('pocketcasts')) return 'Pocket Casts'
-  if (s.includes('amazon') || s.includes('alexa')) return 'Amazon Music'
-  if (s.includes('youtube')) return 'YouTube'
-  if (s.includes('chrome') || s.includes('firefox') || s.includes('safari')) return 'Web player'
-  return 'Other'
 }
