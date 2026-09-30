@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'crypto'
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server'
 import { PODCAST, probeRemoteSize } from '@/lib/podcast'
+import { releaseConsentStatus } from '@/lib/podcast/guest-consent'
 import { releaseBlockers, releaseChecks } from '@/lib/studio/release'
 import type { PodcastEpisode } from '@/lib/studio/types'
 
@@ -56,11 +57,17 @@ async function publishEpisodes(admin: Admin, now: string) {
     if (ep.audio_url && !(ep.file_size && ep.file_size > 0)) {
       ep.file_size = await probeRemoteSize(ep.audio_url)
     }
-    // Recorded booth consent (lib/podcast/guest-consent releaseConsentStatus) plugs in as
-    // `guestConsent` once the guest-consent port lands; until then the manual
-    // "consent on file" column and the sign-off checks still gate release.
+    // Recorded booth consent gates release alongside the manual "consent on file" column
+    // and the sign-off checks. A consent lookup failure holds the episode (fail closed).
+    let guestConsent: Awaited<ReturnType<typeof releaseConsentStatus>> | null = null
+    try {
+      guestConsent = await releaseConsentStatus(ep.id)
+    } catch (err) {
+      held.push({ id: ep.id, reasons: [`Guest consent could not be checked: ${err instanceof Error ? err.message : 'unknown error'}`] })
+      continue
+    }
     const blockers = releaseBlockers(
-      releaseChecks(ep, { server: true, show: { cover_url: PODCAST.image } }),
+      releaseChecks(ep, { server: true, show: { cover_url: PODCAST.image }, guestConsent }),
     )
     if (blockers.length) {
       // Stay scheduled so staff see it in the Scheduled column; retried every run.
