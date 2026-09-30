@@ -78,7 +78,7 @@ export type BoothStageProps = {
   invitePanel?: React.ReactNode
   /** Extra transport controls (Advanced toggle, metronome…) — rendered at the far end of the transport. */
   extraControls?: React.ReactNode
-  /** Inline only: expand to the full-screen overlay. */
+  /** Inline only: fallback when the Fullscreen API is unavailable (opens the overlay). */
   onExpand?: () => void
   /** Modal only: leave the overlay (recording keeps rolling). */
   onExit?: () => void
@@ -139,6 +139,31 @@ export function BoothStage(props: BoothStageProps): React.JSX.Element {
 
   const inline = variant === 'inline'
   const countIn = tally === 'count-in'
+
+  // --- Full screen -----------------------------------------------------------
+  // The inline stage goes full screen in place (Fullscreen API) so nothing
+  // remounts: same tiles, same guest panel, same streams. Browsers without the
+  // API (iOS Safari) fall back to the overlay via onExpand.
+  const sectionRef = useRef<HTMLElement | null>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  useEffect(() => {
+    if (!inline) return
+    const onChange = () => setIsFullscreen(document.fullscreenElement === sectionRef.current)
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [inline])
+  const expand = useCallback(() => {
+    const el = sectionRef.current
+    if (isFullscreen) {
+      void document.exitFullscreen?.().catch(() => {})
+      return
+    }
+    if (el && typeof el.requestFullscreen === 'function' && document.fullscreenEnabled !== false) {
+      el.requestFullscreen().catch(() => onExpand?.())
+      return
+    }
+    onExpand?.()
+  }, [isFullscreen, onExpand])
   const [layout, setLayout] = useState<BoothLayout>('grid')
   const [drawerOpen, setDrawerOpen] = useState(inline)
   const laneById = useMemo(() => laneIndexById(participants), [participants])
@@ -260,9 +285,14 @@ export function BoothStage(props: BoothStageProps): React.JSX.Element {
 
   return (
     <section
+      ref={sectionRef}
       aria-labelledby="sound-booth-heading"
       data-booth-variant={variant}
-      className={`flex flex-col ${inline ? `${minHeightClass ?? DEFAULT_MIN_H} bg-obsidian text-white` : 'h-full min-h-0 flex-1'}`}
+      className={`flex flex-col ${
+        inline
+          ? `${minHeightClass ?? DEFAULT_MIN_H} bg-obsidian text-white [&:fullscreen]:h-screen [&:fullscreen]:overflow-auto`
+          : 'h-full min-h-0 flex-1'
+      }`}
     >
       {/* Stage header: h2 + on-air tally + layout toggle. */}
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-divider bg-gunmetal px-4 py-2.5">
@@ -311,9 +341,15 @@ export function BoothStage(props: BoothStageProps): React.JSX.Element {
               <Users size={13} /> Guests &amp; takes
             </Button>
           ) : null}
-          {inline && onExpand ? (
-            <IconButton aria-label="Expand to full screen" title="Expand to full screen" variant="secondary" size="dense" onClick={onExpand}>
-              <Maximize2 size={14} />
+          {inline ? (
+            <IconButton
+              aria-label={isFullscreen ? 'Exit full screen' : 'Expand to full screen'}
+              title={isFullscreen ? 'Exit full screen (Esc)' : 'Expand to full screen'}
+              variant="secondary"
+              size="dense"
+              onClick={expand}
+            >
+              {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
             </IconButton>
           ) : null}
           {!inline && onExit ? (

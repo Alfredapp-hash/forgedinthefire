@@ -14,16 +14,28 @@ export const LIVE_URL = '/dev/live'
 
 export const studio = {
   root: (page: Page) => page.getByTestId('dev-studio'),
-  /** Stage bar: "1 Plan · 2 Record · 3 Edit · 4 Publish" (components/podcast/studio-stage-bar.tsx). */
+  /** Stage bar: "1 Plan · 2 Sound Booth · 3 Edit · 4 Publish" (components/podcast/studio-stage-bar.tsx). */
   stageNav: (page: Page) => page.getByRole('navigation', { name: /studio stages|production steps/i }),
-  /** Stage buttons carry a stable aria-label ("Record — step 2") regardless of done/active state. */
-  stageButton: (page: Page, stage: 'Plan' | 'Record' | 'Edit' | 'Publish') =>
+  /** Stage buttons carry a stable aria-label ("Sound Booth — step 2") regardless of done/active state. */
+  stageButton: (page: Page, stage: 'Plan' | 'Sound Booth' | 'Edit' | 'Publish') =>
     studio.stageNav(page).getByRole('button', { name: new RegExp(`^${stage}\\b`, 'i') }),
+  /** Header status chip: Idle / Count-in / REC 00:00 / Saving. */
+  statusChip: (page: Page) => page.getByTestId('studio-status-chip'),
   /** Persistent "Advanced" toggle in the editor header (aria-pressed reflects the state). */
   advancedToggle: (page: Page) => page.getByRole('button', { name: /^advanced/i }),
   dismissTip: (page: Page) => page.getByRole('button', { name: /dismiss tip|got it/i }),
-  /** Editor header ("Podcast production room") — proves PodcastAudioEditor mounted. */
+  /** Production-room header eyebrow ("Podcast production room") — staged studio and bare editor alike. */
   editorHeading: (page: Page) => page.getByText(/podcast production room/i).first(),
+
+  // --- Sound Booth (stage 2, components/podcast/booth-stage.tsx) ---
+  /** The inline booth section (data-booth-variant="inline"); the overlay fallback is "modal". */
+  booth: (page: Page) => page.locator('section[data-booth-variant="inline"]'),
+  boothHeading: (page: Page) => page.getByRole('heading', { level: 2, name: /^sound booth$/i }),
+  /** "No takes yet" / "3 takes · 12:40" under the timecode. */
+  takesCounter: (page: Page) => page.getByTestId('booth-takes-counter'),
+  /** Drawer with the guest invite panel + recent takes. */
+  boothDrawer: (page: Page) => page.getByRole('complementary', { name: /guests and takes/i }),
+  expandBooth: (page: Page) => page.getByRole('button', { name: /expand to full screen/i }),
 
   // --- Record ---
   /** The big RecordButton. aria-label flips: Start recording ↔ Stop recording. */

@@ -5,10 +5,11 @@ import Link from 'next/link'
 import { CheckCircle2, Circle, X } from 'lucide-react'
 import { Button, Panel, Select, Toaster, toast } from '@/components/studio-ui'
 import { PodcastAudioEditor } from '@/components/podcast/audio-editor'
-import { StudioStageBar } from '@/components/podcast/studio-stage-bar'
+import { StudioStageBar, type StageBarStatus } from '@/components/podcast/studio-stage-bar'
 import { EpisodePlan, type QueueFilter } from '@/components/podcast/episode-plan'
 import { measureAudioDuration, uploadPodcastMedia } from '@/lib/podcast/media-upload'
 import { checkFeedCompliance } from '@/lib/podcast/compliance'
+import { deriveBoothStatus } from '@/lib/podcast/booth-layout'
 import { STUDIO_STAGE_LABEL, type StudioStage } from '@/lib/podcast/stage'
 import type {
   ContentTopic,
@@ -17,12 +18,6 @@ import type {
   PodcastEpisode,
 } from '@/lib/studio/types'
 import { EPISODE_PIPELINE } from '@/lib/studio/types'
-
-/** Editor mounted with an optional `stage` prop the audio-editor engineer is adding.
- *  Typed here so passing `stage` stays type-safe before that prop lands. */
-const StagedAudioEditor = PodcastAudioEditor as (
-  props: React.ComponentProps<typeof PodcastAudioEditor> & { stage?: StudioStage },
-) => React.ReactElement
 
 type Props = {
   episodes: PodcastEpisode[]
@@ -93,7 +88,10 @@ export function RecordingStudio({
   const [showTip, setShowTip] = useState(false)
   /** Unsaved timeline edits in the editor — used to warn before leaving to the episode page. */
   const [editorDirty, setEditorDirty] = useState(false)
-  /** Stage heading receives focus on every stage change (WCAG 2.4.3) — skipped on mount. */
+  /** Live transport signals from the editor (recording / count-in / busy / clock) for the header chip. */
+  const [transport, setTransport] = useState({ recording: false, countIn: false, saving: false, elapsedSec: 0 })
+  /** Stage heading receives focus on every stage change (WCAG 2.4.3) — skipped on mount.
+   *  The Sound Booth stage moves focus to its RecordButton instead (see BoothStage). */
   const stageHeadingRef = useRef<HTMLHeadingElement | null>(null)
   const stageMountedRef = useRef(false)
   useEffect(() => {
@@ -101,6 +99,7 @@ export function RecordingStudio({
       stageMountedRef.current = true
       return
     }
+    if (stage === 'record') return
     stageHeadingRef.current?.focus({ preventScroll: false })
   }, [stage])
 
@@ -435,6 +434,15 @@ export function RecordingStudio({
     ? compliance.blockers.map((b) => b.detail || b.label).join('; ')
     : null
 
+  const headerStatus: StageBarStatus = {
+    phase: deriveBoothStatus({
+      recording: transport.recording,
+      countIn: transport.countIn,
+      saving: transport.saving || saving || uploadingCover,
+    }),
+    elapsedSec: transport.elapsedSec,
+  }
+
   return (
     <div className="space-y-4">
       {/* Single Toaster mount for the whole studio: every surface's toast() renders here. */}
@@ -445,8 +453,8 @@ export function RecordingStudio({
           <div>
             <p className="studio-type-label text-ice">How the studio works</p>
             <p className="studio-type-body mt-1 text-silver-body">
-              Move an episode through four stages: <span className="text-white">Plan</span> the details,{' '}
-              <span className="text-white">Record</span> your takes, <span className="text-white">Edit</span> the mix,
+              Move an episode through four stages: <span className="text-white">Plan</span> the details, record your
+              takes in the <span className="text-white">Sound Booth</span>, <span className="text-white">Edit</span> the mix,
               then <span className="text-white">Publish</span> to the site and RSS. Everything you enter follows the
               episode through every stage — use the stage bar to move between them.
             </p>
@@ -509,21 +517,8 @@ export function RecordingStudio({
         </>
       ) : (
         <>
-          {/* Persistent header: identity + stage switcher, always visible across stages. */}
-          <StudioStageBar
-            episode={episode}
-            stage={stage}
-            onStageChange={setStage}
-            progress={{
-              hasTitle: Boolean(episode.title?.trim()),
-              hasCover: Boolean(episode.cover_url),
-              hasAudio: Boolean(episode.audio_url),
-              hasTranscript: Boolean(episode.transcript),
-              complianceOk: Boolean(compliance?.ok),
-              blockersText,
-              isPublished: episode.status === 'published',
-            }}
-          />
+          {/* Persistent header: title, subtitle, status chip and the stage tabs — always visible. */}
+          <StudioStageBar episode={episode} stage={stage} onStageChange={setStage} status={headerStatus} />
 
           {/* Status control + jump to the standalone episode page, on every stage. */}
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -555,15 +550,18 @@ export function RecordingStudio({
             </Link>
           </div>
 
-          {/* Stage heading: the focus target on every stage change, and the page's h2 landmark. */}
-          <h2
-            ref={stageHeadingRef}
-            tabIndex={-1}
-            className="studio-type-label text-ice outline-none focus-visible:ring-2 focus-visible:ring-ice/60 rounded-control"
-          >
-            {STUDIO_STAGE_LABEL[stage]}
-            <span className="sr-only"> stage</span>
-          </h2>
+          {/* Stage heading: the focus target on every stage change, and the page's h2 landmark.
+              The Sound Booth renders its own h2 and focuses its RecordButton. */}
+          {stage !== 'record' && (
+            <h2
+              ref={stageHeadingRef}
+              tabIndex={-1}
+              className="studio-type-label text-ice outline-none focus-visible:ring-2 focus-visible:ring-ice/60 rounded-control"
+            >
+              {STUDIO_STAGE_LABEL[stage]}
+              <span className="sr-only"> stage</span>
+            </h2>
+          )}
 
           {error && <p className="studio-type-body text-heart" role="alert">{error}</p>}
           {ok && <p className="studio-type-body text-ice" role="status">{ok}</p>}
@@ -620,8 +618,8 @@ export function RecordingStudio({
             record/edit/publish content from the `stage` prop.
           */}
           <div className={stage === 'plan' ? 'hidden' : ''} aria-hidden={stage === 'plan'}>
-            <Panel elevation="raised" className="p-5">
-              <StagedAudioEditor
+            <Panel elevation="raised" className={stage === 'record' ? 'overflow-hidden p-0' : 'p-5'}>
+              <PodcastAudioEditor
                 episodeId={episode.id}
                 audioUrl={episode.audio_url}
                 title={episode.title}
@@ -633,6 +631,7 @@ export function RecordingStudio({
                 stage={stage}
                 onGoToStage={setStage}
                 onDirtyChange={setEditorDirty}
+                onTransportStatus={setTransport}
               />
             </Panel>
           </div>
@@ -660,7 +659,7 @@ export function RecordingStudio({
                 <div className="mb-4 rounded-control border border-heart/40 bg-heart/10 px-3 py-2.5">
                   <p className="studio-type-label text-heart">Publish blocked · {blockersText}</p>
                   <p className="studio-type-body mt-1 text-silver-body">
-                    If a mix is missing or too quiet, re-record in <span className="text-white">Record</span> or re-mix in{' '}
+                    If a mix is missing or too quiet, re-record in the <span className="text-white">Sound Booth</span> or re-mix in{' '}
                     <span className="text-white">Edit</span>; metadata gaps jump to <span className="text-white">Plan</span>{' '}
                     from the list below.
                   </p>

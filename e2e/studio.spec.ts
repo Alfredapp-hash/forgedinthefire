@@ -57,7 +57,8 @@ async function openStudio(page: Page, episode: string, mode?: 'editor') {
   await studio.dismissTip(page).click({ timeout: 5_000 }).catch(() => {})
   if (!mode) {
     await expect(studio.stageNav(page)).toBeVisible()
-    await studio.stageButton(page, 'Record').click()
+    await studio.stageButton(page, 'Sound Booth').click()
+    await expect(studio.booth(page)).toBeVisible()
   }
   await expect(studio.editorHeading(page)).toBeVisible()
   await expect(studio.recordButton(page)).toBeEnabled()
@@ -90,25 +91,31 @@ test.describe('production room (/dev/studio)', () => {
     await gotoHarness(page, STUDIO_URL(`load-${Date.now()}`))
     // Plan is the landing stage: the queue + metadata, editor hidden but mounted.
     await expect(studio.stageNav(page)).toBeVisible()
-    for (const stage of ['Plan', 'Record', 'Edit', 'Publish'] as const) {
+    for (const stage of ['Plan', 'Sound Booth', 'Edit', 'Publish'] as const) {
       await expect(studio.stageButton(page, stage)).toBeVisible()
     }
-    await studio.stageButton(page, 'Record').click()
     await expect(studio.editorHeading(page)).toBeVisible()
+    await expect(studio.statusChip(page)).toHaveText(/^idle$/i)
+    await studio.stageButton(page, 'Sound Booth').click()
+    await expect(studio.booth(page)).toBeVisible()
+    await expect(studio.boothHeading(page)).toBeVisible()
     await expect(studio.recordButton(page)).toBeEnabled()
     await page.waitForTimeout(2000)
     expect(consoleReport(diag), 'console errors on first load').toEqual([])
   })
 
-  test('records 3 s with the fake mic and the take lands on the timeline', async ({ page }) => {
+  test('records 3 s from the Sound Booth and the take lands on the timeline', async ({ page }) => {
     await openStudio(page, `rec-${Date.now()}`)
-    // Before any audio: one empty state, no lanes.
-    await expect(studio.firstTakeEmptyState(page)).toBeVisible()
-    await expect(studio.clips(page)).toHaveCount(0)
+    // Before any audio: the booth counts no takes; the Sound Booth stage opens with focus on Record.
+    await expect(studio.takesCounter(page)).toHaveText(/no takes yet/i)
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label') || ''))
+      .toMatch(/start recording/i)
     await recordTake(page, 3)
-    // The take is visible on the Record stage itself — no stage switch needed to see it land.
-    await expect(studio.clips(page).first()).toBeVisible({ timeout: 30_000 })
-    await expect(studio.firstTakeEmptyState(page)).toHaveCount(0)
+    // The header chip tracked the take and the booth counts it — no stage switch needed.
+    await expect(studio.statusChip(page)).toHaveText(/^idle$/i)
+    await expect(studio.takesCounter(page)).toHaveText(/1 take · 00:0\d/)
+    await expect(studio.boothDrawer(page)).toContainText(/recent takes/i)
     await studio.stageButton(page, 'Edit').click()
     await expect(studio.clips(page).first()).toBeVisible({ timeout: 30_000 })
     expect(await studio.clips(page).count()).toBeGreaterThanOrEqual(1)
@@ -198,14 +205,50 @@ test.describe('production room (/dev/studio)', () => {
     await expect.poll(() => studio.clips(page).count(), { message: 'toolbar undo should restore clip count' }).toBe(before)
   })
 
-  test('stage change moves focus to the stage heading', async ({ page }) => {
+  test('stage change moves focus to the stage heading (Sound Booth: to Record)', async ({ page }) => {
     await mockStudioApi(page)
     await gotoHarness(page, STUDIO_URL(`focus-${Date.now()}`))
     await studio.dismissTip(page).click({ timeout: 5_000 }).catch(() => {})
-    await studio.stageButton(page, 'Record').click()
+    await studio.stageButton(page, 'Edit').click()
     await expect
       .poll(() => page.evaluate(() => document.activeElement?.tagName + ':' + (document.activeElement?.textContent || '')))
-      .toMatch(/^H2:Record/i)
+      .toMatch(/^H2:Edit/i)
+    await studio.stageButton(page, 'Sound Booth').click()
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-label') || ''))
+      .toMatch(/start recording/i)
+  })
+
+  test('Record from the Edit stage jumps to the Sound Booth; Stop returns to Edit with the take', async ({ page }) => {
+    await openStudio(page, `jump-${Date.now()}`)
+    await studio.preroll(page).selectOption('0')
+    await studio.stageButton(page, 'Edit').click()
+    await expect(studio.booth(page)).toHaveCount(0)
+    await studio.recordButton(page).click()
+    // Recording anywhere opens the Sound Booth.
+    await expect(studio.booth(page)).toBeVisible()
+    await expect(studio.stageButton(page, 'Sound Booth')).toHaveAttribute('aria-current', 'step')
+    await expect(studio.statusChip(page)).toHaveText(/^rec \d\d:\d\d$/i)
+    await page.waitForTimeout(2000)
+    await studio.stopButton(page).dispatchEvent('click')
+    // Stop returns to where you were, take on the timeline.
+    await expect(studio.stageButton(page, 'Edit')).toHaveAttribute('aria-current', 'step', { timeout: 30_000 })
+    await expect(studio.booth(page)).toHaveCount(0)
+    await expect(studio.clips(page).first()).toBeVisible({ timeout: 30_000 })
+  })
+
+  test('Sound Booth keyboard: M mutes the host, C toggles the camera, no modal to escape', async ({ page }) => {
+    await openStudio(page, `keys-${Date.now()}`)
+    await blur(page)
+    const muteHost = page.getByRole('button', { name: /^(mute|unmute) host$/i })
+    await expect(muteHost).toHaveAttribute('aria-pressed', 'false')
+    await page.keyboard.press('m')
+    await expect(muteHost).toHaveAttribute('aria-pressed', 'true')
+    await page.keyboard.press('m')
+    await expect(muteHost).toHaveAttribute('aria-pressed', 'false')
+    await page.keyboard.press('Escape')
+    await expect(studio.booth(page)).toBeVisible()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
   })
 
   test('Advanced toggle reveals the full rack and is remembered', async ({ page }) => {
@@ -215,11 +258,11 @@ test.describe('production room (/dev/studio)', () => {
     await expect(page.getByRole('button', { name: /^metronome$/i })).toHaveCount(0)
     await studio.advancedToggle(page).click()
     await expect(studio.advancedToggle(page)).toHaveAttribute('aria-pressed', 'true')
-    await studio.stageButton(page, 'Record').click()
+    await studio.stageButton(page, 'Sound Booth').click()
     await expect(page.getByRole('button', { name: /^metronome$/i })).toBeVisible()
     await page.reload({ waitUntil: 'load' })
     await studio.dismissTip(page).click({ timeout: 5_000 }).catch(() => {})
-    await studio.stageButton(page, 'Record').click()
+    await studio.stageButton(page, 'Sound Booth').click()
     await expect(studio.advancedToggle(page)).toHaveAttribute('aria-pressed', 'true')
     await studio.advancedToggle(page).click()
     await expect(studio.advancedToggle(page)).toHaveAttribute('aria-pressed', 'false')
@@ -235,7 +278,7 @@ test.describe('production room (/dev/studio)', () => {
     await page.waitForTimeout(3500) // autosave debounce
     await page.reload({ waitUntil: 'load' })
     await studio.dismissTip(page).click({ timeout: 5_000 }).catch(() => {})
-    await studio.stageButton(page, 'Record').click()
+    await studio.stageButton(page, 'Sound Booth').click()
     await expect(studio.recoverBanner(page)).toBeVisible({ timeout: 30_000 })
     await studio.restore(page).click()
     await studio.stageButton(page, 'Edit').click()

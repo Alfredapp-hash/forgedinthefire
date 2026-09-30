@@ -151,7 +151,9 @@ import { SessionTimeline } from '@/components/podcast/session-timeline'
 import { GuestInvitePanel, type RemoteGuestLane } from '@/components/podcast/guest-invite-panel'
 import { fetchGuestTakeBlob } from '@/lib/podcast/upload/guest-take-client'
 import { isRemoteLaneKey, remoteLaneKey } from '@/lib/podcast/rooms/layout'
-import { RecordingBooth, type BoothParticipant } from '@/components/podcast/recording-booth'
+import { RecordingBooth, type BoothParticipant, type BoothStageProps } from '@/components/podcast/recording-booth'
+import { BoothStage } from '@/components/podcast/booth-stage'
+import type { BoothTakeSummary } from '@/lib/podcast/booth-layout'
 import { ShortcutsHelpModal } from '@/components/podcast/shortcuts-help-modal'
 import { STUDIO_HOW_IT_WORKS } from '@/lib/podcast/shortcuts'
 import { RecoveryBanner } from '@/components/podcast/studio/recovery-banner'
@@ -271,6 +273,8 @@ type Props = {
   episodeStatus?: string | null
   /** Fires when unsaved timeline edits appear/clear, so the host shell can warn before navigating away. */
   onDirtyChange?: (dirty: boolean) => void
+  /** Live transport signals for the production-room header chip (Idle / Count-in / REC / Saving). */
+  onTransportStatus?: (status: { recording: boolean; countIn: boolean; saving: boolean; elapsedSec: number }) => void
 }
 
 const ADVANCED_KEY = 'studio-advanced-tools'
@@ -334,12 +338,15 @@ function snapshotTracks(tracks: StudioTrack[]): StudioTrack[] {
   }))
 }
 
-export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage, onGoToStage, episodeStatus, onDirtyChange }: Props) {
+export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage, onGoToStage, episodeStatus, onDirtyChange, onTransportStatus }: Props) {
   // Stage gating. `stage == null` keeps legacy behavior (show everything). These
   // are presentational only — nothing below unmounts on a stage switch, so a live
   // recording, its checkpoints, and all editor state persist across stages.
   const showAll = stage == null
-  const showRecord = showAll || stage === 'record'
+  /** The Sound Booth stage: the focused-in recording view (big cameras + transport). */
+  const booth = stage === 'record'
+  /** Legacy full-rack record controls (only when every stage renders at once). */
+  const showRecord = showAll
   const showEdit = showAll || stage === 'edit'
   const showPublish = showAll || stage === 'publish'
   const [tracks, setTracks] = useState<StudioTrack[]>(() => defaultSessionTracks())
@@ -1110,6 +1117,50 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     if (!recording) setGuestRecClock(null)
   }, [recording, recTally])
 
+  // Header status chip: whole seconds only, so the shell re-renders ~1/s while recording.
+  const elapsedWhole = Math.floor(recClock)
+  useEffect(() => {
+    onTransportStatus?.({ recording, countIn: recTally === 'count-in', saving: Boolean(busy), elapsedSec: elapsedWhole })
+  }, [onTransportStatus, recording, recTally, busy, elapsedWhole])
+
+  // Recording from anywhere (the Edit stage's Record button, the R key) opens the
+  // Sound Booth; Stop returns to where you were with the take already on the timeline.
+  const returnStageRef = useRef<StudioStage | null>(null)
+  const stageRef = useRef(stage)
+  stageRef.current = stage
+  useEffect(() => {
+    if (!onGoToStage) return
+    if (recording) {
+      const from = stageRef.current
+      if (from && from !== 'record') {
+        returnStageRef.current = from
+        onGoToStage('record')
+      }
+      return
+    }
+    const back = returnStageRef.current
+    returnStageRef.current = null
+    if (back) onGoToStage(back)
+  }, [recording, onGoToStage])
+
+  // Sound Booth: camera on by default when a camera exists (the size warning still
+  // appears once — the host confirms before the preview opens). Asked once per mount.
+  const camAutoAskedRef = useRef(false)
+  useEffect(() => {
+    if (!booth || camAutoAskedRef.current) return
+    if (cams.length === 0 || cameraStreams.host || recording) return
+    camAutoAskedRef.current = true
+    void toggleCamera('host')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booth, cams.length])
+
+  /** Talkback lives inside the guest panel; the booth transport mirrors and flips it. */
+  const [talkbackState, setTalkbackState] = useState({ on: false, available: false })
+  const talkbackControllerRef = useRef<((on: boolean) => void) | null>(null)
+  const toggleTalkback = useCallback(() => {
+    talkbackControllerRef.current?.(!talkbackState.on)
+  }, [talkbackState.on])
+
   // Recording watchdog: if no capture lane has delivered samples recently while
   // live, flag a stall so the UI can warn the host their recorder went silent.
   useEffect(() => {
@@ -1230,6 +1281,17 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           void dropSfx(sfx.id)
         }
       }
+      // Sound Booth: M mutes yourself, C toggles your camera (C marks a chapter elsewhere).
+      if (booth && (event.key === 'm' || event.key === 'M') && !event.shiftKey && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault()
+        toggleBoothMute('host')
+        return
+      }
+      if (booth && (event.key === 'c' || event.key === 'C') && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault()
+        if (!recording) void toggleCamera('host')
+        return
+      }
       if ((event.key === 'c' || event.key === 'C') && onMarkChapter) {
         event.preventDefault()
         onMarkChapter(playheadRef.current)
@@ -1275,7 +1337,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recording, tracks, cameraClips, switchEdl, recMode, preroll, cueEnabled, selectedId, selectedCamClipId, playing])
+  }, [recording, tracks, cameraClips, switchEdl, recMode, preroll, cueEnabled, selectedId, selectedCamClipId, playing, booth])
 
   function setBound(which: 'start' | 'end') {
     const t = playheadRef.current
@@ -1903,7 +1965,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     })
   }
 
-  async function toggleRecord() {
+  async function toggleRecord(modeOverride?: RecMode) {
+    const mode = modeOverride ?? recMode
     if (recordingRef.current) {
       if (!recLiveRef.current) {
         abortRef.current?.abort()
@@ -1942,9 +2005,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     const playheadNow = playheadRef.current
     const punch =
       jobs.length === 1
-        ? punchInTime(recMode, playheadNow, tracks, jobs[0].lane.personId)
+        ? punchInTime(mode, playheadNow, tracks, jobs[0].lane.personId)
         : sharedPunchInTime(
-            recMode,
+            mode,
             playheadNow,
             tracks,
             jobs.map((j) => j.lane.personId),
@@ -3500,55 +3563,375 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     },
   }
 
+  /* Advanced: the one switch between the calm default surface and the full rack.
+     Remembered per browser; nothing is removed, everything is one click away. */
+  const advancedToggle = (
+    <Button
+      variant={advanced ? 'primary' : 'secondary'}
+      size="compact"
+      aria-pressed={advanced}
+      onClick={toggleAdvanced}
+      title={
+        advanced
+          ? 'Back to the simple view — the full toolset stays one click away'
+          : 'Show every tool: effects, sidechain ducking, pan and timing, sound-effect pad, graphics, stems, calibration'
+      }
+    >
+      <SlidersHorizontal size={14} /> {advanced ? 'Advanced: on' : 'Advanced'}
+    </Button>
+  )
+  const readouts = (
+    <div className="text-right text-xs font-mono text-[#A9B8C6] space-y-0.5">
+      <p>
+        {recording ? `● REC ${formatClock(recClock)}` : busy || (ready ? `${formatClock(playhead)} / ${durationLabel}` : 'Idle')}
+      </p>
+      {peakDb != null && Number.isFinite(peakDb) && (
+        <p>
+          Peak {peakDb.toFixed(1)} dB · RMS {rmsDb != null && Number.isFinite(rmsDb) ? rmsDb.toFixed(1) : '—'} dB
+        </p>
+      )}
+      {loudness && Number.isFinite(loudness.lufs) && (
+        <p className={loudness.lufs > PODCAST_LUFS + 2 ? 'text-[#FFB86B]' : 'text-[#8DEBFF]'}>
+          LUFS {loudness.lufs.toFixed(1)} · target {PODCAST_LUFS}
+        </p>
+      )}
+    </div>
+  )
+
+  /* Inline alerts for the Sound Booth (recovery, lost input, stalled capture, camera size). */
+  const boothNotices = booth ? (
+    <>
+      {(recover || crashTakes.length > 0) && sessionStatus === 'offer' && (
+        <RecoveryBanner
+          episodeId={episodeId}
+          saved={recover}
+          crashTakes={crashTakes}
+          busy={busy != null}
+          onRestoreCrashTakes={() => void restoreCrashTakes()}
+          onRestoreSession={() => void restoreSavedSession()}
+          onDecideLater={() => dismissRecover(false)}
+          onDelete={() => dismissRecover(true)}
+          onOk={(m) => notifyOk(m)}
+          onError={(m) => notifyError(m)}
+        />
+      )}
+      {recording && inputLost && (
+        <div className="rounded-xl border border-[#FF7A9A]/60 bg-[#20101A] px-4 py-3" role="alert">
+          <p className="text-sm text-[#FF7A9A]">
+            {inputLost}. The take keeps recording what still arrives — reconnect the device, or stop and re-record.
+          </p>
+        </div>
+      )}
+      {recording && recFlowStalled && (
+        <div className="rounded-xl border border-[#FF7A9A]/60 bg-[#20101A] px-4 py-3">
+          <p className="text-sm text-[#FF7A9A]">
+            No samples are reaching the recorder — the capture may have stalled. Check the mic / guest connection; the
+            last checkpoint is safe on this computer.
+          </p>
+        </div>
+      )}
+      {camWarnFor && (
+        <div className="rounded-xl border border-[#FFB86B]/50 bg-[#20180C] px-4 py-3 flex flex-wrap items-center gap-3">
+          <p className="text-sm text-[#F6FAFC] flex-1 min-w-[12rem]">
+            {CAMERA_ARM_WARNING}
+            {camStorageHint ? ` ${camStorageHint}.` : ''}
+          </p>
+          <button type="button" className={primary} onClick={confirmArmCamera}>
+            Arm camera
+          </button>
+          <button type="button" className={btn} onClick={() => setCamWarnFor(null)}>
+            Cancel
+          </button>
+        </div>
+      )}
+      {error && (
+        <p className="text-sm text-[#FF8FA3]" role="alert">
+          {error}
+        </p>
+      )}
+      {ok && !error && (
+        <p className="text-sm text-[#8DEBFF]" role="status">
+          {ok}
+        </p>
+      )}
+    </>
+  ) : null
+
+  /* Takes already on the timeline, for the booth's counter + drawer list. */
+  const boothTakes: BoothTakeSummary[] = tracks
+    .filter((t) => t.buffer)
+    .map((t) => ({
+      id: t.id,
+      person: nameFor(t.personId, t.name),
+      durationSec: t.buffer?.duration ?? 0,
+      offsetSec: t.offset,
+      laneIndex:
+        t.personId === 'host'
+          ? 0
+          : t.personId === 'guest'
+            ? 1
+            : Math.max(2, people.filter((p) => p.kind === 'voice').findIndex((p) => p.id === t.personId)),
+    }))
+
+  const invitePanel = (
+    <GuestInvitePanel
+      episodeId={episodeId}
+      recording={recording && guestRecClock != null}
+      recTally={recTally}
+      hostStream={hostTalkStream}
+      cueStream={guestCueStream}
+      onCueToGuest={setCueToGuest}
+      onRemoteStream={onRemoteGuestStream}
+      onRemoteVideo={setRemoteGuestVideo}
+      onGuestName={onRemoteGuestName}
+      onTakeUrl={setGuestTakeUrl}
+      onCameraUrl={setGuestCameraUrl}
+      onRemoteGuests={onRemoteGuests}
+      recordStartSessionSec={guestRecClock?.sec ?? null}
+      recordStartedAt={guestRecClock?.at ?? null}
+      onTalkbackState={setTalkbackState}
+      talkbackController={talkbackControllerRef}
+    />
+  )
+
+  const hasProgram = switchEdl.length > 0 || cameraClips.length > 0
+  const programMonitor = hasProgram ? (
+    <ProgramMonitor
+      clips={cameraClips}
+      playhead={playhead}
+      mode={pictureMode}
+      scene={pgmScene}
+      fromScene={pgmFrom}
+      mix={pgmMix}
+      recording={recording}
+      liveStream={
+        recording
+          ? cameraStreams.host ||
+            (remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest)) ? remoteGuest : null) ||
+            Object.values(cameraStreams)[0] ||
+            null
+          : null
+      }
+      livePersonId={recording && !cameraStreams.host && remoteGuest ? 'guest' : 'host'}
+    />
+  ) : null
+
+  /* Everything the booth renders — one object for the inline stage and the overlay. */
+  const boothProps: Omit<BoothStageProps, 'variant'> = {
+    title,
+    participants: boothParticipants,
+    recording,
+    tally: recTally === 'waiting' ? 'idle' : recTally,
+    countdownSec: recTally === 'count-in' ? countInBeats : null,
+    elapsedSec: recClock,
+    canRecord: anyArmed || Boolean(selected) || tracks.length > 0,
+    onToggleRecord: () => void toggleRecord(),
+    onToggleMute: toggleBoothMute,
+    onToggleCamera: (id) => void toggleCamera(id),
+    talkbackOn: talkbackState.on,
+    talkbackAvailable: talkbackState.available,
+    onToggleTalkback: toggleTalkback,
+    cueEnabled,
+    onCueEnabledChange: setCueEnabled,
+    preroll,
+    onPrerollChange: setPreroll,
+    countInBeats,
+    onCountInChange: setCountInBeats,
+    takes: boothTakes,
+    onOpenTake: (id) => {
+      setSelectedId(id)
+      const track = tracks.find((t) => t.id === id)
+      if (track) setHead(track.offset)
+      onGoToStage?.('edit')
+    },
+    onRerecordFromHere: () => {
+      setRecMode('at_playhead')
+      void toggleRecord('at_playhead')
+    },
+    onMarkChapter: onMarkChapter ? () => onMarkChapter(playheadRef.current) : undefined,
+    programMonitor,
+  }
+
   return (
     <div ref={rootRef} className="rounded-2xl border border-[#27313B] bg-[#0C141C] overflow-hidden">
-      <div className="px-4 py-3 border-b border-[#27313B] flex flex-wrap items-center justify-between gap-3 bg-[#11161C]">
-        <div>
-          <h2 className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Podcast production room</h2>
-          <p className="text-sm text-[#B8C4CF]">
-            One lane per person. New takes land after the current mix. Takes autosave on this computer.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Advanced: the one switch between the calm default surface and the full rack.
-              Remembered per browser; nothing is removed, everything is one click away. */}
-          <Button
-            variant={advanced ? 'primary' : 'secondary'}
-            size="compact"
-            aria-pressed={advanced}
-            onClick={toggleAdvanced}
-            title={
-              advanced
-                ? 'Back to the simple view — the full toolset stays one click away'
-                : 'Show every tool: effects, sidechain ducking, pan and timing, sound-effect pad, graphics, stems, calibration'
-            }
-          >
-            <SlidersHorizontal size={14} /> {advanced ? 'Advanced: on' : 'Advanced'}
-          </Button>
-          {!advanced && (
-            <Chip tone="neutral" className="hidden sm:inline-flex" title="Effects, ducking, pan, stems and more live under Advanced">
-              More tools under Advanced
-            </Chip>
-          )}
-        </div>
-        <div className="text-right text-xs font-mono text-[#A9B8C6] space-y-0.5">
-          <p>
-            {recording ? `● REC ${formatClock(recClock)}` : busy || (ready ? `${formatClock(playhead)} / ${durationLabel}` : 'Idle')}
-          </p>
-          {peakDb != null && Number.isFinite(peakDb) && (
-            <p>
-              Peak {peakDb.toFixed(1)} dB · RMS {rmsDb != null && Number.isFinite(rmsDb) ? rmsDb.toFixed(1) : '—'} dB
+      {showAll && (
+        <div className="px-4 py-3 border-b border-[#27313B] flex flex-wrap items-center justify-between gap-3 bg-[#11161C]">
+          <div>
+            <h2 className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Podcast production room</h2>
+            <p className="text-sm text-[#B8C4CF]">
+              One lane per person. After the mix puts the guest after the host. Takes autosave on this computer.
             </p>
-          )}
-          {loudness && Number.isFinite(loudness.lufs) && (
-            <p className={loudness.lufs > PODCAST_LUFS + 2 ? 'text-[#FFB86B]' : 'text-[#8DEBFF]'}>
-              LUFS {loudness.lufs.toFixed(1)} · target {PODCAST_LUFS}
-            </p>
-          )}
+          </div>
+          <div className="flex items-center gap-2">
+            {advancedToggle}
+            {!advanced && (
+              <Chip tone="neutral" className="hidden sm:inline-flex" title="Effects, ducking, pan, stems and more live under Advanced">
+                More tools under Advanced
+              </Chip>
+            )}
+          </div>
+          {readouts}
         </div>
-      </div>
+      )}
 
-      <div className="p-4 space-y-4">
+      {/* Sound Booth — the focused-in recording view. Inline, fills the stage under
+          the production-room header; the overlay below is its full-screen fallback. */}
+      {booth && (
+        <BoothStage
+          {...boothProps}
+          participants={boothOpen ? [] : boothParticipants}
+          variant="inline"
+          autoFocusRecord
+          notices={boothNotices}
+          invitePanel={invitePanel}
+          onExpand={() => setBoothOpen(true)}
+          extraControls={
+            <>
+              {advancedToggle}
+              {advanced && (
+                <>
+                  <Button
+                    variant={metronome ? 'primary' : 'secondary'}
+                    size="compact"
+                    className="shrink-0"
+                    aria-pressed={metronome}
+                    onClick={() => setMetronome((v) => !v)}
+                  >
+                    Metronome
+                  </Button>
+                  {metronome && (
+                    <label className="text-xs text-[#A9B8C6] flex items-center gap-2 shrink-0">
+                      BPM
+                      <input
+                        type="number"
+                        aria-label="Metronome tempo (BPM)"
+                        min={40}
+                        max={200}
+                        value={bpm}
+                        onChange={(e) => setBpm(Number(e.target.value) || 90)}
+                        className="w-16 rounded border border-[#27313B] bg-[#151B22] px-2 py-1 text-[#F6FAFC]"
+                      />
+                    </label>
+                  )}
+                </>
+              )}
+              <Button
+                variant="secondary"
+                size="compact"
+                className="shrink-0"
+                onClick={() => setHelpOpen(true)}
+                title="Keyboard shortcuts (press ?)"
+                aria-label="Show keyboard shortcuts"
+              >
+                <span aria-hidden="true">?</span>
+              </Button>
+            </>
+          }
+        />
+      )}
+
+      {/* Sound Booth · Advanced: the full mic/cue rack, one click away. */}
+      {booth && advanced && (
+        <div className="space-y-3 border-t border-divider p-4">
+          <p className="studio-type-label text-ice">Advanced recording settings</p>
+          <div className={`space-y-1.5 ${recording ? 'pointer-events-none opacity-60' : ''}`}>
+            <p className="studio-type-label text-ice">How to record</p>
+            <SegmentedControl
+              aria-label="How to record"
+              size="compact"
+              value={recMode}
+              onValueChange={(value) => {
+                if (!recording) setRecMode(value)
+              }}
+              options={ALL_REC_MODES.map((mode) => ({ value: mode.value, label: mode.label }))}
+            />
+            <p className="studio-type-label max-w-[22rem] normal-case tracking-normal text-[#7C8B97]">
+              {ALL_REC_MODES.find((m) => m.value === recMode)?.blurb}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs text-[#A9B8C6]">
+            <label className="inline-flex items-center gap-2" title="Cue level (how loud the mix is in your headphones)">
+              Headphone level {Math.round(cueGain * 100)}%
+              <input
+                type="range"
+                aria-label="Headphone mix level"
+                min={0}
+                max={1}
+                step={0.05}
+                value={cueGain}
+                onChange={(e) => setCueGain(Number(e.target.value))}
+                className="w-24 accent-[#53D6FF]"
+              />
+            </label>
+            <label className="inline-flex items-center gap-1.5" title="Voice clean-up (RNNoise noise removal) on every new voice take">
+              <input type="checkbox" checked={voiceIsolate} onChange={(e) => setVoiceIsolate(e.target.checked)} />
+              Voice clean-up
+            </label>
+            <button type="button" className={btn} onClick={armHostAndGuest} title="Arm one take for the host and one for the guest">
+              Arm Host + Guest
+            </button>
+            <label className="inline-flex items-center gap-1.5" title="Record over the armed take instead of onto a new one">
+              <input type="checkbox" checked={replaceArmed} onChange={(e) => setReplaceArmed(e.target.checked)} />
+              Record over the armed take
+            </label>
+            <label className="inline-flex items-center gap-1.5" title="Raw input: no automatic gain, echo cancellation or noise suppression from the browser (Chrome AGC off)">
+              <input type="checkbox" checked={rawInput} onChange={(e) => setRawInput(e.target.checked)} />
+              Mic processing: off
+            </label>
+            <label className="inline-flex items-center gap-1.5" title="With two mics, the quieter one is lowered (never hard-muted) while the other person talks">
+              <input type="checkbox" checked={autoMuteQuiet} onChange={(e) => setAutoMuteQuiet(e.target.checked)} />
+              Auto-duck the quieter mic
+            </label>
+            {mics.length > 0 && (
+              <label className="inline-flex items-center gap-2" title="Fallback mic: used by anyone without their own microphone picked">
+                Fallback mic
+                <select className={select} aria-label="Fallback microphone" value={micId} onChange={(e) => setMicId(e.target.value)}>
+                  <option value="">Default</option>
+                  {mics.map((mic) => (
+                    <option key={mic.deviceId} value={mic.deviceId}>
+                      {mic.label || 'Microphone'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+          {(recording || anyArmed) && (
+            <LiveStoreContext.Provider value={liveStore}>
+              <LiveMeters recording={recording} />
+            </LiveStoreContext.Provider>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {guestTakeUrl && (
+              <button type="button" className={btn} onClick={() => void applyGuestTake(guestTakeUrl)}>
+                Lay uploaded guest take
+              </button>
+            )}
+            {guestCameraUrl && (
+              <button type="button" className={btn} onClick={() => void applyGuestCamera(guestCameraUrl)}>
+                Lay uploaded guest camera
+              </button>
+            )}
+          </div>
+          <HowThisWorks topics={['Recording', 'Two mics, one button']} />
+        </div>
+      )}
+
+      <div className={booth ? 'hidden' : 'p-4 space-y-4'} aria-hidden={booth || undefined}>
+        {/* Edit / Publish toolbar: Advanced toggle + live readouts (the header holds only the tabs now). */}
+        {!showAll && (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              {advancedToggle}
+              {!advanced && (
+                <Chip tone="neutral" className="hidden sm:inline-flex" title="Effects, ducking, pan, stems and more live under Advanced">
+                  More tools under Advanced
+                </Chip>
+              )}
+            </div>
+            {readouts}
+          </div>
+        )}
         {showRecord && (recover || crashTakes.length > 0) && sessionStatus === 'offer' && (
           <RecoveryBanner
             episodeId={episodeId}
@@ -3699,6 +4082,22 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             </label>
           )}
           </div>
+          )}
+          {/* Edit stage: a compact Record — pressing it opens the Sound Booth; Stop brings you back
+              with the take on the timeline. (Legacy all-stages mode has the big one above.) */}
+          {showEdit && !showRecord && (
+            <div className="flex items-center gap-2 shrink-0">
+              <RecordButton
+                state={recording ? 'recording' : 'armed'}
+                size={44}
+                aria-label={recording ? 'Stop recording' : 'Start recording'}
+                title="Record a take — opens the Sound Booth (R)"
+                onClick={() => void toggleRecord()}
+              />
+              <Chip tone={recording ? 'record' : 'neutral'} dot={recording}>
+                {recording ? `REC ${formatClock(recClock)}` : 'Record'}
+              </Chip>
+            </div>
           )}
           {/* Playback transport — shared by record (monitoring) and edit (review takes).
               On narrow screens this group scrolls sideways so the primary Record / Play
@@ -4585,7 +4984,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 </Button>
               ) : onGoToStage ? (
                 <Button variant="primary" size="touch" onClick={() => onGoToStage('record')}>
-                  Go to Record
+                  Go to the Sound Booth
                 </Button>
               ) : null}
               {showEdit && (
@@ -5741,37 +6140,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
       </div>
 
+      {/* Full-screen overlay: the fallback "Expand to full screen" for browsers without the
+          Fullscreen API (the inline stage goes full screen in place elsewhere). The guest
+          panel stays mounted in the inline stage so a live call is never dropped; in legacy
+          all-stages mode it is mounted in the record rack above. */}
       <RecordingBooth
+        {...boothProps}
         open={boothOpen}
         onClose={() => setBoothOpen(false)}
-        title={title}
-        participants={boothParticipants}
-        recording={recording}
-        tally={recTally === 'waiting' ? 'idle' : recTally}
-        countdownSec={recTally === 'count-in' ? countInBeats : null}
-        elapsedSec={recClock}
-        canRecord
-        onToggleRecord={() => void toggleRecord()}
-        onToggleMute={toggleBoothMute}
-        onToggleCamera={(id) => void toggleCamera(id)}
-        invitePanel={
-          <GuestInvitePanel
-            episodeId={episodeId}
-            recording={recording && guestRecClock != null}
-            recTally={recTally}
-            hostStream={hostTalkStream}
-            cueStream={guestCueStream}
-            onCueToGuest={setCueToGuest}
-            onRemoteStream={onRemoteGuestStream}
-            onRemoteVideo={setRemoteGuestVideo}
-            onGuestName={onRemoteGuestName}
-            onTakeUrl={setGuestTakeUrl}
-            onCameraUrl={setGuestCameraUrl}
-            onRemoteGuests={onRemoteGuests}
-            recordStartSessionSec={guestRecClock?.sec ?? null}
-            recordStartedAt={guestRecClock?.at ?? null}
-          />
-        }
       />
 
       <ShortcutsHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />

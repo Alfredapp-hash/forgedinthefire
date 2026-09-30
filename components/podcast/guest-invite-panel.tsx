@@ -105,6 +105,10 @@ export type GuestInvitePanelProps = {
   onRemoteGuests?: (lanes: RemoteGuestLane[]) => void
   /** Live room: fold every guest's audio into onRemoteStream (one Program guest bus). */
   mergeGuestAudio?: boolean
+  /** Sound Booth transport: reports talkback on/off and whether a guest is in the booth to talk to. */
+  onTalkbackState?: (state: { on: boolean; available: boolean }) => void
+  /** Sound Booth transport: lets the editor flip talkback from outside this panel (one-guest P2P path). */
+  talkbackController?: React.MutableRefObject<((on: boolean) => void) | null>
 }
 
 type P2PProps = Omit<GuestInvitePanelProps, 'onRemoteGuests' | 'mergeGuestAudio'> & {
@@ -119,7 +123,7 @@ type Loaded = { invites: GuestInviteAdmin[]; capacity: InviteCapacity | null; ro
  * From the second live invite the episode has a room (SFU) and everyone —
  * including the first guest — goes through GuestRoomPanel.
  */
-export function GuestInvitePanel({ onRemoteGuests, mergeGuestAudio, ...props }: GuestInvitePanelProps) {
+export function GuestInvitePanel({ onRemoteGuests, mergeGuestAudio, onTalkbackState, talkbackController, ...props }: GuestInvitePanelProps) {
   const { episodeId } = props
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [initialUrl, setInitialUrl] = useState<string | null>(null)
@@ -166,6 +170,10 @@ export function GuestInvitePanel({ onRemoteGuests, mergeGuestAudio, ...props }: 
   useEffect(() => {
     if (!roomMode) onRemoteGuests?.([])
   }, [roomMode, onRemoteGuests])
+  // The room (SFU) path has no host talkback; tell the transport it is unavailable.
+  useEffect(() => {
+    if (roomMode) onTalkbackState?.({ on: false, available: false })
+  }, [roomMode, onTalkbackState])
 
   if (roomMode && episodeId && loaded?.room) {
     return (
@@ -182,7 +190,15 @@ export function GuestInvitePanel({ onRemoteGuests, mergeGuestAudio, ...props }: 
       />
     )
   }
-  return <GuestInvitePanelP2P {...props} capacity={loaded?.capacity ?? null} onAddGuest={loaded ? addGuest : undefined} />
+  return (
+    <GuestInvitePanelP2P
+      {...props}
+      capacity={loaded?.capacity ?? null}
+      onAddGuest={loaded ? addGuest : undefined}
+      onTalkbackState={onTalkbackState}
+      talkbackController={talkbackController}
+    />
+  )
 }
 
 const TONE_CLASS: Record<string, string> = {
@@ -220,6 +236,8 @@ function GuestInvitePanelP2P({
   onGuestPause,
   capacity = null,
   onAddGuest,
+  onTalkbackState,
+  talkbackController,
 }: P2PProps) {
   const [adding, setAdding] = useState(false)
   const [hours, setHours] = useState(24)
@@ -954,6 +972,20 @@ function GuestInvitePanelP2P({
   const conn = describeIceProgress(ice, { reconnecting })
   const liveInvite = Boolean(live) && !live?.revoked && !live?.expired
   const guestInBooth = liveInvite && live?.state !== 'pending' && live?.state !== 'left'
+  // Mirror talkback to the Sound Booth transport and let it flip the switch.
+  const talkbackAvailable = Boolean(guestInBooth) && !busy
+  useEffect(() => {
+    onTalkbackState?.({ on: talkback, available: talkbackAvailable })
+  }, [talkback, talkbackAvailable, onTalkbackState])
+  useEffect(() => {
+    if (!talkbackController) return
+    talkbackController.current = (on: boolean) => void setTalkbackOn(on)
+    return () => {
+      talkbackController.current = null
+    }
+    // setTalkbackOn is a stable-enough closure over refs + liveId; re-bind when the invite changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [talkbackController, liveId])
   const canRetry = presence.phase === 'failed' || presence.phase === 'dropped'
   const showDropBanner = liveInvite && (canRetry || dropAtSec != null)
   const consentNotes = consent
