@@ -3753,7 +3753,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   }
 
   return (
-    <div ref={rootRef} className="rounded-2xl border border-[#27313B] bg-[#0C141C] overflow-hidden">
+    <div ref={rootRef} className={`rounded-2xl border border-[#27313B] bg-[#0C141C] ${booth ? '' : 'overflow-hidden'}`}>
       {showAll && (
         <div className="px-4 py-3 border-b border-[#27313B] flex flex-wrap items-center justify-between gap-3 bg-[#11161C]">
           <div>

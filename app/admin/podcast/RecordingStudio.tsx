@@ -618,7 +618,7 @@ export function RecordingStudio({
             record/edit/publish content from the `stage` prop.
           */}
           <div className={stage === 'plan' ? 'hidden' : ''} aria-hidden={stage === 'plan'}>
-            <Panel elevation="raised" className={stage === 'record' ? 'overflow-hidden p-0' : 'p-5'}>
+            <Panel elevation="raised" className={stage === 'record' ? 'p-0' : 'p-5'}>
               <PodcastAudioEditor
                 episodeId={episode.id}
                 audioUrl={episode.audio_url}

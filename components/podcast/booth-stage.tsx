@@ -84,7 +84,7 @@ export type BoothStageProps = {
   onExit?: () => void
   /** Move focus to the RecordButton when the stage mounts (Sound Booth opens). */
   autoFocusRecord?: boolean
-  /** Tailwind min-height for the inline stage (defaults to the viewport minus the sticky header). */
+  /** Tailwind sizing for the inline stage (defaults to the viewport minus the sticky header on desktop). */
   minHeightClass?: string
   /** Inline alerts (camera size warning, input lost…) shown above the transport. */
   notices?: React.ReactNode
@@ -99,7 +99,10 @@ export function isTypingTarget(target: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
 }
 
-const DEFAULT_MIN_H = 'min-h-[calc(100dvh-var(--studio-header-h,168px)-5rem)]'
+/** Desktop: the booth is exactly the viewport minus the sticky header (and the status
+ *  row under it), so the transport is always on screen and the stage scrolls inside.
+ *  Phones: natural height, transport sticky at the bottom. */
+const DEFAULT_SIZE = 'min-h-[24rem] lg:h-[calc(100dvh-var(--studio-header-h,168px)-6rem)] lg:min-h-[32rem]'
 
 export function BoothStage(props: BoothStageProps): React.JSX.Element {
   const {
@@ -215,7 +218,11 @@ export function BoothStage(props: BoothStageProps): React.JSX.Element {
   // --- Focus the RecordButton when the stage opens ---------------------------
   const recordRef = useRef<HTMLButtonElement | null>(null)
   useEffect(() => {
-    if (autoFocusRecord) recordRef.current?.focus({ preventScroll: true })
+    if (!autoFocusRecord) return
+    recordRef.current?.focus({ preventScroll: true })
+    // Bring the whole booth into view (minimal scroll) so the transport is not
+    // stuck over the tiles when the page opens scrolled to the top.
+    if (inline) sectionRef.current?.scrollIntoView({ block: 'nearest' })
     // Only on mount: the editor re-renders this stage on every clock tick.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -290,7 +297,7 @@ export function BoothStage(props: BoothStageProps): React.JSX.Element {
       data-booth-variant={variant}
       className={`flex flex-col ${
         inline
-          ? `${minHeightClass ?? DEFAULT_MIN_H} bg-obsidian text-white [&:fullscreen]:h-screen [&:fullscreen]:overflow-auto`
+          ? `${minHeightClass ?? DEFAULT_SIZE} bg-obsidian text-white [&:fullscreen]:h-screen [&:fullscreen]:overflow-auto`
           : 'h-full min-h-0 flex-1'
       }`}
     >
@@ -363,7 +370,7 @@ export function BoothStage(props: BoothStageProps): React.JSX.Element {
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* Video stage + transport */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="relative min-h-0 flex-1 overflow-y-auto p-3 sm:overflow-hidden sm:p-4">{stage}</div>
+          <div className="relative min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:overflow-hidden">{stage}</div>
 
           {notices ? <div className="shrink-0 space-y-2 px-3 pb-2 sm:px-4">{notices}</div> : null}
 
@@ -374,7 +381,7 @@ export function BoothStage(props: BoothStageProps): React.JSX.Element {
             role="group"
             aria-label="Sound Booth transport"
           >
-            <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-3 sm:justify-between">
+            <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-3 xl:grid xl:grid-cols-[1fr_auto_1fr]">
               {/* Left: program monitor (when the session has picture) + lead-in / count-in. */}
               <div className="flex flex-wrap items-center gap-3">
                 {programMonitor ? <div className="hidden sm:block">{programMonitor}</div> : null}
@@ -414,7 +421,7 @@ export function BoothStage(props: BoothStageProps): React.JSX.Element {
               </div>
 
               {/* Centre: the big record button, timecode, takes counter, stop. */}
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 xl:justify-self-center">
                 <div className="relative">
                   <RecordButton
                     ref={recordRef}
@@ -458,7 +465,7 @@ export function BoothStage(props: BoothStageProps): React.JSX.Element {
               </div>
 
               {/* Right: talkback, cue, chapter, extras. */}
-              <div className="flex flex-wrap items-center justify-center gap-2">
+              <div className="flex flex-wrap items-center justify-center gap-2 xl:justify-end xl:justify-self-end">
                 {onToggleTalkback ? (
                   <Button
                     variant={talkbackOn ? 'primary' : 'secondary'}
