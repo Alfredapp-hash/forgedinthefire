@@ -7,6 +7,8 @@ import {
   nudgeAudioWithCamera,
   nudgeCamerasWithAudio,
   personAvLinked,
+  snapCamerasToAudio,
+  snapDelta,
 } from '@/lib/podcast/av-sync'
 import { splitTrackAt, trimClip } from '@/lib/podcast/edit'
 import { splitCameraAt } from '@/lib/podcast/camera-edit'
@@ -87,5 +89,20 @@ describe('av-sync', () => {
   it('formatDrift', () => {
     expect(formatDrift(0.042)).toBe('42 ms')
     expect(formatDrift(1.5)).toBe('1.50s')
+  })
+})
+
+describe('auto-snap uses the source-aligned delta', () => {
+  it('snaps a dragged picture clip back onto its audio even when the audio was trimmed', () => {
+    const { t, c } = punch(0)
+    // Trim the audio head by 2 s (not drift), then drag the picture 0.5 s late (drift).
+    const trimmed = trimClip(t, t.clips[0].id, 'in', 2)
+    const late = { ...c, offset: c.offset + 0.5 }
+    const drift = avDriftForPerson([trimmed], [late], 'host')
+    expect(drift?.seconds).toBeCloseTo(0.5, 3)
+    expect(snapDelta(drift, 'camera')).toBeCloseTo(-0.5, 3)
+    const snapped = snapCamerasToAudio([late], drift)
+    expect(snapped[0].offset).toBeCloseTo(0, 3)
+    expect(avBroken([trimmed], snapped, host)).toBe(false)
   })
 })

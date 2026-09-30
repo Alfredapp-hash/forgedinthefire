@@ -91,6 +91,7 @@ import {
   type RecMode,
 } from '@/lib/podcast/record-session'
 import { renderMaster } from '@/lib/podcast/master'
+import { requestPersistentStorage } from '@/lib/podcast/take-journal'
 import { useWakeLock } from '@/components/podcast/studio/use-wake-lock'
 import { useLeaveGuard } from '@/components/podcast/studio/leave-guard'
 import { watchInputs } from '@/components/podcast/studio/track-watchdog'
@@ -1783,6 +1784,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       idleStreamRef.current = []
       // Storage-quota preflight — crash-safe autosave needs room to checkpoint.
       if (episodeId) {
+        // Ask the browser not to evict the studio's storage (checkpoints + autosave) under pressure.
+        void requestPersistentStorage()
         const quota = await checkStorageQuota()
         if (quota.supported && quota.low) {
           setError(
