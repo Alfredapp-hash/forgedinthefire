@@ -199,8 +199,8 @@ export function EpisodePlan({
           ))}
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
-          <div className="space-y-4">
+        <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+          <div className="min-w-0 space-y-4">
             {/* Status-grouped card queue: replaces the flat <select> so the host
                 sees each episode's stage, S#E#, summary, and audio state at a glance. */}
             {queuedEpisodes.length === 0 ? (
@@ -311,7 +311,7 @@ export function EpisodePlan({
               onChange={(e) => onDraftGuest(e.target.value)}
               placeholder="Guest name (optional)"
             />
-            <Select value={draftTopicId} onChange={(e) => onDraftTopicId(e.target.value)}>
+            <Select aria-label="Planned topic" value={draftTopicId} onChange={(e) => onDraftTopicId(e.target.value)}>
               <option value="">No planned topic</option>
               {topics.map((topic) => (
                 <option key={topic.id} value={topic.id}>
@@ -573,11 +573,13 @@ export function EpisodePlan({
               </ul>
               <div className="grid gap-2 md:grid-cols-[120px_1fr_auto]">
                 <Input
+                  aria-label="Chapter start time (minutes:seconds)"
                   value={chapterStart}
                   onChange={(e) => onChapterStart(e.target.value)}
                   placeholder="1:30"
                 />
                 <Input
+                  aria-label="Chapter title"
                   value={chapterTitle}
                   onChange={(e) => onChapterTitle(e.target.value)}
                   placeholder="Chapter title"
