@@ -130,7 +130,9 @@ import { slugFile, zipStore } from '@/lib/podcast/zip'
 import { renderSfx, SFX_META, type SfxId } from '@/lib/podcast/sfx'
 import { SfxPad } from '@/components/podcast/sfx-pad'
 import { SessionTimeline } from '@/components/podcast/session-timeline'
-import { GuestInvitePanel } from '@/components/podcast/guest-invite-panel'
+import { GuestInvitePanel, type RemoteGuestLane } from '@/components/podcast/guest-invite-panel'
+import { fetchGuestTakeBlob } from '@/lib/podcast/upload/guest-take-client'
+import { isRemoteLaneKey, remoteLaneKey } from '@/lib/podcast/rooms/layout'
 import { RecordingBooth, type BoothParticipant } from '@/components/podcast/recording-booth'
 import { ShortcutsHelpModal } from '@/components/podcast/shortcuts-help-modal'
 import type { GuestTallyPhase } from '@/lib/podcast/guest-types'
@@ -402,6 +404,11 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const remoteGuestRef = useRef<MediaStream | null>(null)
   const [remoteGuest, setRemoteGuest] = useState<MediaStream | null>(null)
   const [remoteGuestVideo, setRemoteGuestVideo] = useState(false)
+  /** Panel shows: room streams for guests 2..n by person id (guest 1 stays on remoteGuestRef). */
+  const remoteGuestsRef = useRef<Map<string, MediaStream>>(new Map())
+  const [remoteGuestSig, setRemoteGuestSig] = useState('')
+  /** Session time ↔ wall clock at the instant the host captures went live; rides the record-on signal to the guests. */
+  const [guestRecClock, setGuestRecClock] = useState<{ sec: number; at: number } | null>(null)
   const [hostTalkStream, setHostTalkStream] = useState<MediaStream | null>(null)
   const [guestTakeUrl, setGuestTakeUrl] = useState<string | null>(null)
   const [guestCameraUrl, setGuestCameraUrl] = useState<string | null>(null)
@@ -519,6 +526,52 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setPeople((prev) => prev.map((p) => (p.id === 'guest' ? { ...p, name } : p)))
   }, [])
 
+  /**
+   * Panel shows: every guest after the first becomes a voice person with lane slots and
+   * records from their own room stream. Guest 1 keeps the existing Guest lane / remoteGuestRef.
+   */
+  const onRemoteGuests = useCallback((lanes: RemoteGuestLane[]) => {
+    const extra = lanes.filter((l) => l.index >= 2)
+    const next = new Map<string, MediaStream>()
+    for (const l of extra) if (l.stream) next.set(l.personId, l.stream)
+    remoteGuestsRef.current = next
+    setRemoteGuestSig([...next.keys()].sort().join(','))
+    if (!extra.length) return
+    setPeople((prev) => {
+      let changed = false
+      let list = prev
+      for (const l of extra) {
+        const have = list.find((p) => p.id === l.personId)
+        if (!have) {
+          changed = true
+          const person: SessionPerson = {
+            id: l.personId,
+            name: l.name,
+            color: TRACK_COLORS[(list.length + l.index) % TRACK_COLORS.length],
+            kind: 'voice',
+          }
+          const beds = list.filter((p) => p.kind !== 'voice')
+          const voices = list.filter((p) => p.kind === 'voice')
+          list = [...voices, person, ...beds]
+        } else if (have.name !== l.name && l.name) {
+          changed = true
+          list = list.map((p) => (p.id === l.personId ? { ...p, name: l.name } : p))
+        }
+      }
+      return changed ? list : prev
+    })
+    setTracks((prev) => {
+      const missing = extra.filter((l) => !prev.some((t) => t.personId === l.personId))
+      if (!missing.length) return prev
+      const added = missing.flatMap((l) =>
+        emptyTakesForPerson({ id: l.personId, name: l.name, color: TRACK_COLORS[l.index % TRACK_COLORS.length], kind: 'voice' }).map(
+          (t, i) => ({ ...t, armed: i === 0 && Boolean(l.stream) }),
+        ),
+      )
+      return prev.concat(added)
+    })
+  }, [])
+
   cameraStreamsRef.current = cameraStreams
 
   useEffect(() => {
@@ -616,8 +669,25 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       })
     }
 
+    // Panel guests (2..n) — one tile each from their room stream.
+    for (const [personId, stream] of remoteGuestsRef.current) {
+      const live = streamHasLiveVideo(stream)
+      list.push({
+        id: personId,
+        name: nameFor(personId, 'Guest'),
+        role: 'guest',
+        videoStream: live ? stream : null,
+        audioStream: stream,
+        hasLiveVideo: live,
+        muted: personMuted(personId),
+        cameraOn: live,
+        connection: 'connected',
+      })
+    }
+
     // Any other local cameras (co-hosts in the room) — skip host/guest keys.
     for (const [personId, stream] of Object.entries(cameraStreams)) {
+      if (remoteGuestsRef.current.has(personId)) continue
       if (personId === 'host' || personId === 'guest') continue
       list.push({
         id: personId,
@@ -633,7 +703,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
 
     return list
-  }, [cameraStreams, hostTalkStream, remoteGuest, remoteGuestVideo, personMuted, nameFor])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraStreams, hostTalkStream, remoteGuest, remoteGuestVideo, remoteGuestSig, personMuted, nameFor])
 
   const assignBufferToTrack = useCallback(
     (id: string, buffer: AudioBuffer, label?: string) => {
@@ -851,10 +922,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     const armed = tracks.filter((t) => t.armed)
     const keys = [
       ...new Set(
-        (armed.length ? armed : []).map((t) => deviceKey(t.personId)).filter((key) => key !== REMOTE_GUEST_KEY),
+        (armed.length ? armed : []).map((t) => deviceKey(t.personId)).filter((key) => !isRemoteLaneKey(key)),
       ),
     ]
-    if (keys.length === 0 && !remoteGuest) keys.push(micId || '')
+    if (keys.length === 0 && !remoteGuest && !remoteGuestSig) keys.push(micId || '')
     void (async () => {
       try {
         const streams = keys.length ? await openInputStreams(keys, rawInput) : new Map<string, MediaStream>()
@@ -863,7 +934,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           return
         }
         if (remoteGuest) streams.set(REMOTE_GUEST_KEY, remoteGuest)
-        idleStreamRef.current = [...streams.values()].filter((stream) => stream !== remoteGuest)
+        remoteGuestsRef.current.forEach((stream, personId) => streams.set(remoteLaneKey(personId), stream))
+        idleStreamRef.current = [...streams.values()].filter((stream) => !isRemoteStream(stream))
         const hostKey = people.find((p) => p.id === 'host')?.inputDeviceId || micId || ''
         setHostTalkStream(streams.get(hostKey) || [...streams.values()].find((s) => s !== remoteGuest) || null)
         try {
@@ -910,12 +982,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       stopStreams(idleStreamRef.current)
       idleStreamRef.current = []
     }
-  }, [recording, anyArmed, rawInput, micId, remoteGuest, people, tracks.map((t) => `${t.id}:${t.armed}:${t.personId}`).join('|')])
+  }, [recording, anyArmed, rawInput, micId, remoteGuest, remoteGuestSig, people, tracks.map((t) => `${t.id}:${t.armed}:${t.personId}`).join('|')])
 
   useEffect(() => {
     if (!recording && (recTally === 'count-in' || recTally === 'rec')) {
       setRecTally('stopped')
     }
+    if (!recording) setGuestRecClock(null)
   }, [recording, recTally])
 
   // Recording watchdog: if no capture lane has delivered samples recently while
@@ -1328,11 +1401,19 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
   function deviceKey(personId: string) {
     if (personId === 'guest' && remoteGuestRef.current) return REMOTE_GUEST_KEY
+    if (remoteGuestsRef.current.has(personId)) return remoteLaneKey(personId)
     return people.find((p) => p.id === personId)?.inputDeviceId || micId || ''
   }
 
+  /** Remote guest streams are owned by the guest panel: never stop them here. */
+  function isRemoteStream(stream: MediaStream) {
+    if (stream === remoteGuestRef.current) return true
+    for (const s of remoteGuestsRef.current.values()) if (s === stream) return true
+    return false
+  }
+
   function stopLocalRecordStreams() {
-    stopStreams(streamRef.current.filter((stream) => stream !== remoteGuestRef.current))
+    stopStreams(streamRef.current.filter((stream) => !isRemoteStream(stream)))
     streamRef.current = []
   }
 
@@ -1553,20 +1634,18 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   async function applyGuestCamera(url: string) {
     setBusy('Loading guest camera backup…')
     try {
-      const sourceUrl = `/api/admin/media/file?url=${encodeURIComponent(url)}`
-      const res = await fetch(sourceUrl)
-      if (!res.ok) throw new Error('Could not load guest camera backup')
-      const blob = await res.blob()
+      const { blob, manifest } = await fetchGuestTakeBlob(url)
       if (blob.size < 64) throw new Error('Guest camera backup was empty')
       const objectUrl = URL.createObjectURL(blob)
       const fullDur = await measureVideoDuration(objectUrl)
       const full = Math.max(0.1, Number.isFinite(fullDur) && fullDur > 0 ? fullDur : 0.1)
+      const placed = manifest?.startedAtSessionSec
       const clip: CameraClip = {
         id: newCameraClipId(),
         personId: 'guest',
         url: objectUrl,
-        mime: blob.type || 'video/webm',
-        offset: playheadRef.current,
+        mime: blob.type || manifest?.mime || 'video/webm',
+        offset: Math.max(0, typeof placed === 'number' && Number.isFinite(placed) ? placed : playheadRef.current),
         duration: full,
         trimStart: 0,
         sourceStart: 0,
@@ -1602,22 +1681,32 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               oneWayLatencySec,
             })
           : null
-      const sourceUrl = `/api/admin/media/file?url=${encodeURIComponent(cleanUrl)}`
-      const buffer = await decodeUrl(sourceUrl)
-      // Shift the lane before laying the buffer so assignBufferToTrack rebuilds the
-      // clip at the aligned offset. Fall back to the raw punch offset when there is
-      // no usable stamp — the av-sync drift badge + manual nudge remain the net.
-      if (align != null && Math.abs(align) > 0.0005) {
+      // Chunked guest backups (private://…/take/<invite>/<take>) are reassembled from
+      // their signed-URL manifest and carry their own host-clock start; legacy single
+      // objects still go through the media proxy + punch stamp.
+      const { blob, manifest } = await fetchGuestTakeBlob(cleanUrl)
+      if (blob.size < 64) throw new Error('Guest take was empty')
+      const buffer = await decodeBlob(blob)
+      const placed = manifest?.startedAtSessionSec
+      if (typeof placed === 'number' && Number.isFinite(placed)) {
+        setTracks((prev) => prev.map((t) => (t.id === guest.id ? { ...t, offset: Math.max(0, placed) } : t)))
+      } else if (align != null && Math.abs(align) > 0.0005) {
+        // Shift the lane before laying the buffer so assignBufferToTrack rebuilds the
+        // clip at the aligned offset. Fall back to the raw punch offset when there is
+        // no usable stamp — the av-sync drift badge + manual nudge remain the net.
         setTracks((prev) =>
           prev.map((t) =>
             t.id === guest.id ? { ...t, offset: Math.max(0, t.offset + align) } : t,
           ),
         )
       }
+      const missing = manifest?.missing?.length || 0
       const note =
-        align != null && Math.abs(align) > 0.0005
-          ? `Remote guest take laid on ${guest.name} · auto-synced ${align >= 0 ? '+' : ''}${Math.round(align * 1000)} ms`
-          : `Remote guest take laid on ${guest.name}`
+        typeof placed === 'number' && Number.isFinite(placed)
+          ? `Remote guest backup laid on ${guest.name} at ${formatClock(Math.max(0, placed))}${missing ? ` · ${missing} upload part${missing === 1 ? '' : 's'} never arrived — expect a gap there` : ''}`
+          : align != null && Math.abs(align) > 0.0005
+            ? `Remote guest take laid on ${guest.name} · auto-synced ${align >= 0 ? '+' : ''}${Math.round(align * 1000)} ms`
+            : `Remote guest take laid on ${guest.name}`
       assignBufferToTrack(guest.id, buffer, note)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load guest take')
@@ -1736,7 +1825,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       await sleep(40, ac.signal)
       if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
       const uniqueDevices = jobs.map((j) => j.key)
-      const localKeys = uniqueDevices.filter((key) => key !== REMOTE_GUEST_KEY)
+      const localKeys = uniqueDevices.filter((key) => !isRemoteLaneKey(key))
       const streams = localKeys.length
         ? await openInputStreams(localKeys, rawInput)
         : new Map<string, MediaStream>()
@@ -1745,16 +1834,27 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         if (!remote) throw new Error('Guest is not connected. Wait for them to join, or un-arm Guest.')
         streams.set(REMOTE_GUEST_KEY, remote)
       }
+      // Panel shows: guests 2..n record from their own room stream.
+      for (const key of uniqueDevices) {
+        if (!isRemoteLaneKey(key) || key === REMOTE_GUEST_KEY) continue
+        const personId = key.slice('remote:'.length)
+        const remote = remoteGuestsRef.current.get(personId)
+        if (!remote) {
+          const who = people.find((p) => p.id === personId)?.name || 'A panel guest'
+          throw new Error(`${who} is not in the room. Wait for them to join, or un-arm their lane.`)
+        }
+        streams.set(key, remote)
+      }
       if (ac.signal.aborted) {
-        stopStreams([...streams.values()].filter((stream) => stream !== remoteGuestRef.current))
+        stopStreams([...streams.values()].filter((stream) => !isRemoteStream(stream)))
         finishRecCleanup()
         recordingRef.current = false
         setRecording(false)
         return
       }
-      streamRef.current = [...streams.values()].filter((stream) => stream !== remoteGuestRef.current)
+      streamRef.current = [...streams.values()].filter((stream) => !isRemoteStream(stream))
       const hostKey = people.find((p) => p.id === 'host')?.inputDeviceId || micId || ''
-      setHostTalkStream(streams.get(hostKey) || [...streams.values()].find((s) => s !== remoteGuestRef.current) || null)
+      setHostTalkStream(streams.get(hostKey) || [...streams.values()].find((s) => !isRemoteStream(s)) || null)
       stopMeterRef.current = jobs.map((job) => {
         const stream = streams.get(job.key)
         if (!stream) return () => {}
@@ -2042,6 +2142,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       }
       recLiveRef.current = true
       recStartedAtRef.current = performance.now()
+      // Session time now (captures live at the punch) ↔ wall clock: rides the record-on
+      // signal so each guest's chunked backup lands at the right place on the timeline.
+      setGuestRecClock({ sec: punch, at: Date.now() })
       // Start capturing active-speaker switches now that the session clock anchor
       // (recStartedAtRef) is set — atSec below is measured off the same anchor as
       // the record clock, so cuts land on the timeline where the talker flips.
@@ -3612,7 +3715,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         <>
         <GuestInvitePanel
           episodeId={episodeId}
-          recording={recording}
+          recording={recording && guestRecClock != null}
           recTally={recTally}
           hostStream={hostTalkStream}
           cueStream={guestCueStream}
@@ -3622,6 +3725,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           onGuestName={onRemoteGuestName}
           onTakeUrl={setGuestTakeUrl}
           onCameraUrl={setGuestCameraUrl}
+          onRemoteGuests={onRemoteGuests}
+          recordStartSessionSec={guestRecClock?.sec ?? null}
+          recordStartedAt={guestRecClock?.at ?? null}
         />
         <div className="flex flex-wrap gap-2">
           {guestTakeUrl && (
@@ -5126,7 +5232,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         invitePanel={
           <GuestInvitePanel
             episodeId={episodeId}
-            recording={recording}
+            recording={recording && guestRecClock != null}
             recTally={recTally}
             hostStream={hostTalkStream}
             cueStream={guestCueStream}
@@ -5136,6 +5242,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             onGuestName={onRemoteGuestName}
             onTakeUrl={setGuestTakeUrl}
             onCameraUrl={setGuestCameraUrl}
+            onRemoteGuests={onRemoteGuests}
+            recordStartSessionSec={guestRecClock?.sec ?? null}
+            recordStartedAt={guestRecClock?.at ?? null}
           />
         }
       />
