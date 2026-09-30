@@ -1,7 +1,7 @@
 import 'server-only'
 import { createHash } from 'crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { createServiceClient } from '@/lib/podcast/guest/service-db'
+import { createServiceClient } from '@/lib/supabase/service'
 import {
   CONSENT_VERSION,
   consentCanonicalText,

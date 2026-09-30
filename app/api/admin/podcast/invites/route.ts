@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/admin/auth'
 import { studioError } from '@/lib/studio/api'
-import { createServiceClient } from '@/lib/podcast/guest/service-db'
+import { createServiceClient } from '@/lib/supabase/service'
 import { adminInvite, inviteExpiry, mintGuestToken } from '@/lib/podcast/guest-invite'
 import type { GuestInviteRow, GuestRoomPublic } from '@/lib/podcast/guest-types'
 import {

@@ -50,20 +50,12 @@ export type EpisodeSafetyFields = {
 }
 
 /**
- * Client-safe subset of EpisodeConsentSummary (lib/podcast/guest-consent.ts getEpisodeConsents,
- * served by GET /api/admin/studio/episodes/[id]/consent).
+ * Client-safe subset of EpisodeConsentSummary, served by GET /api/admin/studio/episodes/[id]/consent.
+ * Defined once in lib/podcast/guest-consent.ts (server-only module; this is a type-only
+ * re-export, erased at build time, so client components may import it from here).
  */
-export type GuestConsentStatus = {
-  /** false before the consent migration runs: fall back to the manual confirmation column. */
-  available: boolean
-  guestReviewRequired: boolean
-  hasConsent: boolean
-  anyWithdrawn: boolean
-  needsGuestApproval: boolean
-  requirements?: { voiceAltered: boolean; faceBlurred: boolean; firstNameOnly: boolean; audioOnly: boolean }
-  /** Latest record per guest (withdrawn included). */
-  consents?: { referenceCode: string | null; acceptedAt: string; withdrawnAt: string | null }[]
-}
+import type { GuestConsentStatus } from '@/lib/podcast/guest-consent'
+export type { GuestConsentStatus }
 
 /** Loudness columns (20260923000002_podcast_release.sql); optional so the base schema type-checks. */
 export type LoudnessFields = {

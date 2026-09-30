@@ -1,8 +1,8 @@
 import 'server-only'
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { createServiceClient } from '@/lib/podcast/guest/service-db'
-import { clientIp, hashedKey, rateLimitHit } from '@/lib/podcast/guest/rate-limit'
+import { createServiceClient } from '@/lib/supabase/service'
+import { clientIp, hashedKey, rateLimitHit } from '@/lib/security/rate-limit'
 import {
   hashGuestToken,
   hashesMatch,

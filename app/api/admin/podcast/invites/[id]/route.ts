@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/admin/auth'
 import { studioError } from '@/lib/studio/api'
-import { createServiceClient } from '@/lib/podcast/guest/service-db'
+import { createServiceClient } from '@/lib/supabase/service'
 import { adminInvite } from '@/lib/podcast/guest-invite'
 import { GUEST_STATES, type GuestInviteRow } from '@/lib/podcast/guest-types'
 import { endRoomIfEmpty, roomAvailability } from '@/lib/podcast/rooms/server'

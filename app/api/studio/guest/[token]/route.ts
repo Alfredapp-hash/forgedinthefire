@@ -14,7 +14,7 @@ import {
 } from '@/lib/podcast/guest-access'
 import type { GuestInviteRow } from '@/lib/podcast/guest-types'
 import { ConsentVersionError, recordGuestConsent } from '@/lib/podcast/guest-consent'
-import { clientIp } from '@/lib/podcast/guest/rate-limit'
+import { clientIp } from '@/lib/security/rate-limit'
 
 export const dynamic = 'force-dynamic'
 

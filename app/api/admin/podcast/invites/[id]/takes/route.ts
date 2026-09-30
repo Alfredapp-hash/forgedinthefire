@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/admin/auth'
 import { studioError } from '@/lib/studio/api'
-import { createServiceClient } from '@/lib/podcast/guest/service-db'
+import { createServiceClient } from '@/lib/supabase/service'
 import { isMissingTable } from '@/lib/podcast/guest-consent'
 import { buildTakeManifest, type GuestTakeRow } from '@/lib/podcast/upload/guest-take-server'
 

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/admin/auth'
 import { studioError } from '@/lib/studio/api'
-import { createServiceClient } from '@/lib/podcast/guest/service-db'
+import { createServiceClient } from '@/lib/supabase/service'
 import { getInviteConsents, guestReferenceCode } from '@/lib/podcast/guest-consent'
 
 export const dynamic = 'force-dynamic'

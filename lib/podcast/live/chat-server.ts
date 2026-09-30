@@ -2,7 +2,7 @@ import 'server-only'
 
 import { createHash } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { createServiceClient } from '@/lib/podcast/live/service-client'
+import { createServiceClient } from '@/lib/supabase/service'
 import { readLiveEnv } from '@/lib/podcast/live/server'
 import {
   CHAT_BROADCAST_EVENT,

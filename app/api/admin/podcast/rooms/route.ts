@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/admin/auth'
 import { studioError } from '@/lib/studio/api'
-import { createServiceClient } from '@/lib/podcast/guest/service-db'
+import { createServiceClient } from '@/lib/supabase/service'
 import { mintHostRoomToken, openRoomForEpisode, roomAvailability } from '@/lib/podcast/rooms/server'
 import type { GuestRoomPublic } from '@/lib/podcast/guest-types'
 

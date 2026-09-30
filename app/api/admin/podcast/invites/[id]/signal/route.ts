@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/admin/auth'
 import { studioError } from '@/lib/studio/api'
-import { createServiceClient } from '@/lib/podcast/guest/service-db'
+import { createServiceClient } from '@/lib/supabase/service'
 import { adminInvite, inviteIsLive } from '@/lib/podcast/guest-invite'
 import { parseSignal, SIGNAL_BODY_MAX } from '@/lib/podcast/guest-signal-schema'
 import type { GuestInviteRow, GuestSignal } from '@/lib/podcast/guest-types'

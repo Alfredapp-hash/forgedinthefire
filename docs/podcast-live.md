@@ -498,9 +498,9 @@ need HLS (hls.js or native Safari) or WHEP (any modern browser).
 - Simulcast: `lib/podcast/live/simulcast.ts` (presets, masking, state mapping), `simulcast-server.ts` (encryption,
   Cloudflare Live Outputs), `simulcast-client.ts`, `app/api/admin/podcast/live/destinations/**`,
   `[id]/simulcast/route.ts`, `components/podcast/live-simulcast-card.tsx`
-- Server helpers that the live routes own: `lib/podcast/live/service-client.ts` (cookie-less service-role
-  client for the chat/destination tables, which RLS hides from `authenticated`), `rate-limit.ts` (see Chat),
-  `transport.ts` (pure transport-strip state → label helpers).
+- Server helpers the live routes use: `lib/supabase/service.ts` (cookie-less service-role client for the
+  chat/destination tables, which RLS hides from `authenticated`), `lib/security/rate-limit.ts` (see Chat),
+  `lib/podcast/live/transport.ts` (pure transport-strip state → label helpers).
 - Tests: `tests/unit/live/` (transport strip), `tests/unit/live-chat/` (moderation, rate-limit math, masking,
   output state mapping, event reducer), `lib/podcast/live/__tests__/` (delay ring, hotkeys, safety logic)
 - `app/podcast/live/page.tsx`, `components/podcast/live-player.tsx`, `live-banner.tsx`, `live-control-room.tsx`

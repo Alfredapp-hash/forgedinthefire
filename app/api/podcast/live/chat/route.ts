@@ -11,8 +11,8 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server'
-import { createServiceClient } from '@/lib/podcast/live/service-client'
-import { clientIp, hashedKey, rateLimitHit } from '@/lib/podcast/live/rate-limit'
+import { createServiceClient } from '@/lib/supabase/service'
+import { clientIp, hashedKey, rateLimitHit } from '@/lib/security/rate-limit'
 import {
   CHAT_HISTORY_LIMIT,
   CHAT_KINDS,

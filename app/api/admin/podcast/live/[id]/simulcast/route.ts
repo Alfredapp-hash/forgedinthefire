@@ -8,7 +8,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { withLiveAdmin } from '@/lib/podcast/live/admin'
-import { createServiceClient } from '@/lib/podcast/live/service-client'
+import { createServiceClient } from '@/lib/supabase/service'
 import {
   capabilityPublic,
   destinationError,
