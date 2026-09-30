@@ -104,3 +104,29 @@ export function dedupeEdl(edl: SwitchEDL): SwitchEDL {
   }
   return out
 }
+
+/**
+ * Ripple-delete on the session clock also pulls later switch cuts. Cuts inside the
+ * removed range collapse onto its start (the last one wins), so the camera that was
+ * MAIN when the removed section ended is still MAIN when playback resumes there.
+ * Consecutive same-main cuts left behind are deduped.
+ */
+export function rippleSwitchEdl(edl: SwitchEDL, start: number, end: number): SwitchEDL {
+  const a = Math.max(0, Math.min(start, end))
+  const b = Math.max(start, end)
+  const gap = b - a
+  if (gap < 0.001) return edl
+  const moved = sortEdl(edl).map((ev) => {
+    if (ev.atSec <= a) return ev
+    if (ev.atSec >= b) return { ...ev, atSec: Math.max(0, ev.atSec - gap) }
+    return { ...ev, atSec: a }
+  })
+  // One cut per instant: keep the last one that lands on a given time.
+  const byTime: SwitchEDL = []
+  for (const ev of moved) {
+    const prev = byTime[byTime.length - 1]
+    if (prev && Math.abs(prev.atSec - ev.atSec) < 1e-6) byTime[byTime.length - 1] = ev
+    else byTime.push(ev)
+  }
+  return dedupeEdl(byTime)
+}

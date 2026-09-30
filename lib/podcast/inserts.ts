@@ -1,6 +1,6 @@
 /** Non-destructive per-take insert chain. Original PCM stays on the track. */
 
-import { applyEffect, cloneBuffer, type EffectId } from '@/lib/podcast/effects'
+import { applyEffect, cloneBuffer, IN_PLACE_EFFECTS, type EffectId } from '@/lib/podcast/effects'
 import type { StudioTrack } from '@/lib/podcast/multitrack'
 
 export type InsertSlot = {
@@ -59,15 +59,16 @@ function mixWetDry(dry: AudioBuffer, wet: AudioBuffer, wetAmt: number): AudioBuf
   if (amount >= 0.999) return wet
   if (amount <= 0.001) return dry
   const dryAmt = 1 - amount
-  const out = cloneBuffer(dry)
-  const channels = Math.min(out.numberOfChannels, wet.numberOfChannels)
-  const length = Math.min(out.length, wet.length)
+  // Wet is always a fresh buffer we own: mix into it instead of cloning dry again.
+  const sameShape = wet !== dry && wet.length === dry.length && wet.numberOfChannels === dry.numberOfChannels
+  const out = sameShape ? wet : cloneBuffer(dry)
+  const channels = Math.min(dry.numberOfChannels, wet.numberOfChannels)
+  const length = Math.min(dry.length, wet.length)
   for (let ch = 0; ch < channels; ch++) {
-    const d = out.getChannelData(ch)
+    const o = out.getChannelData(ch)
+    const d = dry.getChannelData(ch)
     const w = wet.getChannelData(ch)
-    for (let i = 0; i < length; i++) {
-      d[i] = Math.max(-1, Math.min(1, d[i] * dryAmt + w[i] * amount))
-    }
+    for (let i = 0; i < length; i++) o[i] = d[i] * dryAmt + w[i] * amount
   }
   return out
 }
@@ -80,9 +81,11 @@ export async function playbackBuffer(track: StudioTrack): Promise<AudioBuffer | 
   const hit = cache.get(key)
   if (hit) return hit
 
-  let current = cloneBuffer(track.buffer)
+  // The source PCM is never mutated: only in-place effects get a private copy.
+  let current = track.buffer
   for (const slot of live) {
-    const wet = await applyEffect(cloneBuffer(current), slot.id)
+    const input = IN_PLACE_EFFECTS.has(slot.id) ? cloneBuffer(current) : current
+    const wet = await applyEffect(input, slot.id)
     current = mixWetDry(current, wet, slot.wet)
   }
   if (cache.size > 24) {

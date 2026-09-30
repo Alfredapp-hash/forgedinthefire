@@ -17,6 +17,7 @@ import {
   type PictureScene,
   type TimedPaint,
 } from '@/lib/podcast/picture'
+import { Button, SegmentedControl } from '@/components/studio-ui'
 
 type Props = {
   clips: CameraClip[]
@@ -68,48 +69,40 @@ export function ProgramSwitcher({
   onCut: () => void
   onFade: () => void
 }) {
+  const pgmLabel = SCENES.find((s) => s.id === pgm)?.label ?? pgm
   return (
-    <div className="space-y-1">
-      <p className="text-[10px] uppercase tracking-wider text-[#7C8B97]">Preview scene</p>
-      <div className="flex flex-wrap gap-1">
-        {SCENES.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            className={`inline-flex items-center justify-center h-6 px-1.5 rounded border text-[10px] uppercase tracking-wider ${
-              pgm === s.id
-                ? 'border-[#53D6FF]/60 text-[#8DEBFF]'
-                : pvw === s.id
-                  ? 'border-[#8DEBFF]/40 text-[#B8C4CF]'
-                  : 'border-[#27313B] text-[#B8C4CF]'
-            }`}
-            title={`${s.label} Program layout — click to take. Fade first to dissolve.`}
-            onClick={() => onPvw(s.id)}
-          >
-            {s.label}
-          </button>
-        ))}
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="studio-type-label text-silver-label">Preview scene</p>
+        <span className="studio-type-label inline-flex items-center gap-1 text-ice">
+          <span className="h-1.5 w-1.5 rounded-full bg-forged shadow-glow-subtle" />
+          PGM {pgmLabel}
+        </span>
       </div>
-      <div className="flex flex-wrap gap-1">
-        <button
-          type="button"
-          className="inline-flex items-center justify-center h-6 px-1.5 rounded border border-[#27313B] text-[10px] uppercase tracking-wider text-[#B8C4CF] disabled:opacity-40"
+      <SegmentedControl
+        aria-label="Preview scene"
+        value={pvw}
+        onValueChange={onPvw}
+        options={SCENES.map((s) => ({ value: s.id, label: s.label }))}
+      />
+      <div className="flex flex-wrap gap-1.5">
+        <Button
+          size="dense"
+          variant="secondary"
           disabled={pvw === pgm && !fading}
           title="Cut Preview scene to Program"
           onClick={onCut}
         >
           Cut
-        </button>
-        <button
-          type="button"
-          className={`inline-flex items-center justify-center h-6 px-1.5 rounded border text-[10px] uppercase tracking-wider ${
-            fading || fadeArmed ? 'border-[#53D6FF]/60 text-[#8DEBFF]' : 'border-[#27313B] text-[#B8C4CF]'
-          }`}
+        </Button>
+        <Button
+          size="dense"
+          variant={fading || fadeArmed ? 'primary' : 'secondary'}
           title="Fade to Program (~0.45s). If Program already matches Preview, the next scene click dissolves."
           onClick={onFade}
         >
           Fade
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -263,15 +256,15 @@ export function ProgramMonitor({
 
   return (
     <div className="space-y-1">
-      <p className="text-[10px] uppercase tracking-wider text-[#8DEBFF]">Program</p>
-      <div className="relative overflow-hidden rounded-lg border border-[#53D6FF]/40 bg-[#05070A] h-[90px] w-[160px]">
+      <p className="studio-type-label text-ice">Program</p>
+      <div className="relative overflow-hidden rounded-tile border border-forged/40 bg-obsidian h-[90px] w-[160px] shadow-depth-md">
         <canvas ref={canvasRef} width={VIEW_W} height={VIEW_H} className="h-full w-full" />
         {!hasPicture && (
-          <p className="absolute inset-0 flex items-center justify-center px-2 text-center text-[10px] uppercase tracking-wider text-[#7C8B97]">
+          <p className="studio-type-label absolute inset-0 flex items-center justify-center px-2 text-center text-silver-label">
             No punched picture
           </p>
         )}
-        <span className="absolute left-1 top-1 rounded bg-[#05070A]/80 px-1 text-[9px] uppercase tracking-wider text-[#8DEBFF]">
+        <span className="studio-type-label absolute left-1 top-1 rounded-clip bg-obsidian/80 px-1 text-ice">
           PGM {scene === 'guest' ? 'Guest' : scene === 'pip' || mode === 'pip' ? 'PIP' : 'Host'}
         </span>
       </div>

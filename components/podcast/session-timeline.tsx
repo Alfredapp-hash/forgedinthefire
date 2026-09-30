@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import { formatClock } from '@/lib/podcast/audio'
 import { clipsOf, isVoiceRole, sessionDuration, type SessionPerson, type StudioTrack, type TrackClip } from '@/lib/podcast/multitrack'
+import { laneColor, LANE_IDS, type LaneColor, type LaneId } from '@/lib/podcast/lanes'
 import {
   drawPeakEnvelope,
   peakBucketCount,
@@ -19,11 +20,22 @@ export type SessionTimelineProps = {
   pxPerSec: number
   selectedId: string | null
   selectedClipId: string | null
+  /** All clips in the current multi-selection (includes the primary clip). */
+  selectedClipIds?: Set<string>
+  /** Snap active — draws a subtle grid tint hint on lanes. Visual only. */
+  snap?: boolean
+  /** Loop transport active — draws the labeled loop-zone band across the ruler. */
+  loop?: boolean
   range: { start: number; end: number }
-  onSelect: (trackId: string, clipId: string | null) => void
+  /** Additive = Cmd/Ctrl-click (toggle clip in the multi-selection). */
+  onSelect: (trackId: string, clipId: string | null, additive?: boolean) => void
   onPlayhead: (sec: number) => void
+  /** Fired once at the start of a move/trim/roll drag so the host can snapshot undo. */
+  onEditStart?: () => void
   onMoveClip: (trackId: string, clipId: string, offset: number) => void
   onTrimClip: (trackId: string, clipId: string, edge: 'in' | 'out', time: number) => void
+  /** Roll trim: Shift+drag an edge trims the neighbour, preserving total length. */
+  onRollTrim?: (trackId: string, clipId: string, edge: 'in' | 'out', time: number) => void
   onRange: (start: number, end: number, trackId: string) => void
   /** Scope lanes to one person. Primary editor is per-person, not one shared board. */
   personId?: string | null
@@ -37,6 +49,31 @@ export type SessionTimelineProps = {
   rulerOnly?: boolean
   scrollLeft?: number
   onScrollLeft?: (left: number) => void
+  /** Transport rolling — gently pulses the playhead glow. Visual only; defaults off. */
+  playing?: boolean
+  /**
+   * Drop the embedded tile's border / rounding / shadow so this board can sit
+   * flush as the audio row inside a unified per-person track group. Visual only.
+   */
+  flush?: boolean
+  /**
+   * Reserve a fixed-width, non-scrolling left column before the board so the
+   * time axis lines up with per-person track groups that carry a header rail
+   * of the same width. Used by the shared ruler. Visual only.
+   */
+  gutterLeft?: number
+}
+
+/**
+ * Resolve a persistent lane hue for a person. Canonical ids ('host', 'guest',
+ * 'cohost-N') map straight through; any other id falls back to a stable index so
+ * every participant keeps one colour across renders. Visual only — no logic reads this.
+ */
+function laneColorForPerson(personId: string | null | undefined, index: number): LaneColor {
+  if (personId && (LANE_IDS as readonly string[]).includes(personId)) {
+    return laneColor(personId as LaneId)
+  }
+  return laneColor(index)
 }
 
 function subscribeDpr(onStoreChange: () => void) {
@@ -49,14 +86,36 @@ export function useTrackDpr(): number {
   return useSyncExternalStore(subscribeDpr, () => trackDisplayRatio(), () => 1)
 }
 
-export function TimelinePlayhead({ sec, pxPerSec }: { sec: number; pxPerSec: number }) {
+export function TimelinePlayhead({
+  sec,
+  pxPerSec,
+  playing = false,
+}: {
+  sec: number
+  pxPerSec: number
+  /** Gently pulses the glow while transport is rolling. Reduced-motion safe. */
+  playing?: boolean
+}) {
   const dpr = useTrackDpr()
   const hair = snapHairline(sec * pxPerSec, dpr)
+  // Bold 5px stem centred on the snapped hairline, with a soft ice-blue glow.
+  const stem = 5
+  const left = hair.left - (stem - hair.width) / 2
   return (
-    <div
-      className="absolute top-0 bottom-0 z-30 pointer-events-none bg-[#8DEBFF]"
-      style={{ left: hair.left, width: hair.width }}
-    />
+    <div className="absolute top-0 bottom-0 z-30 pointer-events-none" style={{ left, width: stem }}>
+      {/* Grab handle: a rounded ice-blue cap at the top of the stem. */}
+      <span
+        aria-hidden
+        className="absolute -top-0.5 left-1/2 -translate-x-1/2 h-2.5 w-3 rounded-clip bg-ice shadow-glow-medium"
+      />
+      {/* The stem itself — bold, glowing, gently breathing while playing. */}
+      <span
+        aria-hidden
+        className={`absolute inset-y-0 left-0 w-full rounded-full bg-ice shadow-glow-medium ${
+          playing ? 'animate-glow-pulse' : ''
+        }`}
+      />
+    </div>
   )
 }
 
@@ -67,11 +126,16 @@ export function SessionTimeline({
   pxPerSec,
   selectedId,
   selectedClipId,
+  selectedClipIds,
+  snap = false,
+  loop = false,
   range,
   onSelect,
   onPlayhead,
+  onEditStart,
   onMoveClip,
   onTrimClip,
+  onRollTrim,
   onRange,
   personId = null,
   durationSec,
@@ -80,6 +144,9 @@ export function SessionTimeline({
   rulerOnly = false,
   scrollLeft,
   onScrollLeft,
+  playing = false,
+  flush = false,
+  gutterLeft,
 }: SessionTimelineProps) {
   const scopedPeople = personId ? people.filter((p) => p.id === personId) : people
   const scopedTracks = (personId ? tracks.filter((t) => t.personId === personId) : tracks).slice().sort((a, b) => {
@@ -91,7 +158,7 @@ export function SessionTimeline({
   const boardRef = useRef<HTMLDivElement>(null)
   const drag = useRef<
     | { kind: 'move'; trackId: string; clipId: string; startX: number; startOffset: number; moved: boolean }
-    | { kind: 'trim'; trackId: string; clipId: string; edge: 'in' | 'out' }
+    | { kind: 'trim'; trackId: string; clipId: string; edge: 'in' | 'out'; roll: boolean }
     | { kind: 'range'; trackId: string; anchor: number }
     | { kind: 'seek' }
     | null
@@ -156,7 +223,8 @@ export function SessionTimeline({
       const delta = (event.clientX - d.startX) / pxPerSec
       onMoveClip(d.trackId, d.clipId, Math.max(0, d.startOffset + delta))
     } else if (d.kind === 'trim') {
-      onTrimClip(d.trackId, d.clipId, d.edge, t)
+      if (d.roll && onRollTrim) onRollTrim(d.trackId, d.clipId, d.edge, t)
+      else onTrimClip(d.trackId, d.clipId, d.edge, t)
     } else if (d.kind === 'range') {
       onRange(Math.min(d.anchor, t), Math.max(d.anchor, t), d.trackId)
       onPlayhead(t)
@@ -193,11 +261,15 @@ export function SessionTimeline({
   ) {
     event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
-    onSelect(track.id, clip.id)
+    // Cmd/Ctrl-click toggles multi-selection; a plain click replaces it.
+    onSelect(track.id, clip.id, event.metaKey || event.ctrlKey)
     if (edge) {
-      drag.current = { kind: 'trim', trackId: track.id, clipId: clip.id, edge }
+      onEditStart?.()
+      // Shift+drag an edge = roll trim (moves the boundary with the neighbour).
+      drag.current = { kind: 'trim', trackId: track.id, clipId: clip.id, edge, roll: event.shiftKey }
       return
     }
+    onEditStart?.()
     drag.current = {
       kind: 'move',
       trackId: track.id,
@@ -223,11 +295,22 @@ export function SessionTimeline({
   const showPersonLabel = !embedded && !personId
   const rulerH = showRuler ? 24 : 0
   const selBox = snapSpan(selStart * pxPerSec, selEnd * pxPerSec, 2)
+  // Loop-zone band: a labeled translucent region on the ruler when loop is armed
+  // over a real range. Purely presentational; the transport owns the loop logic.
+  const showLoopBand = loop && hasRange && showRuler
 
   const board = (
     <div
       ref={boardRef}
-      className="overflow-x-auto"
+      // Focusable + named: keyboard users can reach and scroll the board, and the
+      // single-letter editing shortcuts fire while it (or nothing) has focus.
+      tabIndex={rulerOnly ? undefined : 0}
+      role={rulerOnly ? undefined : 'region'}
+      aria-label={
+        rulerOnly ? undefined : scopedPeople.length === 1 ? `Timeline for ${scopedPeople[0].name}` : 'Timeline'
+      }
+      data-timeline
+      className="overflow-x-auto rounded-clip outline-none focus-visible:ring-2 focus-visible:ring-ice/60"
       onScroll={(e) => onScrollLeft?.(e.currentTarget.scrollLeft)}
       onPointerMove={onBoardPointerMove}
       onPointerUp={onBoardPointerUp}
@@ -236,7 +319,7 @@ export function SessionTimeline({
       <div className="relative" style={{ width, minHeight: rulerOnly ? rulerH || 24 : 56 }}>
         {showRuler && (
           <div
-            className="sticky top-0 z-10 h-6 border-b border-[#1A232C] bg-[#0C141C]"
+            className="sticky top-0 z-10 h-6 border-b border-divider bg-surface-sunken"
             onPointerDown={onRulerPointerDown}
           >
             {ticks.map(({ t, major }) => {
@@ -244,11 +327,11 @@ export function SessionTimeline({
               return (
                 <span key={t} className="absolute top-0 h-full pointer-events-none" style={{ left }}>
                   <i
-                    className={`absolute top-0 block ${major ? 'h-2 bg-[#3A4652]' : 'h-1 bg-[#27313B]'}`}
+                    className={`absolute top-0 block ${major ? 'h-2 bg-silver-label' : 'h-1 bg-divider'}`}
                     style={{ left: 0, width: 1 }}
                   />
                   {major && (
-                    <span className="absolute top-2.5 text-[10px] leading-none text-[#7C8B97] font-mono" style={{ left: 3 }}>
+                    <span className="studio-type-timecode absolute top-2.5 leading-none text-silver-label" style={{ left: 3 }}>
                       {formatClock(t)}
                     </span>
                   )}
@@ -260,7 +343,7 @@ export function SessionTimeline({
 
         {hasRange && (
           <div
-            className="absolute bottom-0 z-20 pointer-events-none bg-[#53D6FF]/10 border-x border-[#53D6FF]/40"
+            className="absolute bottom-0 z-20 pointer-events-none bg-forged/10 border-x border-forged/40"
             style={{
               top: rulerH,
               left: selBox.left,
@@ -269,21 +352,38 @@ export function SessionTimeline({
           />
         )}
 
-        {rows.map(({ person, lane }) => {
+        {showLoopBand && (
+          <div
+            className="absolute z-20 pointer-events-none rounded-clip border-x-2 border-ice/70 bg-ice/10"
+            style={{ top: 0, height: rulerH, left: selBox.left, width: selBox.width }}
+          >
+            <span
+              className="studio-type-label absolute left-1 top-1/2 -translate-y-1/2 rounded-clip bg-ice/20 px-1 leading-none text-ice"
+              style={{ maxWidth: Math.max(0, selBox.width - 6) }}
+            >
+              ⟲ Loop {formatClock(selStart)}–{formatClock(selEnd)}
+            </span>
+          </div>
+        )}
+
+        {rows.map(({ person, lane }, rowIndex) => {
           const hasComp = Boolean(person && lane.some((t) => isVoiceRole(t.role) && (t.compRanges || []).length > 0))
           const laneCount = Math.max(1, lane.length)
           const topPad = showPersonLabel ? 18 : hasComp ? 8 : 6
+          // Persistent GarageBand-style hue for this lane, keyed to the person.
+          const hue = laneColorForPerson(person?.id, rowIndex)
           return (
             <div
               key={person?.id || 'lane'}
-              className="relative border-t border-[#1A232C]"
-              style={{ height: topPad + laneCount * 52 }}
+              className="relative border-t border-divider"
+              style={{ height: topPad + laneCount * 52, background: hue.laneBg }}
               onPointerDown={lane[0] ? undefined : onEmptyLanePointerDown}
             >
               {showPersonLabel && (
-                <p className="absolute z-20 text-[10px] uppercase tracking-wider text-[#7C8B97]" style={{ left: 8, top: 4 }}>
-                  {person?.name || 'Takes'}
-                </p>
+                <span className="absolute z-20 inline-flex items-center gap-1.5" style={{ left: 8, top: 4 }}>
+                  <span className="h-2 w-2 rounded-full" style={{ background: hue.base }} />
+                  <span className="studio-type-label text-silver-label">{person?.name || 'Takes'}</span>
+                </span>
               )}
               {hasComp && (
                 <div className="absolute left-0 right-0 top-0 z-10" style={{ height: 2 }}>
@@ -298,7 +398,7 @@ export function SessionTimeline({
                             left: bar.left,
                             width: bar.width,
                             height: 2,
-                            background: t.color,
+                            background: hue.base,
                           }}
                           title={`${t.name} · ${formatClock(r.start)}–${formatClock(r.end)}`}
                         />
@@ -320,16 +420,22 @@ export function SessionTimeline({
                     onPointerUp={onBoardPointerUp}
                   >
                     {embedded && (
-                      <span className="absolute z-20 text-[10px] uppercase tracking-wider text-[#7C8B97] pointer-events-none" style={{ left: 8, top: 0 }}>
+                      <span className="studio-type-label absolute z-20 text-silver-label pointer-events-none" style={{ left: 8, top: 0 }}>
                         take {track.take}
                       </span>
                     )}
                     {clips.length === 0 && (
                       <div
-                        className="absolute h-9 rounded border border-dashed border-[#27313B] text-[10px] text-[#7C8B97] px-2 flex items-center"
-                        style={{ left: embedded ? 52 : 8, minWidth: 72, top: 8 }}
+                        className="studio-type-label absolute h-9 rounded-clip border border-dashed px-2 flex items-center text-silver-label transition-colors"
+                        style={{
+                          left: embedded ? 52 : 8,
+                          minWidth: 72,
+                          top: 8,
+                          borderColor: hue.border,
+                          background: `${hue.laneBg}`,
+                        }}
                       >
-                        empty — arm or record
+                        {track.armed ? 'armed — press Record' : 'no take yet'}
                       </div>
                     )}
                     {clips.map((clip) => (
@@ -337,8 +443,15 @@ export function SessionTimeline({
                         key={clip.id}
                         track={track}
                         clip={clip}
+                        laneColor={hue}
                         pxPerSec={pxPerSec}
-                        selected={selectedId === track.id && (selectedClipId === clip.id || !selectedClipId)}
+                        selected={
+                          selectedClipIds
+                            ? selectedClipIds.has(clip.id) ||
+                              (selectedId === track.id && !selectedClipId && selectedClipIds.size === 0)
+                            : selectedId === track.id && (selectedClipId === clip.id || !selectedClipId)
+                        }
+                        multi={Boolean(selectedClipIds && selectedClipIds.size > 1 && selectedClipIds.has(clip.id))}
                         dim={
                           track.muted ||
                           clip.muted ||
@@ -358,7 +471,7 @@ export function SessionTimeline({
                 )
               })}
               {lane.length === 0 && (
-                <p className="absolute text-[10px] text-[#7C8B97]" style={{ left: 8, top: 8 }}>
+                <p className="studio-type-label absolute text-silver-label normal-case tracking-normal" style={{ left: 8, top: 8 }}>
                   No takes yet — add one, then record.
                 </p>
               )}
@@ -366,30 +479,39 @@ export function SessionTimeline({
           )
         })}
 
-        <TimelinePlayhead sec={playhead} pxPerSec={pxPerSec} />
+        <TimelinePlayhead sec={playhead} pxPerSec={pxPerSec} playing={playing} />
       </div>
     </div>
   )
 
   if (embedded || rulerOnly) {
-    return (
-      <div
-        className={
-          rulerOnly
-            ? 'rounded-lg border border-[#1A232C] bg-[#05070A] overflow-hidden'
-            : 'rounded-lg border border-[#1A232C] bg-[#05070A] overflow-hidden'
-        }
-      >
-        {board}
-      </div>
-    )
+    const shell =
+      flush
+        ? 'bg-obsidian overflow-hidden'
+        : 'rounded-tile border border-divider bg-obsidian overflow-hidden shadow-depth-sm'
+    if (gutterLeft != null) {
+      return (
+        <div className={shell}>
+          <div className="flex items-stretch">
+            <div
+              className="shrink-0 flex items-center border-r border-divider px-2"
+              style={{ width: gutterLeft }}
+            >
+              <span className="studio-type-label text-silver-label">Timeline</span>
+            </div>
+            <div className="min-w-0 flex-1">{board}</div>
+          </div>
+        </div>
+      )
+    }
+    return <div className={shell}>{board}</div>
   }
 
   return (
-    <div className="rounded-xl border border-[#1A232C] bg-[#080C10] overflow-hidden">
+    <div className="rounded-tile border border-divider bg-surface-card overflow-hidden shadow-depth-md">
       <div className="px-3 py-2 flex items-center justify-between gap-2">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Session timeline</p>
-        <p className="text-[11px] font-mono text-[#A9B8C6]">
+        <p className="studio-type-column text-ice">Session timeline</p>
+        <p className="studio-type-timecode text-silver-body">
           {formatClock(playhead)}
           {hasRange ? ` · sel ${formatClock(selStart)}–${formatClock(selEnd)}` : ''}
         </p>
@@ -402,8 +524,10 @@ export function SessionTimeline({
 function Clip({
   track,
   clip,
+  laneColor,
   pxPerSec,
   selected,
+  multi = false,
   dim,
   onPointerDown,
   onPointerMove,
@@ -413,8 +537,11 @@ function Clip({
 }: {
   track: StudioTrack
   clip: TrackClip
+  laneColor: LaneColor
   pxPerSec: number
   selected: boolean
+  /** Part of a multi-selection (>1 clip) — draws an accent ring. */
+  multi?: boolean
   dim: boolean
   onPointerDown: (e: React.PointerEvent) => void
   onPointerMove: (e: React.PointerEvent) => void
@@ -427,16 +554,21 @@ function Clip({
   return (
     <div
       data-clip={clip.id}
-      className="absolute overflow-hidden"
+      className={`group absolute overflow-hidden rounded-clip cursor-grab active:cursor-grabbing transition-[box-shadow,transform,filter] duration-150 will-change-transform hover:-translate-y-px hover:brightness-110 hover:shadow-glow-subtle ${
+        selected
+          ? multi
+            ? 'shadow-highlight-rim ring-2 ring-ice/80'
+            : 'shadow-highlight-rim ring-1 ring-ice/60'
+          : 'shadow-depth-sm hover:shadow-depth-md'
+      }`}
       style={{
         left: box.left,
         width: box.width,
         height: 40,
         top: 0,
-        borderRadius: 6,
-        background: track.color + (dim ? '18' : '33'),
-        border: `1px solid ${selected ? '#8DEBFF' : track.color}`,
-        opacity: !track.buffer && dim ? 0.45 : 1,
+        background: laneColor.clipFill,
+        border: `1px solid ${selected ? laneColor.base : laneColor.border}`,
+        opacity: !track.buffer && dim ? 0.45 : dim ? 0.7 : 1,
       }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -450,12 +582,12 @@ function Clip({
           duration={clip.duration}
           cssWidth={box.width}
           cssHeight={40}
-          color={track.color}
+          color={laneColor.base}
           dim={dim}
         />
       )}
       <span
-        className="absolute text-[10px] leading-none text-[#F6FAFC] pointer-events-none truncate"
+        className="studio-type-label absolute leading-none text-white pointer-events-none truncate normal-case tracking-normal"
         style={{ left: 6, top: 3, maxWidth: '70%' }}
       >
         {track.name}
@@ -463,14 +595,14 @@ function Clip({
       </span>
       <button
         type="button"
-        aria-label="Trim in"
-        className="absolute left-0 top-0 h-full w-2 cursor-ew-resize z-10 bg-transparent"
+        aria-label={`Trim start of ${track.name}`}
+        className="absolute left-0 top-0 z-10 h-full w-2.5 cursor-ew-resize rounded-l-clip bg-transparent hover:bg-white/15 focus-visible:bg-white/25"
         onPointerDown={onTrimIn}
       />
       <button
         type="button"
-        aria-label="Trim out"
-        className="absolute right-0 top-0 h-full w-2 cursor-ew-resize z-10 bg-transparent"
+        aria-label={`Trim end of ${track.name}`}
+        className="absolute right-0 top-0 z-10 h-full w-2.5 cursor-ew-resize rounded-r-clip bg-transparent hover:bg-white/15 focus-visible:bg-white/25"
         onPointerDown={onTrimOut}
       />
     </div>
@@ -569,7 +701,7 @@ function AutomationLine({
       viewBox={`0 0 ${width} 44`}
       preserveAspectRatio="none"
     >
-      <path d={d} fill="none" stroke="#8DEBFF" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.85" />
+      <path d={d} fill="none" stroke="var(--ice-blue)" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.85" />
     </svg>
   )
 }
