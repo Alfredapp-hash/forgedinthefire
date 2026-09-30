@@ -1,4 +1,5 @@
 import type { PodcastChapter, PodcastEpisode } from '@/lib/studio/types'
+import { finalCutCheck, protectedWordsCheck, transcriptReviewCheck, type SafetyColumns } from '@/lib/podcast/safety/checklist'
 
 /**
  * Podcast feed-compliance checks. Enforced in the publish path (episodes route)
@@ -11,6 +12,12 @@ import type { PodcastChapter, PodcastEpisode } from '@/lib/studio/types'
  *  - <itunes:duration> must be > 0
  *  - cover art must be a square JPEG/PNG >= 1400x1400 (up to 3000x3000)
  *  - chapters (podcast:chapters / psc:chapters) must be well-formed
+ *
+ * Survivor-safety items (20260924000002_podcast_ai_safety.sql, lib/podcast/safety/checklist.ts)
+ * are folded in when the episode row carries those columns: a guest episode cannot publish
+ * until the guest approved this exact audio file, protected terms were reviewed, and the
+ * transcript was read. The database trigger `podcast_require_guest_approval` mirrors these so
+ * no other path can bypass them.
  */
 
 export type ComplianceCheck = {
@@ -20,6 +27,8 @@ export type ComplianceCheck = {
   detail?: string
   /** true → blocks publish; false → advisory only */
   required: boolean
+  /** Plain-language next step for a non-technical host (safety items). */
+  fix?: string
 }
 
 export type ComplianceResult = {
@@ -35,7 +44,56 @@ export type CompliancePayload = Omit<
     'title' | 'audio_url' | 'audio_mime' | 'duration_seconds' | 'file_size' | 'cover_url' | 'chapters' | 'summary'
   >,
   'chapters'
-> & { chapters: PodcastChapter[] | null | undefined }
+> & { chapters: PodcastChapter[] | null | undefined } & SafetyColumns & {
+    /** A named guest makes the safety sign-offs required. */
+    guest_name?: string | null
+    /** Set when a guest withdraws or raises a concern (guest v2 migration). */
+    guest_review_required?: boolean | null
+  }
+
+/** A guest is on the episode when named or flagged for review. */
+export function complianceHasGuest(ep: Pick<CompliancePayload, 'guest_name' | 'guest_review_required'>) {
+  return Boolean((ep.guest_name || '').trim()) || Boolean(ep.guest_review_required)
+}
+
+/**
+ * Survivor-safety checks, only when the row carries the safety columns (so partial payloads
+ * and pre-migration databases are unaffected). Guest episodes: final-cut approval and the
+ * protected-terms review block; the transcript review blocks for guests, advises otherwise.
+ */
+export function safetyComplianceChecks(ep: CompliancePayload): ComplianceCheck[] {
+  const migrated = 'guest_final_cut_approved' in ep || 'protected_words_reviewed_at' in ep
+  if (!migrated) return []
+  const hasGuest = complianceHasGuest(ep)
+  const out: ComplianceCheck[] = []
+  if (ep.guest_review_required) {
+    out.push({
+      id: 'guest_review_required',
+      label: 'Guest review required',
+      ok: false,
+      required: true,
+      detail: 'Flagged after a guest raised a concern',
+      fix: 'This episode was flagged for review after a guest raised a concern. Resolve it with the guest before release.',
+    })
+  }
+  if (hasGuest) {
+    for (const c of [finalCutCheck(ep), protectedWordsCheck(ep)]) {
+      out.push({ id: c.id, label: c.label, ok: c.level === 'ok', required: true, detail: c.level === 'ok' ? c.detail : c.fix, fix: c.fix })
+    }
+  }
+  const review = transcriptReviewCheck(ep, hasGuest)
+  if (review) {
+    out.push({
+      id: review.id,
+      label: review.label,
+      ok: review.level === 'ok',
+      required: review.level === 'block',
+      detail: review.level === 'ok' ? review.detail : review.fix,
+      fix: review.fix,
+    })
+  }
+  return out
+}
 
 const AUDIO_MIME_ALLOW = new Set([
   'audio/mpeg',
@@ -139,6 +197,8 @@ export function checkFeedCompliance(ep: CompliancePayload): ComplianceResult {
     detail: ep.cover_url ? undefined : 'Apple/Spotify require square art >= 1400x1400',
     required: true,
   })
+
+  checks.push(...safetyComplianceChecks(ep))
 
   const blockers = checks.filter((c) => c.required && !c.ok)
   return { ok: blockers.length === 0, checks, blockers }
