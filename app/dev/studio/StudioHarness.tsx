@@ -86,7 +86,7 @@ export function StudioHarness({ episodeId, mode }: { episodeId: string; mode: St
 
   if (mode === 'editor') {
     return (
-      <main className="mx-auto max-w-7xl p-4" data-testid="dev-studio" data-mode="editor">
+      <div className="mx-auto max-w-7xl p-4" data-testid="dev-studio" data-mode="editor">
         <PodcastAudioEditor
           episodeId={episodeId}
           audioUrl={null}
@@ -113,12 +113,12 @@ export function StudioHarness({ episodeId, mode }: { episodeId: string; mode: St
             e2eRecord('chapter', seconds)
           }}
         />
-      </main>
+      </div>
     )
   }
 
   return (
-    <main className="admin-portal mx-auto max-w-7xl p-4" data-testid="dev-studio" data-mode="studio" style={{ colorScheme: 'dark' }}>
+    <div className="admin-portal mx-auto max-w-7xl p-4" data-testid="dev-studio" data-mode="studio" style={{ colorScheme: 'dark' }}>
       <RecordingStudio
         episodes={episodes}
         topics={FAKE_TOPICS}
@@ -132,6 +132,6 @@ export function StudioHarness({ episodeId, mode }: { episodeId: string; mode: St
           setEpisodes(next)
         }}
       />
-    </main>
+    </div>
   )
 }

@@ -44,7 +44,7 @@ export function LiveHarness() {
   }, [])
 
   return (
-    <main className="mx-auto max-w-7xl p-4 text-white" data-testid="dev-live" data-state={state}>
+    <div className="mx-auto max-w-7xl p-4 text-white" data-testid="dev-live" data-state={state}>
       {state === 'loading' && <p className="studio-type-body text-silver">Loading live control room…</p>}
       {state === 'missing' && (
         <section role="status" className="rounded-panel border border-divider bg-surface p-6">
@@ -58,6 +58,6 @@ export function LiveHarness() {
         </section>
       )}
       {state === 'ready' && Room && <Room episodes={EPISODES} />}
-    </main>
+    </div>
   )
 }
