@@ -16,8 +16,11 @@ export const studio = {
   root: (page: Page) => page.getByTestId('dev-studio'),
   /** Stage bar: "1 Plan · 2 Record · 3 Edit · 4 Publish" (components/podcast/studio-stage-bar.tsx). */
   stageNav: (page: Page) => page.getByRole('navigation', { name: /studio stages|production steps/i }),
+  /** Stage buttons carry a stable aria-label ("Record — step 2") regardless of done/active state. */
   stageButton: (page: Page, stage: 'Plan' | 'Record' | 'Edit' | 'Publish') =>
-    studio.stageNav(page).getByRole('button', { name: new RegExp(`${stage}$`, 'i') }),
+    studio.stageNav(page).getByRole('button', { name: new RegExp(`^${stage}\\b`, 'i') }),
+  /** Persistent "Advanced" toggle in the editor header (aria-pressed reflects the state). */
+  advancedToggle: (page: Page) => page.getByRole('button', { name: /^advanced/i }),
   dismissTip: (page: Page) => page.getByRole('button', { name: /dismiss tip|got it/i }),
   /** Editor header ("Podcast production room") — proves PodcastAudioEditor mounted. */
   editorHeading: (page: Page) => page.getByText(/podcast production room/i).first(),
@@ -35,9 +38,14 @@ export const studio = {
   playMix: (page: Page) => page.getByRole('button', { name: /^play mix$/i }),
   pause: (page: Page) => page.getByRole('button', { name: /^pause$/i }),
   back5: (page: Page) => page.getByRole('button', { name: /back 5 seconds/i }),
-  undo: (page: Page) => page.getByRole('button', { name: /^undo$/i }),
-  /** "Playhead 0:04 · export 0:00 – 0:03" footer line under the timeline. */
-  exportRangeLine: (page: Page) => page.getByText(/export \d+:\d\d\s*[–-]\s*\d+:\d\d/i).first(),
+  undo: (page: Page) => page.getByRole('button', { name: /^undo/i }),
+  redo: (page: Page) => page.getByRole('button', { name: /^redo/i }),
+  /** Per-person timeline scroller (role=region). Focus it so single-letter shortcuts fire. */
+  timeline: (page: Page) => page.getByRole('region', { name: /^timeline/i }).first(),
+  /** "Record your first take" empty state (Record + Edit stages before any audio). */
+  firstTakeEmptyState: (page: Page) => page.getByText(/record your first take/i).first(),
+  /** "Playhead 0:04 · export Whole episode · 0:03 (3 seconds)" heading over the session overview. */
+  exportRangeLine: (page: Page) => page.getByText(/export (whole episode|selection only) · \d+:\d\d/i).first(),
   /** "0:04 / 0:03" — playhead / session length in the editor header. */
   clock: (page: Page) => page.getByText(/^\d+:\d\d \/ \d+:\d\d$/).first(),
 
@@ -45,14 +53,16 @@ export const studio = {
   exportEpisode: (page: Page) => page.getByRole('button', { name: /^export episode \(/i }),
   exportWav: (page: Page) => page.getByRole('button', { name: /audio only: wav|save as wav/i }),
   exportMp3: (page: Page) => page.getByRole('button', { name: /audio only: mp3/i }),
+  /** Under Advanced (see advancedToggle). */
   stemsZip: (page: Page) => page.getByRole('button', { name: /download stems zip/i }),
   publishNow: (page: Page) => page.getByRole('button', { name: /^(publish now|live)$/i }),
   publishBlocked: (page: Page) => page.getByText(/publish blocked/i).first(),
   episodeStatus: (page: Page) => page.getByRole('combobox', { name: /episode status/i }),
 
   // --- Recovery ---
-  recoverBanner: (page: Page) => page.getByText(/recover \d+ take/i),
-  restore: (page: Page) => page.getByRole('button', { name: /^restore$/i }),
+  /** RecoveryBanner: "1 take (0:02) were saved … on this computer" / "We found 1 unfinished recording". */
+  recoverBanner: (page: Page) => page.getByText(/\d+ takes? .*were saved|unfinished recording/i).first(),
+  restore: (page: Page) => page.getByRole('button', { name: /^restore (session|recording)/i }),
 }
 
 export const guest = {

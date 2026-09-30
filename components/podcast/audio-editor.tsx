@@ -153,6 +153,7 @@ import { fetchGuestTakeBlob } from '@/lib/podcast/upload/guest-take-client'
 import { isRemoteLaneKey, remoteLaneKey } from '@/lib/podcast/rooms/layout'
 import { RecordingBooth, type BoothParticipant } from '@/components/podcast/recording-booth'
 import { ShortcutsHelpModal } from '@/components/podcast/shortcuts-help-modal'
+import { STUDIO_HOW_IT_WORKS } from '@/lib/podcast/shortcuts'
 import { RecoveryBanner } from '@/components/podcast/studio/recovery-banner'
 import type { GuestTallyPhase } from '@/lib/podcast/guest-types'
 import { CameraClipReview, CameraLane } from '@/components/podcast/camera-lane'
@@ -224,6 +225,7 @@ import {
   Pause,
   Play,
   Plus,
+  Redo2,
   Repeat,
   Scissors,
   SkipBack,
@@ -267,6 +269,38 @@ type Props = {
   onGoToStage?: (stage: StudioStage) => void
   /** Episode status; 'published' makes "replace the episode audio" a stronger confirm. */
   episodeStatus?: string | null
+  /** Fires when unsaved timeline edits appear/clear, so the host shell can warn before navigating away. */
+  onDirtyChange?: (dirty: boolean) => void
+}
+
+const ADVANCED_KEY = 'studio-advanced-tools'
+
+/** Advanced-tools preference, remembered per browser. Storage failures fall back to simple mode. */
+function readAdvancedPref(): boolean {
+  try {
+    return window.localStorage.getItem(ADVANCED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+function writeAdvancedPref(value: boolean) {
+  try {
+    window.localStorage.setItem(ADVANCED_KEY, value ? '1' : '0')
+  } catch {
+    /* ignore storage failures */
+  }
+}
+
+/** True when a single-letter shortcut may fire: nothing focused, or focus is inside the
+ *  studio but not on a control (so a slip while a chip button is focused never records or cuts). */
+function shortcutTargetOk(target: EventTarget | null, root: HTMLElement | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el || el === document.body || el === document.documentElement) return true
+  const tag = el.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'A') return false
+  if (el.isContentEditable) return false
+  if (el.closest('button, a, input, select, textarea, [role="dialog"]')) return false
+  return Boolean(root && root.contains(el))
 }
 
 type Snapshot = {
@@ -300,7 +334,7 @@ function snapshotTracks(tracks: StudioTrack[]): StudioTrack[] {
   }))
 }
 
-export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage, onGoToStage, episodeStatus }: Props) {
+export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage, onGoToStage, episodeStatus, onDirtyChange }: Props) {
   // Stage gating. `stage == null` keeps legacy behavior (show everything). These
   // are presentational only — nothing below unmounts on a stage switch, so a live
   // recording, its checkpoints, and all editor state persist across stages.
@@ -335,8 +369,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   /** Live mirror of the full clip selection for the keydown handler (no re-subscribe). */
   const selectionClipIdsRef = useRef<Set<string>>(new Set())
   const [busy, setBusy] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [ok, setOk] = useState<string | null>(null)
+  const [error, setErrorText] = useState<string | null>(null)
+  const [ok, setOkText] = useState<string | null>(null)
   const [applied, setApplied] = useState<EffectId[]>([])
   const [meter, setMeter] = useState<{ peak: number; rms: number } | null>(null)
   const [loop, setLoop] = useState(false)
@@ -450,6 +484,24 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   /** Progressive disclosure for the lane "smart controls": keeps the default
    *  edit view calm (Split only) and reveals the advanced tool sections on demand. */
   const [smartControlsOpen, setSmartControlsOpen] = useState(false)
+  /** Simple by default: a first-time host sees lanes, transport, split/ripple/undo, volume,
+   *  fade, best take, clean-up and export. Everything else sits one click away under
+   *  Advanced (remembered per browser). Nothing is removed. */
+  const [advanced, setAdvanced] = useState(false)
+  useEffect(() => {
+    setAdvanced(readAdvancedPref())
+  }, [])
+  const toggleAdvanced = useCallback(() => {
+    setAdvanced((v) => {
+      writeAdvancedPref(!v)
+      return !v
+    })
+  }, [])
+  /** Editor root — the scope for single-letter keyboard shortcuts. */
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  /** Redo stack: filled by undo, cleared by the next new edit. */
+  const redoRef = useRef<Snapshot[]>([])
+  const [redoLen, setRedoLen] = useState(0)
 
   const selected = useMemo(
     () => tracks.find((t) => t.id === selectedId) || tracks[0] || null,
@@ -485,20 +537,34 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setPlayhead(next)
   }, [])
 
-  // Feedback: route through the studio toast, and mirror into the legacy inline
-  // error/ok line so there is always a persistent record + an accessible
-  // live-region fallback. Success clears any stale error; error clears stale ok.
+  // Feedback: every ok/error goes through the mounted studio Toaster (aria-live) AND the
+  // inline status/alert line under the transport, so nothing lands silently below the fold.
+  // Success clears any stale error; error clears stale ok.
+  const setOk = useCallback((message: string | null) => {
+    setOkText(message)
+    if (message) {
+      setErrorText(null)
+      toast({ title: message, tone: 'success' })
+    }
+  }, [])
+  const setError = useCallback((message: string | null) => {
+    setErrorText(message)
+    if (message) {
+      setOkText(null)
+      toast({ title: message, tone: 'error' })
+    }
+  }, [])
   const notifyOk = useCallback(
     (title: string, opts?: { description?: string; action?: { label: string; onClick: () => void } }) => {
-      setError(null)
-      setOk(opts?.description ? `${title} — ${opts.description}` : title)
+      setErrorText(null)
+      setOkText(opts?.description ? `${title} — ${opts.description}` : title)
       toast({ title, description: opts?.description, tone: 'success', action: opts?.action })
     },
     [],
   )
   const notifyError = useCallback((title: string, description?: string) => {
-    setOk(null)
-    setError(description ? `${title} — ${description}` : title)
+    setOkText(null)
+    setErrorText(description ? `${title} — ${description}` : title)
     toast({ title, description, tone: 'error' })
   }, [])
 
@@ -515,6 +581,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
     if (tracks.some((t) => t.buffer) || cameraClips.length > 0) setDirty(true)
   }, [tracks, cameraClips])
+  useEffect(() => {
+    onDirtyChange?.(dirty)
+  }, [dirty, onDirtyChange])
 
   const publishGuestCue = useCallback((handle: CueHandle | null) => {
     setGuestCueStream(handle?.stream ?? null)
@@ -539,6 +608,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     })
     if (historyRef.current.length > 20) historyRef.current.shift()
     setHistoryLen(historyRef.current.length)
+    // A fresh edit invalidates the redo branch.
+    redoRef.current = []
+    setRedoLen(0)
   }, [tracks, cameraClips, switchEdl, selectedId, selectedCamClipId])
 
   const onRemoteGuestStream = useCallback((stream: MediaStream | null) => {
@@ -1100,10 +1172,18 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     const onKey = (event: KeyboardEvent) => {
       const tag = (event.target as HTMLElement | null)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if ((event.target as HTMLElement | null)?.isContentEditable) return
       // Shift+/ (?) opens the keyboard-shortcuts help. Guarded above against typing.
       if (event.key === '?') {
         event.preventDefault()
         setHelpOpen(true)
+        return
+      }
+      // Cmd/Ctrl+Z undoes, Shift+Cmd/Ctrl+Z (or Cmd/Ctrl+Y) redoes — from anywhere but a field.
+      if ((event.metaKey || event.ctrlKey) && (event.key === 'z' || event.key === 'Z' || event.key === 'y' || event.key === 'Y')) {
+        event.preventDefault()
+        if (event.key === 'y' || event.key === 'Y' || event.shiftKey) void redo()
+        else void undo()
         return
       }
       // Cmd/Ctrl +/-/0 drive the timeline zoom (0 = Fit). Guarded against typing above.
@@ -1124,6 +1204,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           return
         }
       }
+      // Single-letter shortcuts only fire with nothing focused or with the timeline /
+      // studio surface focused — never while a button or link has focus (a slip there
+      // used to record or cut a hole).
+      if (!shortcutTargetOk(event.target, rootRef.current)) return
       if (event.code === 'Space') {
         event.preventDefault()
         if (!recording) void togglePlay()
@@ -1191,7 +1275,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recording, tracks, recMode, preroll, cueEnabled, selectedId, playing])
+  }, [recording, tracks, cameraClips, switchEdl, recMode, preroll, cueEnabled, selectedId, selectedCamClipId, playing])
 
   function setBound(which: 'start' | 'end') {
     const t = playheadRef.current
@@ -1272,23 +1356,49 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     playRafRef.current = requestAnimationFrame(tick)
   }
 
-  async function undo() {
-    const prev = historyRef.current.pop()
-    setHistoryLen(historyRef.current.length)
-    if (!prev) return
+  function currentSnapshot(): Snapshot {
+    return {
+      tracks: snapshotTracks(tracks),
+      cameras: cameraClips.map((c) => ({ ...c })),
+      switchEdl: switchEdl.map((e) => ({ ...e })),
+      selectedId,
+      selectedCamClipId,
+    }
+  }
+
+  function applySnapshot(snap: Snapshot) {
     tracks.forEach((t) => revokeUrl(t.url))
     setTracks(
-      prev.tracks.map((t) => ({
+      snap.tracks.map((t) => ({
         ...t,
         url: t.buffer ? bufferToUrl(t.buffer) : null,
       })),
     )
-    setCameraClips(prev.cameras.map((c) => normalizeCameraClip({ ...c })))
-    setSwitchEdl(prev.switchEdl || [])
-    setSelectedId(prev.selectedId)
-    setSelectedCamClipId(prev.selectedCamClipId)
+    setCameraClips(snap.cameras.map((c) => normalizeCameraClip({ ...c })))
+    setSwitchEdl(snap.switchEdl || [])
+    setSelectedId(snap.selectedId)
+    setSelectedCamClipId(snap.selectedCamClipId)
     setApplied([])
+  }
+
+  async function undo() {
+    const prev = historyRef.current.pop()
+    setHistoryLen(historyRef.current.length)
+    if (!prev) return
+    redoRef.current.push(currentSnapshot())
+    setRedoLen(redoRef.current.length)
+    applySnapshot(prev)
     setOk('Undid last change')
+  }
+
+  async function redo() {
+    const next = redoRef.current.pop()
+    setRedoLen(redoRef.current.length)
+    if (!next) return
+    historyRef.current.push(currentSnapshot())
+    setHistoryLen(historyRef.current.length)
+    applySnapshot(next)
+    setOk('Redid change')
   }
 
   async function restoreSavedSession() {
@@ -2218,10 +2328,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           if (decoded.length > 0) {
             setOk(
               decoded.length > 1
-                ? `Host + Guest takes at ${formatClock(punch)} — two mics, one punch${autoMuteQuiet ? ' · quieter mic ducks while the other talks' : ''}${voiceIsolate ? ' · isolate on the insert rack' : ''}${camNote}`
+                ? `Host + Guest takes at ${formatClock(punch)} — two mics, one button${autoMuteQuiet ? ' · quieter mic ducks while the other talks' : ''}${voiceIsolate ? ' · voice clean-up on' : ''}${camNote}`
                 : decoded[0]?.sharedNames.length > 1
                   ? `Shared mic — ${decoded[0].sharedNames.join(' + ')} on one take at ${formatClock(punch)}${camNote}`
-                  : `Take at ${formatClock(punch)}${camNote}`,
+                  : `Take at ${formatClock(punch)} — it is on the timeline below${camNote}`,
             )
           } else if (laidCams.length) {
             setOk(`Camera file at ${formatClock(punch)}${camNote}`)
@@ -2263,15 +2373,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           .filter((p): p is { id: string; stream: MediaStream } => Boolean(p.stream)),
       )
       const camCount = cameraCapturesRef.current.length
-      const punchKind = captures.some((c) => c.capture.kind === 'worklet')
-        ? ' · AudioWorklet punch'
-        : ' · MediaRecorder punch'
       setOk(
-        `● REC ${recLabel} at ${formatClock(punch)}${cueEnabled ? ' · mix in headphones' : ''}${
+        `Recording ${recLabel} from ${formatClock(punch)}${cueEnabled ? ' · mix in headphones' : ''}${
           cueToGuestRef.current ? ' · cue to guest' : ''
-        }${
-          camCount ? ` · ${camCount} camera${camCount === 1 ? '' : 's'}` : ''
-        }${punchKind}`,
+        }${camCount ? ` · ${camCount} camera${camCount === 1 ? '' : 's'}` : ''}`,
       )
     } catch (err) {
       finishRecCleanup()
@@ -3289,9 +3394,56 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     notifyOk(label)
   }
 
+  /** Simple view hides empty take slots: only takes with audio, the armed slot, and the
+   *  selected one show. Advanced shows every slot. Recording is never affected — the
+   *  hidden slots still exist and fill in the moment audio lands on them. */
+  const visibleTrackIds = useMemo(() => {
+    if (advanced) return new Set(tracks.map((t) => t.id))
+    const ids = new Set<string>()
+    for (const t of tracks) if (t.buffer || t.armed || t.id === selectedId) ids.add(t.id)
+    // A person with nothing yet still gets their first slot so the lane is visible.
+    for (const person of people) {
+      if (tracks.some((t) => t.personId === person.id && ids.has(t.id))) continue
+      const first = tracks.filter((t) => t.personId === person.id).sort((a, b) => a.take - b.take)[0]
+      if (first && person.kind === 'voice') ids.add(first.id)
+    }
+    return ids
+  }, [advanced, tracks, people, selectedId])
+  const visibleTracks = useMemo(
+    () => (advanced ? tracks : tracks.filter((t) => visibleTrackIds.has(t.id))),
+    [advanced, tracks, visibleTrackIds],
+  )
+  /** Beds / SFX lanes with nothing on them stay out of the simple view. */
+  const visiblePeople = useMemo(
+    () =>
+      advanced ? people : people.filter((p) => p.kind === 'voice' || visibleTracks.some((t) => t.personId === p.id)),
+    [advanced, people, visibleTracks],
+  )
+
+  function voiceCleanupOn(track: StudioTrack) {
+    const ids = new Set((track.inserts || []).filter((slot) => !slot.bypass).map((slot) => slot.id))
+    return VOICE_CLEANUP_INSERTS.every((slot) => ids.has(slot.id))
+  }
+  /** One-click voice clean-up: the same non-destructive inserts Record applies (high-pass + RNNoise). */
+  function toggleVoiceCleanup(trackId: string) {
+    const track = tracks.find((t) => t.id === trackId)
+    if (!track?.buffer) return
+    pushHistory()
+    const on = voiceCleanupOn(track)
+    const cleanupIds = new Set(VOICE_CLEANUP_INSERTS.map((slot) => slot.id))
+    const inserts = on
+      ? (track.inserts || []).filter((slot) => !cleanupIds.has(slot.id))
+      : [...VOICE_CLEANUP_INSERTS.map((slot) => ({ ...slot })), ...(track.inserts || []).filter((slot) => !cleanupIds.has(slot.id))]
+    invalidateInsertCache(trackId)
+    updateTrack(trackId, { inserts })
+    notifyOk(on ? `Voice clean-up off · ${track.name}` : `Voice clean-up on · ${track.name}`, {
+      description: on ? undefined : 'Background noise and rumble are reduced on playback and export — the take itself is untouched',
+    })
+  }
+
   const timelineBoard = {
     people,
-    tracks,
+    tracks: visibleTracks,
     playhead,
     pxPerSec: zoom,
     selectedId: selected?.id || null,
@@ -3349,13 +3501,35 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   }
 
   return (
-    <div className="rounded-2xl border border-[#27313B] bg-[#0C141C] overflow-hidden">
+    <div ref={rootRef} className="rounded-2xl border border-[#27313B] bg-[#0C141C] overflow-hidden">
       <div className="px-4 py-3 border-b border-[#27313B] flex flex-wrap items-center justify-between gap-3 bg-[#11161C]">
         <div>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Podcast production room</p>
+          <h2 className="text-[11px] uppercase tracking-[0.18em] text-[#8DEBFF]">Podcast production room</h2>
           <p className="text-sm text-[#B8C4CF]">
-            One lane per person. After the mix puts the guest after the host. Takes autosave on this computer.
+            One lane per person. New takes land after the current mix. Takes autosave on this computer.
           </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Advanced: the one switch between the calm default surface and the full rack.
+              Remembered per browser; nothing is removed, everything is one click away. */}
+          <Button
+            variant={advanced ? 'primary' : 'secondary'}
+            size="compact"
+            aria-pressed={advanced}
+            onClick={toggleAdvanced}
+            title={
+              advanced
+                ? 'Back to the simple view — the full toolset stays one click away'
+                : 'Show every tool: effects, sidechain ducking, pan and timing, sound-effect pad, graphics, stems, calibration'
+            }
+          >
+            <SlidersHorizontal size={14} /> {advanced ? 'Advanced: on' : 'Advanced'}
+          </Button>
+          {!advanced && (
+            <Chip tone="neutral" className="hidden sm:inline-flex" title="Effects, ducking, pan, stems and more live under Advanced">
+              More tools under Advanced
+            </Chip>
+          )}
         </div>
         <div className="text-right text-xs font-mono text-[#A9B8C6] space-y-0.5">
           <p>
@@ -3490,33 +3664,40 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               {ALL_REC_MODES.find((m) => m.value === recMode)?.blurb}
             </p>
           </div>
-          <label className="text-xs text-[#A9B8C6] flex items-center gap-2">
-            Preroll
+          <label
+            className="text-xs text-[#A9B8C6] flex items-center gap-2"
+            title="Lead-in (preroll): the mix plays for this long before recording starts, so you can settle in"
+          >
+            Lead-in
             <select
               className={select}
+              aria-label="Lead-in before recording"
               value={preroll}
               disabled={recording}
               onChange={(e) => setPreroll(Number(e.target.value))}
             >
-              <option value={0}>0s</option>
+              <option value={0}>None</option>
               <option value={1}>1s</option>
               <option value={3}>3s</option>
               <option value={5}>5s</option>
             </select>
           </label>
-          <label className="text-xs text-[#A9B8C6] flex items-center gap-2">
-            Count-in
-            <select
-              className={select}
-              value={countInBeats}
-              disabled={recording}
-              onChange={(e) => setCountInBeats(Number(e.target.value))}
-            >
-              <option value={0}>Off</option>
-              <option value={2}>2</option>
-              <option value={4}>4</option>
-            </select>
-          </label>
+          {advanced && (
+            <label className="text-xs text-[#A9B8C6] flex items-center gap-2" title="Metronome count-in beats before the take">
+              Count-in
+              <select
+                className={select}
+                aria-label="Count-in beats"
+                value={countInBeats}
+                disabled={recording}
+                onChange={(e) => setCountInBeats(Number(e.target.value))}
+              >
+                <option value={0}>Off</option>
+                <option value={2}>2</option>
+                <option value={4}>4</option>
+              </select>
+            </label>
+          )}
           </div>
           )}
           {/* Playback transport — shared by record (monitoring) and edit (review takes).
@@ -3564,15 +3745,19 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           >
             <SkipForward />
           </IconButton>
-          <Button variant="secondary" size="dense" className="shrink-0" disabled={!ready} onClick={() => setBound('start')}>
-            In
-          </Button>
-          <Button variant="secondary" size="dense" className="shrink-0" disabled={!ready} onClick={() => setBound('end')}>
-            Out
-          </Button>
+          {advanced && (
+            <>
+              <Button variant="secondary" size="dense" className="shrink-0" disabled={!ready} title="Selection start at the playhead" onClick={() => setBound('start')}>
+                In
+              </Button>
+              <Button variant="secondary" size="dense" className="shrink-0" disabled={!ready} title="Selection end at the playhead" onClick={() => setBound('end')}>
+                Out
+              </Button>
+            </>
+          )}
           <IconButton
-            aria-label="Undo"
-            title="Undo"
+            aria-label="Undo (Cmd/Ctrl Z)"
+            title="Undo (Cmd/Ctrl Z)"
             variant="secondary"
             className="shrink-0"
             disabled={historyLen === 0}
@@ -3580,7 +3765,17 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           >
             <Undo2 />
           </IconButton>
-          {showEdit && (
+          <IconButton
+            aria-label="Redo (Shift Cmd/Ctrl Z)"
+            title="Redo (Shift Cmd/Ctrl Z)"
+            variant="secondary"
+            className="shrink-0"
+            disabled={redoLen === 0}
+            onClick={() => void redo()}
+          >
+            <Redo2 />
+          </IconButton>
+          {showEdit && advanced && (
           <>
           <label className={btn + ' shrink-0 cursor-pointer'}>
             Import → selected
@@ -3602,9 +3797,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </label>
           </>
           )}
+          {advanced && (
           <IconButton
-            aria-label="Loop region"
-            title="Loop region"
+            aria-label="Loop the selection"
+            title="Loop the selection"
             variant={loop ? 'primary' : 'secondary'}
             active={loop}
             className="shrink-0"
@@ -3612,6 +3808,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           >
             <Repeat />
           </IconButton>
+          )}
           {/* Zoom cluster: − / Fit / + (also Cmd/Ctrl −, 0, +). */}
           <div className="inline-flex items-center gap-1 shrink-0 rounded-control border border-divider bg-surface-raised px-1">
             <IconButton
@@ -3639,7 +3836,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               <Plus />
             </IconButton>
           </div>
-          {showEdit && (
+          {showEdit && advanced && (
             <Button
               variant={snap ? 'primary' : 'secondary'}
               size="dense"
@@ -3690,12 +3887,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               </Button>
             </div>
           )}
-          {showRecord && (
+          {showRecord && advanced && (
           <>
           <Button
             variant={metronome ? 'primary' : 'secondary'}
             size="compact"
             className="shrink-0"
+            aria-pressed={metronome}
             onClick={() => setMetronome((v) => !v)}
           >
             Metronome
@@ -3705,6 +3903,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               BPM
               <input
                 type="number"
+                aria-label="Metronome tempo (BPM)"
                 min={40}
                 max={200}
                 value={bpm}
@@ -3723,7 +3922,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             title="Keyboard shortcuts (press ?)"
             aria-label="Show keyboard shortcuts"
           >
-            <span aria-hidden="true">?</span> Shortcuts
+            <span aria-hidden="true">?</span> Help &amp; shortcuts
           </Button>
           </div>
           </div>
@@ -3844,9 +4043,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           ) : (
             <div className="flex shrink-0 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[#27313B] bg-[#0B0F14] px-6 py-8 text-center">
               <VideoOff size={20} className="text-[#4A5A68]" />
-              <p className="max-w-[220px] text-xs text-[#7C8B97]">
-                No camera yet — recording &amp; playback video appears here once a camera is on or a
-                take has picture.
+              <p className="max-w-[220px] text-xs text-[#9AABBA]">
+                No camera yet. Turn one on to see yourself here — Record then also saves a video file
+                on this computer alongside the audio.
               </p>
               <button
                 type="button"
@@ -3860,6 +4059,19 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             </div>
           )}
         </div>
+        )}
+
+        {/* Inline feedback — an accessible live region right under the transport (the toast
+            mirrors it). Success clears an error and vice versa. */}
+        {error && (
+          <p className="text-sm text-[#FF8FA3]" role="alert">
+            {error}
+          </p>
+        )}
+        {ok && !error && (
+          <p className="text-sm text-[#8DEBFF]" role="status">
+            {ok}
+          </p>
         )}
 
         {showRecord && (
@@ -3918,15 +4130,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 ? ' Camera is preview (720p). Record still leaks if speakers are on.'
                 : ''}
             </span>
-            <label className="inline-flex items-center gap-1.5">
+            <label className="inline-flex items-center gap-1.5" title="Cue mix: the other lanes play in your headphones while you record">
               <input type="checkbox" checked={cueEnabled} onChange={(e) => setCueEnabled(e.target.checked)} />
-              Play mix while recording
+              Hear the mix in headphones
             </label>
-            {cueEnabled && (
-              <label className="inline-flex items-center gap-2">
-                Cue {cueGain.toFixed(2)}
+            {cueEnabled && advanced && (
+              <label className="inline-flex items-center gap-2" title="Cue level (how loud the mix is in your headphones)">
+                Headphone level {Math.round(cueGain * 100)}%
                 <input
                   type="range"
+                  aria-label="Headphone mix level"
                   min={0}
                   max={1}
                   step={0.05}
@@ -3936,41 +4149,45 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 />
               </label>
             )}
-            <label className="inline-flex items-center gap-1.5">
-              <input type="checkbox" checked={replaceArmed} onChange={(e) => setReplaceArmed(e.target.checked)} />
-              Replace armed clip
-            </label>
-            <label className="inline-flex items-center gap-1.5">
-              <input type="checkbox" checked={rawInput} onChange={(e) => setRawInput(e.target.checked)} />
-              Raw input (no Chrome AGC)
-            </label>
-            <label className="inline-flex items-center gap-1.5">
-              <input type="checkbox" checked={autoMuteQuiet} onChange={(e) => setAutoMuteQuiet(e.target.checked)} />
-              Auto-duck quieter mic
-            </label>
-            <label className="inline-flex items-center gap-1.5">
+            <label className="inline-flex items-center gap-1.5" title="Voice clean-up (RNNoise noise removal) on every new voice take">
               <input type="checkbox" checked={voiceIsolate} onChange={(e) => setVoiceIsolate(e.target.checked)} />
-              Isolate (RNNoise)
+              Voice clean-up
             </label>
-            {mics.length > 0 && (
-              <label className="inline-flex items-center gap-2">
-                Fallback mic
-                <select className={select} value={micId} onChange={(e) => setMicId(e.target.value)}>
-                  <option value="">Default</option>
-                  {mics.map((mic) => (
-                    <option key={mic.deviceId} value={mic.deviceId}>
-                      {mic.label || 'Microphone'}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <button type="button" className={btn} onClick={armHostAndGuest}>
+            <button type="button" className={btn} onClick={armHostAndGuest} title="Arm one take for the host and one for the guest">
               Arm Host + Guest
             </button>
-            <button type="button" className={btn} onClick={followTalkerNow}>
-              Follow talker
-            </button>
+            {advanced && (
+              <>
+                <label className="inline-flex items-center gap-1.5" title="Record over the armed take instead of onto a new one">
+                  <input type="checkbox" checked={replaceArmed} onChange={(e) => setReplaceArmed(e.target.checked)} />
+                  Record over the armed take
+                </label>
+                <label className="inline-flex items-center gap-1.5" title="Raw input: no automatic gain, echo cancellation or noise suppression from the browser (Chrome AGC off)">
+                  <input type="checkbox" checked={rawInput} onChange={(e) => setRawInput(e.target.checked)} />
+                  Mic processing: off
+                </label>
+                <label className="inline-flex items-center gap-1.5" title="With two mics, the quieter one is lowered (never hard-muted) while the other person talks">
+                  <input type="checkbox" checked={autoMuteQuiet} onChange={(e) => setAutoMuteQuiet(e.target.checked)} />
+                  Auto-duck the quieter mic
+                </label>
+                {mics.length > 0 && (
+                  <label className="inline-flex items-center gap-2" title="Fallback mic: used by anyone without their own microphone picked">
+                    Fallback mic
+                    <select className={select} aria-label="Fallback microphone" value={micId} onChange={(e) => setMicId(e.target.value)}>
+                      <option value="">Default</option>
+                      {mics.map((mic) => (
+                        <option key={mic.deviceId} value={mic.deviceId}>
+                          {mic.label || 'Microphone'}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <button type="button" className={btn} onClick={followTalkerNow} title="Follow talker: write volume automation so the mix follows whoever is talking">
+                  Auto-switch to who’s talking
+                </button>
+              </>
+            )}
           </div>
           {(recording || anyArmed) && (
             <div className="space-y-1.5">
@@ -3979,8 +4196,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               </LiveStoreContext.Provider>
             </div>
           )}
+          <HowThisWorks topics={['Recording', 'Two mics, one button']} />
           {recHint && (
-            <p className="text-[11px] text-[#7C8B97]">
+            <p className="text-[11px] text-[#9AABBA]">
               {recHint}
               {personIdsArmed > 1
                 ? remoteGuest
@@ -3988,8 +4206,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   : armedDeviceCount > 1
                     ? ' Two mics, one punch — quieter lane ducks (never hard-mutes) while the other person talks. Both recordings keep rolling.'
                     : ' Shared mic — Host and Guest record onto one take.'
-                : ''}{' '}
-              Space / L plays. J / K / L is the playhead. R records. S splits audio. V splits picture. Delete cuts a hole. 1–0 drops SFX. C marks a chapter.
+                : ''}
             </p>
           )}
         </div>
@@ -3998,28 +4215,33 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
         {showEdit && (
         <>
-        <Panel elevation="flat" className="px-3 py-2.5 space-y-2.5">
+        <Panel elevation="flat" className="px-3 py-2.5 space-y-2.5" aria-labelledby="studio-selection-tools">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="studio-type-label text-ice">Lane tools — same track</p>
+            <h3 id="studio-selection-tools" className="studio-type-label text-ice">Selection tools</h3>
             <div className="flex flex-wrap items-center gap-3">
-              <label className="studio-type-label inline-flex items-center gap-1.5 normal-case tracking-normal text-[#A9B8C6]">
-                <input type="checkbox" checked={applyRangeAll} onChange={(e) => setApplyRangeAll(e.target.checked)} />
-                Apply range to every track
-              </label>
+              {advanced && (
+                <label className="studio-type-label inline-flex items-center gap-1.5 normal-case tracking-normal text-[#A9B8C6]">
+                  <input type="checkbox" checked={applyRangeAll} onChange={(e) => setApplyRangeAll(e.target.checked)} />
+                  Apply to every track
+                </label>
+              )}
               {/* Progressive disclosure — the default view is calm (Split only). */}
-              <Button
-                variant={smartControlsOpen ? 'primary' : 'ghost'}
-                size="dense"
-                aria-expanded={smartControlsOpen}
-                onClick={() => setSmartControlsOpen((v) => !v)}
-                title="Reveal the advanced lane tools (volume, timing, trim, clips)"
-              >
-                <SlidersHorizontal size={13} /> {smartControlsOpen ? 'Hide tools' : 'Smart controls'}
-              </Button>
+              {advanced && (
+                <Button
+                  variant={smartControlsOpen ? 'primary' : 'ghost'}
+                  size="dense"
+                  aria-expanded={smartControlsOpen}
+                  onClick={() => setSmartControlsOpen((v) => !v)}
+                  title="Reveal the lane tools (section volume, ducking, timing, trim, clips)"
+                >
+                  <SlidersHorizontal size={13} /> {smartControlsOpen ? 'Fewer tools' : 'More tools'}
+                </Button>
+              )}
             </div>
           </div>
-          <p className="studio-type-label normal-case tracking-normal text-[#7C8B97]">
-            Drag on that person's tracks (under their mixer) to select a section. Duck a bed, or Comp a voice take for that range (take 2 for the flub, take 1 for the rest). S splits. Delete cuts a hole.
+          <p className="studio-type-label normal-case tracking-normal text-[#9AABBA]">
+            Click a take to select it, drag across it to select a section. Split cuts at the playhead; Remove
+            selection takes the section out and closes the gap.
           </p>
           {/* Split stays prominent as the primary in-lane action. */}
           <div className="flex flex-wrap items-center gap-2">
@@ -4027,6 +4249,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               variant="primary"
               size="compact"
               disabled={!selected?.buffer}
+              title="Split the selected take at the playhead (S)"
               onClick={() => {
                 if (!selected) return
                 pushHistory()
@@ -4039,13 +4262,45 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             <Button
               variant="secondary"
               size="compact"
-              disabled={!selected?.buffer}
-              onClick={() => editRange((t) => splitRange(t, rangeRef.current.start, rangeRef.current.end), 'Split at selection edges')}
+              disabled={!selected?.buffer || !hasSelection}
+              title={
+                applyRangeAll
+                  ? 'Ripple delete: remove the selection from every lane and the picture, then close the gap (Shift+Delete)'
+                  : 'Ripple delete: remove the selection from this lane and pull the rest left (Shift+Delete)'
+              }
+              onClick={() =>
+                applyRangeAll
+                  ? rippleDeleteEverything()
+                  : editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, true), 'Removed the selection and closed the gap')
+              }
             >
-              Split selection
+              <Trash2 size={12} /> Remove selection
             </Button>
+            {selected && isVoiceRole(selected.role) && (
+              <Button
+                variant="secondary"
+                size="compact"
+                disabled={!selected?.buffer || Boolean(busy)}
+                aria-pressed={voiceCleanupOn(selected)}
+                title="Voice clean-up: removes background noise and rumble on this take (non-destructive RNNoise + high-pass inserts)"
+                onClick={() => toggleVoiceCleanup(selected.id)}
+              >
+                {voiceCleanupOn(selected) ? 'Voice clean-up: on' : 'Clean up voice'}
+              </Button>
+            )}
+            {advanced && (
+              <Button
+                variant="secondary"
+                size="compact"
+                disabled={!selected?.buffer}
+                onClick={() => editRange((t) => splitRange(t, rangeRef.current.start, rangeRef.current.end), 'Split at selection edges')}
+              >
+                Split selection
+              </Button>
+            )}
           </div>
-          {smartControlsOpen && (
+          <HowThisWorks topics={['Best take, layers and comps', 'Clean-up and effects', 'Music under voices']} />
+          {advanced && smartControlsOpen && (
           <div className="grid gap-1.5 sm:grid-cols-2">
             <details className="rounded-control border border-divider bg-obsidian px-2.5 py-1.5" open>
               <summary className="studio-type-label cursor-pointer text-ice">
@@ -4116,8 +4371,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               </div>
             </details>
             <details className="rounded-control border border-divider bg-obsidian px-2.5 py-1.5">
-              <summary className="studio-type-label cursor-pointer text-ice">
-                Ducking preset
+              <summary className="studio-type-label cursor-pointer text-ice" title="Sidechain ducking preset">
+                Lower music under voices
               </summary>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#A9B8C6]">
                 <span className="normal-case tracking-normal">
@@ -4125,7 +4380,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 </span>
                 <select
                   className={select}
-                  aria-label="Duck amount"
+                  aria-label="How much to lower it (duck amount)"
                   value={duckDb}
                   onChange={(e) => setDuckDb(Number(e.target.value))}
                 >
@@ -4137,7 +4392,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 <span className="normal-case tracking-normal">when</span>
                 <select
                   className={select}
-                  aria-label="Sidechain lane"
+                  aria-label="Lane that triggers the lowering (sidechain)"
                   value={duckSidechainId}
                   onChange={(e) => setDuckSidechainId(e.target.value)}
                 >
@@ -4310,13 +4565,51 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           )}
         </Panel>
 
-        <SfxPad compact disabled={Boolean(busy) || recording} onDrop={(id) => void dropSfx(id)} />
+        {advanced && <SfxPad compact disabled={Boolean(busy) || recording} onDrop={(id) => void dropSfx(id)} />}
+        </>
+        )}
 
-        {/* People / takes */}
-        <div className="space-y-3">
+        {/* Empty state — one clear next action instead of four empty lanes. */}
+        {(showRecord || showEdit) && !hasAudio && !recording && (
+          <Panel elevation="flat" className="flex flex-col items-center gap-3 px-4 py-8 text-center" role="status">
+            <p className="studio-type-section !text-[16px]">Record your first take</p>
+            <p className="studio-type-body max-w-[28rem] text-silver-body">
+              {showRecord
+                ? 'Press the big Record button (or R). Your take appears on the timeline right here the moment you stop.'
+                : 'Nothing on the timeline yet. Record a take, or add a music bed — then trim and mix it here.'}
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {showRecord ? (
+                <Button variant="primary" size="touch" onClick={() => void toggleRecord()}>
+                  Record your first take
+                </Button>
+              ) : onGoToStage ? (
+                <Button variant="primary" size="touch" onClick={() => onGoToStage('record')}>
+                  Go to Record
+                </Button>
+              ) : null}
+              {showEdit && (
+                <label className={btn + ' cursor-pointer'}>
+                  Add music bed
+                  <input
+                    type="file"
+                    accept="audio/*,.mp3,.wav,.m4a,.webm"
+                    className="hidden"
+                    onChange={(e) => void onImportBed(e.target.files?.[0] || null)}
+                  />
+                </label>
+              )}
+            </div>
+          </Panel>
+        )}
+
+        {/* People / takes — the timeline. Shown on Record too, so a take visibly lands
+            where it was recorded (GarageBand's "press record, watch the region appear"). */}
+        {(showRecord || showEdit) && (hasAudio || recording) && (
+        <section className="space-y-3" aria-labelledby="studio-people-takes">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-3">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">People & takes</p>
+              <h3 id="studio-people-takes" className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">People & takes</h3>
               <p className="text-[11px] font-mono text-[#A9B8C6]">
                 {formatClock(playhead)}
                 {range.end - range.start > 0.05
@@ -4327,6 +4620,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             <div className="flex flex-wrap gap-1.5 items-center">
               <input
                 value={personDraft}
+                aria-label="New person's name"
                 onChange={(e) => setPersonDraft(e.target.value)}
                 placeholder="Add a person"
                 className="w-36 rounded-lg border border-[#27313B] bg-[#151B22] px-2 py-1.5 text-sm text-[#F6FAFC]"
@@ -4337,12 +4631,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               <button type="button" className={btn} onClick={addPerson}>
                 <Plus size={14} /> Person
               </button>
-              <button type="button" className={btn} onClick={() => addTrack('bed')}>
-                <Plus size={14} /> Bed
-              </button>
-              <button type="button" className={btn} onClick={() => addTrack('sfx')}>
-                <Plus size={14} /> SFX lane
-              </button>
+              {(advanced || showEdit) && (
+                <button type="button" className={btn} onClick={() => addTrack('bed')} title="Add a music bed lane">
+                  <Plus size={14} /> Music
+                </button>
+              )}
+              {advanced && (
+                <button type="button" className={btn} onClick={() => addTrack('sfx')} title="Add a sound-effects lane">
+                  <Plus size={14} /> SFX lane
+                </button>
+              )}
             </div>
           </div>
           {/* Shared ruler. gutterLeft matches each track group's left header rail
@@ -4352,8 +4650,11 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             <SessionTimeline {...timelineBoard} rulerOnly showRuler gutterLeft={172} />
           </div>
 
-          {people.map((person) => {
+          {visiblePeople.map((person) => {
             const lane = tracks.filter((t) => t.personId === person.id).sort((a, b) => a.take - b.take)
+            /** Take slots shown to the host: every slot under Advanced; otherwise only takes
+             *  with audio plus the armed one (empty slots appear on demand — see visibleTracks). */
+            const visibleLane = lane.filter((t) => visibleTrackIds.has(t.id))
             const mixerTrack = lane.find((t) => t.id === selected?.id) || lane.find((t) => t.armed) || lane[0] || null
             // Persistent lane hue — the whole row wears this person's colour.
             const lc = person.kind === 'voice' ? laneFor(person.id) : null
@@ -4374,6 +4675,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   />
                   <input
                     value={person.name}
+                    aria-label={`Name of ${person.name || 'this person'}`}
                     onChange={(e) =>
                       setPeople((prev) => prev.map((p) => (p.id === person.id ? { ...p, name: e.target.value } : p)))
                     }
@@ -4381,12 +4683,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   />
                   <span className="text-[11px] text-[#A9B8C6]">
                     {lane.filter((t) => t.buffer).length} take{lane.filter((t) => t.buffer).length === 1 ? '' : 's'}
-                    {` · ${lane.length} track${lane.length === 1 ? '' : 's'}`}
+                    {advanced ? ` · ${lane.length} slot${lane.length === 1 ? '' : 's'}` : ''}
                   </span>
-                  <button type="button" className={btn} onClick={() => addTake(person.id)}>
-                    <Plus size={14} /> Take
-                  </button>
-                  {person.kind === 'voice' && person.id === 'guest' && remoteGuest ? (
+                  {advanced && (
+                    <button type="button" className={btn} onClick={() => addTake(person.id)} title="Add an empty take slot">
+                      <Plus size={14} /> Take
+                    </button>
+                  )}
+                  {!(showRecord || advanced) ? null : person.kind === 'voice' && person.id === 'guest' && remoteGuest ? (
                     <span className="text-[11px] text-[#7CFFB2]">
                       {remoteGuestVideo || streamHasLiveVideo(remoteGuest)
                         ? 'Remote booth · live camera'
@@ -4403,6 +4707,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                         )
                       }
                       title="Microphone for this person"
+                      aria-label={`Microphone for ${person.name}`}
                     >
                       <option value="">Fallback mic</option>
                       {mics.map((mic, idx) => (
@@ -4451,8 +4756,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                           </option>
                         ))}
                       </select>
+                      {advanced && (
+                      <>
                       <span className="mx-0.5 hidden h-4 w-px bg-[#1A232C] sm:inline-block" aria-hidden="true" />
-                      <span className="text-[10px] uppercase tracking-[0.1em] text-[#5C6B77]">Graphics</span>
+                      <span className="text-[10px] uppercase tracking-[0.1em] text-silver-label">Graphics</span>
                       <button
                         type="button"
                         className={chip}
@@ -4507,13 +4814,17 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                             : 'Unlinked'}
                         </button>
                       )}
+                      </>
+                      )}
                     </div>
                     </>
                   ) : null}
-                  {person.kind === 'voice' && (
+                  {person.kind === 'voice' && (showRecord || advanced) && (
                     <button
                       type="button"
                       className={lane.some((t) => t.armed) ? danger : chip}
+                      aria-pressed={lane.some((t) => t.armed)}
+                      title={`Arm ${person.name} — their next take records when you press Record`}
                       onClick={() => {
                         const empty = emptyTakeForPerson(tracks, person.id)
                         const last = lane[lane.length - 1]
@@ -4521,10 +4832,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                         else if (last) armTrack(last.id)
                       }}
                     >
-                      Arm
+                      {lane.some((t) => t.armed) ? 'Armed' : 'Arm'}
                     </button>
                   )}
-                  {person.kind === 'voice' && lane.some((t) => (t.compRanges || []).length > 0) && (
+                  {advanced && person.kind === 'voice' && lane.some((t) => (t.compRanges || []).length > 0) && (
                     <button
                       type="button"
                       className={chip}
@@ -4538,7 +4849,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                     </button>
                   )}
                 </div>
-                {mixerTrack && (
+                {showEdit && mixerTrack && (
                   <div
                     className={`rounded-control border p-2.5 space-y-2 transition-shadow ${
                       selected?.id === mixerTrack.id
@@ -4547,14 +4858,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                     } ${personMuted(person.id) ? 'opacity-55' : ''}`}
                     onClick={() => setSelectedId(mixerTrack.id)}
                   >
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {lane.map((track) => {
+                    {(advanced || visibleLane.length > 1) && (
+                    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={`Takes for ${person.name}`}>
+                      {visibleLane.map((track) => {
                         const active = mixerTrack.id === track.id
                         return (
                           <button
                             key={track.id}
                             type="button"
                             className={active ? primary : chip}
+                            aria-pressed={active}
                             title={track.buffer ? track.name : `${track.name} · empty — arm to record`}
                             onClick={(e) => {
                               e.stopPropagation()
@@ -4562,15 +4875,17 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                             }}
                           >
                             take {track.take}
-                            {track.armed ? ' · R' : ''}
+                            {track.armed ? ' · armed' : ''}
                             {!track.buffer ? ' · empty' : ''}
                           </button>
                         )
                       })}
                     </div>
+                    )}
                     <div className="flex flex-wrap items-center gap-2">
                       <input
                         value={mixerTrack.name}
+                        aria-label={`Take name (${mixerTrack.name})`}
                         onChange={(e) => updateTrack(mixerTrack.id, { name: e.target.value })}
                         className="min-w-[7rem] flex-1 rounded border border-[#27313B] bg-[#151B22] px-2 py-1 text-sm text-[#F6FAFC]"
                         onClick={(e) => e.stopPropagation()}
@@ -4579,6 +4894,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                         type="button"
                         className={personMuted(person.id) ? danger : chip}
                         aria-pressed={personMuted(person.id)}
+                        aria-label={`Mute ${person.name}`}
                         title={`Mute ${person.name} — silences them everywhere (booth and mixer)`}
                         onClick={(e) => {
                           e.stopPropagation()
@@ -4590,7 +4906,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                       <button
                         type="button"
                         className={mixerTrack.solo ? primary : chip}
-                        title="Solo"
+                        aria-pressed={mixerTrack.solo}
+                        aria-label={`Solo ${mixerTrack.name}`}
+                        title={`Solo — hear only ${mixerTrack.name}`}
                         onClick={(e) => {
                           e.stopPropagation()
                           updateTrack(mixerTrack.id, { solo: !mixerTrack.solo })
@@ -4598,10 +4916,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                       >
                         S
                       </button>
+                      {advanced && (
                       <button
                         type="button"
                         className={mixerTrack.armed ? danger : chip}
-                        title="Arm for record"
+                        aria-pressed={mixerTrack.armed}
+                        aria-label={`Arm ${mixerTrack.name} for recording`}
+                        title="Arm for record (R)"
                         onClick={(e) => {
                           e.stopPropagation()
                           armTrack(mixerTrack.id)
@@ -4609,24 +4930,33 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                       >
                         R
                       </button>
+                      )}
                       {isVoiceRole(mixerTrack.role) && (
                         <>
+                          {(advanced || visibleLane.length > 1) && (
                           <button
                             type="button"
                             className={mixerTrack.listen ? primary : chip}
-                            title="Audible take — other takes for this person stay out of the mix"
+                            aria-pressed={mixerTrack.listen}
+                            aria-label={`Best take: use ${mixerTrack.name} in the mix`}
+                            title="Best take (A) — the audible take; other takes for this person stay out of the mix"
                             onClick={(e) => {
                               e.stopPropagation()
                               pushHistory()
                               setTracks((prev) => withListenTake(prev, mixerTrack.id))
                             }}
                           >
-                            A
+                            {advanced ? 'A' : 'Best take'}
                           </button>
+                          )}
+                          {advanced && (
+                          <>
                           <button
                             type="button"
                             className={mixerTrack.layered ? primary : chip}
-                            title="Layer this take with the audible take"
+                            aria-pressed={mixerTrack.layered}
+                            aria-label={`Layer ${mixerTrack.name} with the best take`}
+                            title="Layer (L) — play this take together with the audible take"
                             onClick={(e) => {
                               e.stopPropagation()
                               updateTrack(mixerTrack.id, { layered: !mixerTrack.layered })
@@ -4637,7 +4967,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                           <button
                             type="button"
                             className={(mixerTrack.compRanges || []).length ? primary : chip}
-                            title="Use this take for the selected range (other takes yield)"
+                            aria-label={`Use ${mixerTrack.name} for the selected range (comp)`}
+                            title="Comp — use this take for the selected range (other takes yield)"
                             onClick={(e) => {
                               e.stopPropagation()
                               const cur = rangeRef.current
@@ -4652,12 +4983,17 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                           >
                             Comp
                           </button>
+                          </>
+                          )}
                         </>
                       )}
+                      {advanced && (
+                      <>
                       <button
                         type="button"
                         className={chip}
-                        title="Duplicate"
+                        aria-label={`Duplicate ${mixerTrack.name}`}
+                        title="Duplicate this take onto a new slot"
                         onClick={(e) => {
                           e.stopPropagation()
                           duplicateTrack(mixerTrack.id)
@@ -4668,7 +5004,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                       <button
                         type="button"
                         className={chip}
-                        title="Clear audio"
+                        aria-label={`Clear audio from ${mixerTrack.name}`}
+                        title="Clear the audio from this take (keeps the slot)"
                         onClick={(e) => {
                           e.stopPropagation()
                           clearTrack(mixerTrack.id)
@@ -4679,7 +5016,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                       <button
                         type="button"
                         className={chip}
-                        title="Remove track"
+                        aria-label={`Remove ${mixerTrack.name}`}
+                        title="Remove this take"
                         onClick={(e) => {
                           e.stopPropagation()
                           removeTrack(mixerTrack.id)
@@ -4687,6 +5025,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                       >
                         <Trash2 size={12} />
                       </button>
+                      </>
+                      )}
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 studio-type-label normal-case tracking-normal text-[#A9B8C6]">
                       <label>
@@ -4702,6 +5042,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                           onClick={(e) => e.stopPropagation()}
                         />
                       </label>
+                      {advanced && (
                       <label>
                         Pan {mixerTrack.pan.toFixed(2)}
                         <Slider
@@ -4715,11 +5056,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                           onClick={(e) => e.stopPropagation()}
                         />
                       </label>
+                      )}
+                      {advanced && (
                       <label>
                         Start
                         <input
                           defaultValue={formatClock(mixerTrack.offset)}
                           key={`${mixerTrack.id}-${mixerTrack.offset.toFixed(2)}`}
+                          aria-label={`${mixerTrack.name} start time (minutes:seconds)`}
                           placeholder="1:30"
                           className="mt-1 w-full rounded border border-[#27313B] bg-[#151B22] px-2 py-0.5 text-[11px] text-[#F6FAFC]"
                           onBlur={(e) => {
@@ -4729,6 +5073,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                           onClick={(e) => e.stopPropagation()}
                         />
                       </label>
+                      )}
                       <label>
                         Fade {mixerTrack.fadeIn.toFixed(1)}/{mixerTrack.fadeOut.toFixed(1)}s
                         <div className="mt-1 flex gap-1">
@@ -4789,7 +5134,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                         <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: lc?.base ?? person.color }} />
                         <span className="studio-type-label text-ice truncate">{person.name}</span>
                       </span>
-                      <span className="studio-type-label text-silver-label normal-case tracking-normal">
+                      <span className="studio-type-label text-silver-body normal-case tracking-normal">
                         {lc?.id ?? 'track'} · video + audio
                       </span>
                       {previewStream ? (
@@ -4801,8 +5146,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                           compact
                         />
                       ) : (
-                        <span className="studio-type-label text-silver-label normal-case tracking-normal">
-                          {person.id === 'guest' ? 'Camera off — waiting for peer' : 'Camera off'}
+                        <span className="studio-type-label text-silver-body normal-case tracking-normal">
+                          {person.id === 'guest' ? 'Camera off — waiting for guest' : 'Camera off'}
                         </span>
                       )}
                     </div>
@@ -4966,9 +5311,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               </div>
             )
           })}
-        </div>
+        </section>
+        )}
 
-        {tracks.some((t) => !people.some((p) => p.id === t.personId)) && (
+        {showEdit && tracks.some((t) => !people.some((p) => p.id === t.personId)) && (
             <div className="rounded-2xl border border-[#1A232C] bg-[#080C10] p-2.5 space-y-2">
               <p className="text-[11px] uppercase tracking-[0.16em] text-[#8DEBFF]">Other clips</p>
               {tracks.filter((t) => !people.some((p) => p.id === t.personId)).map((track) => (
@@ -4985,12 +5331,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           )}
 
         {/* Master bus / playhead */}
-        <div>
-          <p className="studio-type-label text-ice mb-2">
-            Playhead {formatClock(playhead)} · save {describeExportRange(exportWindow)}
-          </p>
+        {showEdit && (
+        <section aria-labelledby="studio-master">
+          <h3 id="studio-master" className="studio-type-label text-ice mb-2">
+            Playhead {formatClock(playhead)} · export {describeExportRange(exportWindow)}
+          </h3>
           <button
             type="button"
+            aria-label={`Session overview — click to move the playhead (now at ${formatClock(playhead)})`}
             className="relative w-full h-16 rounded-panel bg-obsidian border border-divider overflow-hidden shadow-inset-well"
             onClick={(e) => {
               if (sessionLen <= 0) return
@@ -5046,6 +5394,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 className="mt-1 w-full"
               />
             </label>
+            {advanced && (
+            <>
             <label>
               Master fade in {masterFadeIn.toFixed(1)}s
               <Slider
@@ -5070,14 +5420,18 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 className="mt-1 w-full"
               />
             </label>
+            </>
+            )}
           </div>
-        </div>
+        </section>
+        )}
 
-        {/* Effects + clip tools */}
-        <div>
-          <p className="studio-type-label text-ice mb-2">
-            Insert rack {selected ? `· ${selected.name}` : ''} · bypass / wet-dry · not baked in
-          </p>
+        {/* Effects + clip tools — Advanced only. Nothing here is needed for a first episode. */}
+        {showEdit && advanced && (
+        <section aria-labelledby="studio-effects">
+          <h3 id="studio-effects" className="studio-type-label text-ice mb-2" title="Insert rack — bypass / wet-dry, never baked into the take">
+            Effects {selected ? `· ${selected.name}` : ''} · non-destructive
+          </h3>
           <div className="flex flex-wrap gap-2">
             {INSERT_FX.map((id) => {
               const fx = EFFECT_META.find((e) => e.id === id)!
@@ -5147,7 +5501,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               ))}
             </ul>
           )}
-          <p className="mt-3 studio-type-label text-ice">Render to take (destructive)</p>
+          <p className="mt-3 studio-type-label text-ice" title="Render to take — rewrites the audio of the selected take (Undo brings it back)">
+            Apply permanently to the take
+          </p>
           <div className="flex flex-wrap gap-2 mt-2">
             {RENDER_ONLY_FX.map((id) => {
               const fx = EFFECT_META.find((e) => e.id === id)!
@@ -5179,28 +5535,30 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 invalidateInsertCache(selected.id)
               }}
             >
-              Render inserts to take
+              Bake effects into the take
             </Button>
           </div>
           <div className="flex flex-wrap gap-2 mt-2">
             <Button variant="secondary" size="compact" disabled={!selected?.buffer} onClick={splitSelectedAtPlayhead}>
               Split at playhead (same lane)
             </Button>
-            <Button variant="secondary" size="compact" disabled={!selected?.buffer} onClick={bounceSelectedToStem}>
-              Bounce track → stem
+            <Button variant="secondary" size="compact" disabled={!selected?.buffer} title="Bounce this track to a stem file" onClick={bounceSelectedToStem}>
+              Export this track
             </Button>
             <Button
               variant="secondary"
               size="compact"
               disabled={!hasAudio || Boolean(busy)}
+              title="Bounce: normalize + compress + limit the whole mix onto a new lane. Your takes stay."
               onClick={() => void applyMasterBus(['normalize', 'compress', 'limit'], 'keep')}
             >
-              Bounce mix (keeps takes)
+              Flatten mix (keeps takes)
             </Button>
             <Button
               variant="secondary"
               size="compact"
               disabled={!hasAudio || Boolean(busy)}
+              title="Normalize + limit the whole mix onto a new lane. Your takes stay."
               onClick={() => void applyMasterBus(['normalize', 'limit'], 'keep')}
             >
               Normalize + limit (keeps takes)
@@ -5209,23 +5567,31 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               variant="danger"
               size="compact"
               disabled={!hasAudio || Boolean(busy)}
-              onClick={() => void applyMasterBus(['normalize', 'compress', 'limit'], 'replace')}
+              title="Start over: replaces every take with one flattened, mastered mix. Undo brings the takes back."
+              onClick={() => {
+                if (
+                  window.confirm(
+                    'Start over with one flattened mix? Every take is replaced by a single mastered mix lane. Undo brings the takes back until you leave the page.',
+                  )
+                )
+                  void applyMasterBus(['normalize', 'compress', 'limit'], 'replace')
+              }}
             >
-              Replace session
+              Start over with the mix
             </Button>
           </div>
-        </div>
-        </>
+        </section>
         )}
 
         {showPublish && !showAll && (
           <Panel elevation="flat" className="px-3 py-2.5 text-xs text-[#A9B8C6]">
-            <p className="studio-type-label text-ice">Ready to export</p>
+            <h3 className="studio-type-label text-ice">{hasAudio ? 'Ready to export' : 'Nothing to export yet'}</h3>
             <p className="mt-1">
               {hasAudio
                 ? `Session ${durationLabel}${loudness && Number.isFinite(loudness.lufs) ? ` · ${loudness.lufs.toFixed(1)} LUFS (target ${PODCAST_LUFS})` : ''}${cameraClips.length ? ` · ${cameraClips.length} picture clip${cameraClips.length === 1 ? '' : 's'}` : ''}. ${hasVideo ? 'Use “Export episode” below to save the audio podcast-feed file and download the video, both from one master mix.' : 'Use “Export episode” below to save the audio podcast-feed file.'}`
                 : 'No audio yet — record or import a take in the earlier stages before exporting.'}
             </p>
+            <HowThisWorks topics={['Export and publish']} />
           </Panel>
         )}
 
@@ -5281,7 +5647,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </div>
 
           <div className="flex flex-wrap gap-2 items-center">
-          <span className="studio-type-label w-full text-[#5E6B78]">Individual files</span>
+          <span className="studio-type-label w-full text-silver-label">Individual files</span>
           <Button
             variant="secondary"
             size="compact"
@@ -5302,10 +5668,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           >
             {busy?.includes('WAV') ? busy : 'Audio only: WAV'}
           </Button>
-          <label className="inline-flex items-center gap-1.5 text-xs text-[#A9B8C6]">
+          {advanced && (
+          <label className="inline-flex items-center gap-1.5 text-xs text-[#A9B8C6]" title={`Loudness-match the export to ${PODCAST_LUFS} LUFS (podcast standard)`}>
             <input type="checkbox" checked={matchLufs} onChange={(e) => setMatchLufs(e.target.checked)} />
-            Match {PODCAST_LUFS} LUFS
+            Match podcast loudness ({PODCAST_LUFS} LUFS)
           </label>
+          )}
           {hasSelection && (
             <span className="inline-flex items-center gap-2 text-xs text-[#A9B8C6]">
               <SegmentedControl
@@ -5323,11 +5691,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
               </span>
             </span>
           )}
+          {advanced && (
+          <>
           <Button
             variant="secondary"
             size="compact"
             loading={Boolean(busy?.includes('stems'))}
             disabled={!hasAudio || Boolean(busy)}
+            title="Every lane as its own WAV, zipped — for editing elsewhere"
             onClick={() => void downloadStems()}
           >
             {busy?.includes('stems') ? busy : 'Download stems zip'}
@@ -5362,19 +5733,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           >
             {busy?.includes('MP4') ? busy : 'Video only: MP4 (picture + master mix)'}
           </Button>
+          </>
+          )}
           </div>
         </div>
         )}
 
-        {error && <p className="text-sm text-red-300">{error}</p>}
-        {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
-        {(showAll || showEdit) && (
-        <p className="text-[11px] text-[#A9B8C6]">
-          After the mix lays the next person at the end of the session. After my last take is a pickup. Cue mix plays live from the other lanes — no bounce before Record. Record capture starts with preroll and trims to punch. Two mics auto-duck the quieter lane with gain-sharing automation (recordings keep rolling). Isolate uses RNNoise on the insert rack. Cam on a voice card is a real local preview; Record also writes a parallel camera file on the same clock (autosaved in this browser, not episode audio_url). Linked moves can nudge picture; Unlinked edits audio and video apart. A broken-sync badge shows if in-points drift. Punch with Cam off lays new audio under existing picture. Preview is live cameras; Program is punched/edited output (titles, B-roll, stingers, keyframes, dissolves, color). Host / Guest / PIP is the Program scene — Cut or Fade takes Preview to Program. Stinger is a black or title flash on the picture clock. Keyframes move opacity and position on the selected clip. Lower third and B-roll sit on the picture lane. Dissolve overlaps the next clip. Color is a non-destructive insert. Chapters (C) tick on the camera lane. V splits picture; J/K/L is the playhead. If this browser runs out of space, takes still save and you are told to download the camera files. Remote guest can send live camera on the same WebRTC peer, plus a local camera backup if the peer is thin. Download A-roll / PIP follows edited clip offsets and encodes as fast as this computer can (WebCodecs); the public feed stays audio. A picks the default audible take; Comp assigns a range to another take; L layers. Drag a range on the music lane to duck without a second track. Export can match −16 LUFS; stems zip is a local download. Mix is hosted on your site (Supabase media). Public feed{' '}
-          <code className="text-[#8DEBFF]">/podcast/rss.xml</code> powers Apple Podcasts, Spotify for
-          Podcasters, and Amazon Music — submit that URL once; new published mixes appear automatically.
-        </p>
-        )}
       </div>
 
       <RecordingBooth
@@ -5415,6 +5779,26 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   )
 }
 
+/** Per-panel "How this works" disclosure — the same copy the help modal shows, scoped to one panel. */
+function HowThisWorks({ topics }: { topics: string[] }) {
+  const items = STUDIO_HOW_IT_WORKS.filter((t) => topics.includes(t.title))
+  if (!items.length) return null
+  return (
+    <details className="mt-1">
+      <summary className="studio-type-label cursor-pointer normal-case tracking-normal text-[#9AABBA] hover:text-white">
+        How this works
+      </summary>
+      <div className="mt-1.5 space-y-1.5">
+        {items.map((item) => (
+          <p key={item.title} className="text-[11px] leading-relaxed text-[#B8C4CF]">
+            <span className="text-[#8DEBFF]">{item.title}.</span> {item.body}
+          </p>
+        ))}
+      </div>
+    </details>
+  )
+}
+
 const btn =
   'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#27313B] text-sm text-[#B8C4CF] disabled:opacity-40'
 const chip =
@@ -5422,7 +5806,7 @@ const chip =
 const primary =
   'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#53D6FF] text-[#061016] text-sm font-medium disabled:opacity-40'
 const danger =
-  'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500/90 text-white text-sm font-medium'
+  'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#950D12] border border-[#E74D5B]/70 text-white text-sm font-medium'
 const select =
   'rounded-lg border border-[#27313B] bg-[#151B22] px-2 py-1.5 text-sm text-[#B8C4CF]'
 
@@ -5449,14 +5833,14 @@ const PRIMARY_REC_MODES: RecModeChoice[] = [
   {
     id: 'punch-in',
     value: 'at_playhead',
-    label: 'Punch in',
-    blurb: 'Drop in right at the playhead while the mix plays in your headphones.',
+    label: 'Re-record from here',
+    blurb: 'Punch in: drop in right at the playhead while the mix plays in your headphones.',
     hint: recModeHint('at_playhead'),
   },
   {
     id: 'replace',
     value: 'after_mine',
-    label: 'Replace',
+    label: 'Pick up',
     blurb: 'Pick up from your last take — redo a line without a fresh lane.',
     hint: recModeHint('after_mine'),
   },

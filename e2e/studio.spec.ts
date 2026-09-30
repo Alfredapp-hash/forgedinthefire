@@ -76,8 +76,7 @@ async function recordTake(page: Page, seconds: number) {
   // click can land off the moving target: dispatch the click straight to the element.
   await studio.stopButton(page).dispatchEvent('click')
   await expect(studio.recordButton(page)).toBeVisible()
-  // "Take at 0:00" confirms the capture landed. The timeline itself is Edit-stage only on
-  // this base (see docs/studio-ux-audit.md), so callers switch stage before counting clips.
+  // "Take at 0:00" confirms the capture landed (inline role=status line + toast).
   await expect(studio.takeToast(page)).toBeVisible({ timeout: 30_000 })
 }
 
@@ -103,8 +102,13 @@ test.describe('production room (/dev/studio)', () => {
 
   test('records 3 s with the fake mic and the take lands on the timeline', async ({ page }) => {
     await openStudio(page, `rec-${Date.now()}`)
+    // Before any audio: one empty state, no lanes.
+    await expect(studio.firstTakeEmptyState(page)).toBeVisible()
     await expect(studio.clips(page)).toHaveCount(0)
     await recordTake(page, 3)
+    // The take is visible on the Record stage itself — no stage switch needed to see it land.
+    await expect(studio.clips(page).first()).toBeVisible({ timeout: 30_000 })
+    await expect(studio.firstTakeEmptyState(page)).toHaveCount(0)
     await studio.stageButton(page, 'Edit').click()
     await expect(studio.clips(page).first()).toBeVisible({ timeout: 30_000 })
     expect(await studio.clips(page).count()).toBeGreaterThanOrEqual(1)
@@ -120,9 +124,9 @@ test.describe('production room (/dev/studio)', () => {
     await recordTake(page, 4)
     await expect(studio.clips(page).first()).toBeVisible({ timeout: 30_000 })
 
-    // Footer line under the timeline: "Playhead … · export 0:00 – 0:0N" — starts at zero.
+    // Heading over the session overview: "Playhead … · export Whole episode · 0:0N" — whole session by default.
     await expect(studio.exportRangeLine(page)).toBeVisible()
-    await expect(studio.exportRangeLine(page)).toContainText(/export 0:00/i)
+    await expect(studio.exportRangeLine(page)).toContainText(/whole episode/i)
 
     const downloadPromise = page.waitForEvent('download', { timeout: 60_000 })
     await studio.exportWav(page).click()
@@ -134,11 +138,11 @@ test.describe('production room (/dev/studio)', () => {
 
     const exported = await page.evaluate(() => window.__e2e?.exports ?? [])
     expect(exported.length).toBe(1)
-    // Full session, not a selection: the exported duration matches the "export 0:00 – m:ss"
-    // end shown under the timeline (rounded to whole seconds there). Capture length varies
+    // Full session, not a selection: the exported duration matches the "Whole episode · m:ss"
+    // length shown over the overview (rounded to whole seconds there). Capture length varies
     // with machine load, so compare against what the editor itself reports.
     const line = (await studio.exportRangeLine(page).textContent()) ?? ''
-    const end = line.match(/export \d+:\d\d\s*[–-]\s*(\d+):(\d\d)/i)
+    const end = line.match(/whole episode · (\d+):(\d\d)/i)
     const sessionSeconds = end ? Number(end[1]) * 60 + Number(end[2]) : 0
     expect(sessionSeconds, `session length parsed from "${line}"`).toBeGreaterThan(0)
     expect(exported[0].durationSeconds).toBeGreaterThanOrEqual(sessionSeconds - 1)
@@ -161,7 +165,7 @@ test.describe('production room (/dev/studio)', () => {
     expect(Number(patch.duration_seconds)).toBeGreaterThanOrEqual(1)
   })
 
-  test('play, split, undo on the Edit stage', async ({ page }) => {
+  test('play, split, undo (Ctrl+Z) and redo on the Edit stage', async ({ page }) => {
     await openStudio(page, `edit-${Date.now()}`)
     await recordTake(page, 3)
     await studio.stageButton(page, 'Edit').click()
@@ -174,14 +178,51 @@ test.describe('production room (/dev/studio)', () => {
     await studio.pause(page).click()
     await expect(studio.playMix(page)).toBeVisible()
 
-    // Clicking a clip selects it and parks the playhead inside the take.
+    // Clicking a clip selects it and parks the playhead inside the take. Single-letter
+    // shortcuts fire with the timeline focused or nothing focused — never from a button.
     await studio.clips(page).first().click()
     await blur(page)
     await page.keyboard.press('s')
     await expect.poll(() => studio.clips(page).count(), { message: 'split should add a clip' }).toBe(before + 1)
-    // Ctrl/Cmd+Z is not bound on this base (docs/studio-ux-audit.md); the toolbar Undo is.
+    // A focused button swallows single-letter keys (a slip must not cut or record).
+    await studio.playMix(page).focus()
+    await page.keyboard.press('s')
+    await page.waitForTimeout(300)
+    expect(await studio.clips(page).count(), 'S with a button focused must not split').toBe(before + 1)
+    await blur(page)
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => studio.clips(page).count(), { message: 'Ctrl+Z should undo the split' }).toBe(before)
+    await page.keyboard.press('Control+Shift+z')
+    await expect.poll(() => studio.clips(page).count(), { message: 'Shift+Ctrl+Z should redo the split' }).toBe(before + 1)
     await studio.undo(page).click()
-    await expect.poll(() => studio.clips(page).count(), { message: 'undo should restore clip count' }).toBe(before)
+    await expect.poll(() => studio.clips(page).count(), { message: 'toolbar undo should restore clip count' }).toBe(before)
+  })
+
+  test('stage change moves focus to the stage heading', async ({ page }) => {
+    await mockStudioApi(page)
+    await gotoHarness(page, STUDIO_URL(`focus-${Date.now()}`))
+    await studio.dismissTip(page).click({ timeout: 5_000 }).catch(() => {})
+    await studio.stageButton(page, 'Record').click()
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.tagName + ':' + (document.activeElement?.textContent || '')))
+      .toMatch(/^H2:Record/i)
+  })
+
+  test('Advanced toggle reveals the full rack and is remembered', async ({ page }) => {
+    await openStudio(page, `adv-${Date.now()}`)
+    await studio.stageButton(page, 'Edit').click()
+    await expect(studio.advancedToggle(page)).toHaveAttribute('aria-pressed', 'false')
+    await expect(page.getByRole('button', { name: /^metronome$/i })).toHaveCount(0)
+    await studio.advancedToggle(page).click()
+    await expect(studio.advancedToggle(page)).toHaveAttribute('aria-pressed', 'true')
+    await studio.stageButton(page, 'Record').click()
+    await expect(page.getByRole('button', { name: /^metronome$/i })).toBeVisible()
+    await page.reload({ waitUntil: 'load' })
+    await studio.dismissTip(page).click({ timeout: 5_000 }).catch(() => {})
+    await studio.stageButton(page, 'Record').click()
+    await expect(studio.advancedToggle(page)).toHaveAttribute('aria-pressed', 'true')
+    await studio.advancedToggle(page).click()
+    await expect(studio.advancedToggle(page)).toHaveAttribute('aria-pressed', 'false')
   })
 
   test('autosave → reload → recovery banner restores the take', async ({ page }) => {
@@ -210,12 +251,12 @@ test.describe('production room (/dev/studio)', () => {
     await expect(studio.publishBlocked(page)).toBeVisible()
   })
 
-  test.fixme('stems zip downloads (clips stream: stems moved under Advanced)', async ({ page }) => {
-    // Sprint-2 put "Download stems zip" behind an "Advanced tools" toggle and renamed the
-    // recovery actions ("Delete saved takes…"). Re-enable once the clips/engine ports land.
+  test('stems zip downloads (under Advanced)', async ({ page }) => {
     await openStudio(page, `stems-${Date.now()}`)
     await recordTake(page, 3)
     await studio.stageButton(page, 'Publish').click()
+    await expect(studio.stemsZip(page)).toHaveCount(0)
+    await studio.advancedToggle(page).click()
     const downloadPromise = page.waitForEvent('download', { timeout: 90_000 })
     await studio.stemsZip(page).click()
     const download = await downloadPromise
