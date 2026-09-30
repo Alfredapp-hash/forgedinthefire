@@ -84,3 +84,8 @@ AUDIT_REPORT.txt
 
 # TypeScript incremental build cache
 tsconfig.tsbuildinfo
+
+# Playwright
+/test-results/
+/playwright-report/
+/e2e/.screens/
