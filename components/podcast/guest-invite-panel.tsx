@@ -1239,11 +1239,14 @@ function GuestInvitePanelP2P({
           </details>
         </div>
       )}
-      <p className={HINT}>
-        Talkback is your mic in their phones. Cue to guest sends the live mix (other lanes, beds, SFX — not the Guest take) on a
-        second audio line. Neither is laid on the Guest take or their backup. Safe pause mutes them on their side and shows a calm
-        pause screen. Their backup uploads in 10-second parts while you record; Retry uses the same invite — no new token.
-      </p>
+      <details>
+        <summary className={`${HINT} cursor-pointer hover:text-white`}>How talkback, cue and the guest backup work</summary>
+        <p className={`${HINT} mt-1`}>
+          Talkback is your mic in their phones. Cue to guest sends the live mix (other lanes, beds, SFX — not the Guest take) on a
+          second audio line. Neither is laid on the Guest take or their backup. Safe pause mutes them on their side and shows a calm
+          pause screen. Their backup uploads in 10-second parts while you record; Retry uses the same invite — no new token.
+        </p>
+      </details>
       {error && (
         <div className="rounded-control border border-heart/50 bg-heart/10 px-3 py-2" role="alert">
           <p className="studio-type-label inline-flex items-start gap-2 normal-case tracking-normal text-heart">
