@@ -9,6 +9,28 @@ import {
   takeKeyFor,
   type CheckpointKind,
 } from '@/lib/podcast/session-store'
+import { mediaErrorMessage } from '@/lib/podcast/camera'
+import type { CaptureTiming } from '@/lib/podcast/engine/latency'
+import type { TakeJournal } from '@/lib/podcast/take-journal'
+
+export type { CaptureTiming } from '@/lib/podcast/engine/latency'
+
+/**
+ * 'raw'     — echoCancellation / noiseSuppression / autoGainControl OFF: the true mic signal.
+ *             Default for recording when the person wears headphones; cleanup happens AFTER
+ *             the take (RNNoise 'isolate' insert, gate, de-ess) where it can be undone.
+ * 'browser' — the browser's AEC + NS + AGC (+ voiceIsolation). Use on open speakers or for
+ *             live talkback, where echo matters more than fidelity.
+ */
+export type CaptureProcessing = 'raw' | 'browser'
+
+/** Resolve the processing mode: explicit choice wins; no headphones → 'browser'; else 'raw'. */
+export function resolveProcessing(opts: { processing?: CaptureProcessing; raw?: boolean; headphones?: boolean } = {}): CaptureProcessing {
+  if (opts.processing) return opts.processing
+  if (typeof opts.raw === 'boolean') return opts.raw ? 'raw' : 'browser'
+  if (opts.headphones === false) return 'browser'
+  return 'raw'
+}
 
 /**
  * A "samples are flowing" signal the UI can poll as a recording watchdog.
@@ -93,31 +115,55 @@ export async function makeCheckpointSink(opts: {
   }
 }
 
-export function audioInputConstraints(deviceId: string | undefined, raw: boolean): MediaTrackConstraints {
+/**
+ * Mic constraints. `raw` keeps its old meaning when a boolean is passed (true = raw,
+ * false = browser processing); a CaptureProcessing string is used as-is. The session
+ * rate (48 kHz) is requested so capture, cue and mixdown share one clock.
+ */
+export function audioInputConstraints(
+  deviceId: string | undefined,
+  raw?: boolean | CaptureProcessing,
+  opts: { headphones?: boolean; sampleRate?: number } = {},
+): MediaTrackConstraints {
+  const mode = typeof raw === 'string' ? raw : resolveProcessing({ raw, headphones: opts.headphones })
+  const off = mode === 'raw'
   const audio: MediaTrackConstraints = {
     deviceId: deviceId ? { exact: deviceId } : undefined,
-    echoCancellation: !raw,
-    noiseSuppression: !raw,
-    autoGainControl: !raw,
+    echoCancellation: !off,
+    noiseSuppression: !off,
+    autoGainControl: !off,
     channelCount: 1,
+    sampleRate: { ideal: opts.sampleRate ?? 48000 },
   }
-  if (!raw) {
+  if (!off) {
     Object.assign(audio, { voiceIsolation: true })
   }
   return audio
 }
 
-export async function openInputStream(deviceId: string | undefined, raw: boolean): Promise<MediaStream> {
+export async function openInputStream(
+  deviceId: string | undefined,
+  raw?: boolean | CaptureProcessing,
+  opts: { headphones?: boolean } = {},
+): Promise<MediaStream> {
   if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error('This browser cannot open a microphone')
+    throw new Error(
+      typeof window !== 'undefined' && !window.isSecureContext
+        ? 'Microphone needs a secure context (localhost or HTTPS)'
+        : 'This browser cannot open a microphone',
+    )
   }
-  return navigator.mediaDevices.getUserMedia({ audio: audioInputConstraints(deviceId, raw) })
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio: audioInputConstraints(deviceId, raw, opts) })
+  } catch (err) {
+    throw new Error(mediaErrorMessage(err, 'microphone'))
+  }
 }
 
 /** Open unique devices one at a time so Chrome is less likely to kill the first stream. */
 export async function openInputStreams(
   deviceIds: string[],
-  raw: boolean,
+  raw?: boolean | CaptureProcessing,
 ): Promise<Map<string, MediaStream>> {
   const unique = [...new Set(deviceIds.map((id) => id || ''))]
   const out = new Map<string, MediaStream>()
@@ -155,15 +201,35 @@ export type LaneCapture = {
   kind: 'worklet' | 'media-recorder'
   stop: () => void
   done: Promise<Blob>
+  /** Worklet only: the AudioContext the capture ran on (the shared session context when given). */
+  context?: AudioContext
+  sampleRate?: number
+  /** Worklet only: AudioContext frame of the first captured sample. */
+  startFrame?: Promise<number>
+  /** Latency / clock info for punch alignment — pass the capture to record-session punchAlignSec. */
+  timing?: () => CaptureTiming
+  /** Worklet only: float result after `done` (skip the WAV decode). */
+  buffer?: () => AudioBuffer | null
 }
 
 export type LaneCaptureOpts = {
+  /** Crash-safe checkpoint sink (IndexedDB, session-store). Parts rotate every ~1 s. */
   checkpoint?: CheckpointSink
+  /** Samples-flowing signal for the stall watchdog. */
   watchdog?: CaptureWatchdog
+  /** Shared session AudioContext (cue + every mic, 48 kHz). Never closed by the capture. */
+  context?: AudioContext
+  /** Optional take journal (chunk-level persistence) — honoured by captures that support it. */
+  journal?: TakeJournal
+  finishJournalOnStop?: boolean
+  /** Force the MediaRecorder path. */
+  forceMediaRecorder?: boolean
+  /** MediaRecorder timeslice (ms). Default 1000 (one checkpoint part ≈ 1 s). */
+  timesliceMs?: number
 }
 
 /** Flush the MediaRecorder blob tail to the checkpoint store this often (ms). */
-const MR_CHECKPOINT_MS = 4000
+const MR_CHECKPOINT_MS = 1000
 
 function startMediaRecorderCapture(
   key: string,
@@ -212,6 +278,11 @@ function startMediaRecorderCapture(
       watchdog?.tick(event.data.size)
       if (checkpoint) pending.push(event.data)
       else retained.push(event.data)
+      try {
+        opts?.journal?.appendBlob?.(event.data)
+      } catch {
+        /* journal must never break capture */
+      }
     }
     recorder.onstop = () => {
       if (timer) clearInterval(timer)
@@ -226,6 +297,15 @@ function startMediaRecorderCapture(
           }
         }
         if (!blob) blob = new Blob(retained, { type: outMime })
+        const journal = opts?.journal
+        if (journal) {
+          try {
+            if (opts?.finishJournalOnStop) await journal.finish()
+            else await journal.flush?.()
+          } catch {
+            /* journal errors are reported via its onError */
+          }
+        }
         resolve(blob)
       })()
     }
@@ -234,7 +314,7 @@ function startMediaRecorderCapture(
       reject(new Error('Recorder failed'))
     }
   })
-  recorder.start(250)
+  recorder.start(opts?.timesliceMs ?? 1000)
   return {
     key,
     recorder,
@@ -251,12 +331,23 @@ export async function startLaneCapture(
   stream: MediaStream,
   opts?: LaneCaptureOpts,
 ): Promise<LaneCapture> {
-  try {
-    const { startWorkletCapture } = await import('@/lib/podcast/worklet-capture')
-    const worklet = await startWorkletCapture(key, stream, opts)
-    if (worklet) return worklet
-  } catch {
-    /* Chrome-only path; MediaRecorder stays the fallback */
+  if (!opts?.forceMediaRecorder) {
+    try {
+      const { startWorkletCapture } = await import('@/lib/podcast/worklet-capture')
+      // Superset of the options either worklet-capture generation understands
+      // (checkpoint/watchdog for the checkpoint build; context/journal for the shared-clock build).
+      const workletOpts = {
+        checkpoint: opts?.checkpoint,
+        watchdog: opts?.watchdog,
+        context: opts?.context,
+        journal: opts?.journal,
+        finishJournalOnStop: opts?.finishJournalOnStop,
+      } as unknown as Parameters<typeof startWorkletCapture>[2]
+      const worklet = await startWorkletCapture(key, stream, workletOpts)
+      if (worklet) return worklet as LaneCapture
+    } catch {
+      /* Chrome-only path; MediaRecorder stays the fallback */
+    }
   }
   return startMediaRecorderCapture(key, stream, opts)
 }

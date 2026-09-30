@@ -56,7 +56,9 @@ export function trimCameraClip(
       const src = cameraSourceStart(c)
       const fileDur = c.sourceDuration || src + c.duration
       if (edge === 'in') {
-        const t = Math.max(c.offset, Math.min(sessionTime, cameraClipEnd(c) - MIN_CLIP))
+        // Clamp to the file, not the current in-point, so a trimmed head can be dragged back.
+        const earliest = Math.max(0, c.offset - src)
+        const t = Math.max(earliest, Math.min(sessionTime, cameraClipEnd(c) - MIN_CLIP))
         const delta = t - c.offset
         const sourceStart = Math.max(0, src + delta)
         const duration = Math.min(fileDur - sourceStart, c.duration - delta)
@@ -104,11 +106,38 @@ export function splitCameraAt(clips: CameraClip[], sessionTime: number, personId
   )
 }
 
+/**
+ * Razor every clip (every person, every layer — or one person's) that spans `sessionTime`.
+ * Range edits need this: splitCameraAt only cuts the first clip it finds, which left other
+ * people's lanes (and overlays) uncut when a range covered several lanes.
+ */
+export function splitAllCameraAt(clips: CameraClip[], sessionTime: number, personId?: string): CameraClip[] {
+  let changed = false
+  const out = clips.flatMap((hit) => {
+    if (personId && hit.personId !== personId) return [hit]
+    if (sessionTime <= hit.offset + MIN_CLIP || sessionTime >= cameraClipEnd(hit) - MIN_CLIP) return [hit]
+    changed = true
+    const leftDur = sessionTime - hit.offset
+    const src = cameraSourceStart(hit)
+    const left: CameraClip = { ...hit, duration: leftDur }
+    const right: CameraClip = {
+      ...hit,
+      id: newCameraClipId(),
+      offset: sessionTime,
+      sourceStart: src + leftDur,
+      trimStart: src + leftDur,
+      duration: hit.duration - leftDur,
+    }
+    return [left, right]
+  })
+  return changed ? withCameraClips(clips, out) : clips
+}
+
 export function splitCameraRange(clips: CameraClip[], start: number, end: number, personId?: string) {
   const a = Math.min(start, end)
   const b = Math.max(start, end)
   if (b - a < MIN_CLIP) return clips
-  return splitCameraAt(splitCameraAt(clips, a, personId), b, personId)
+  return splitAllCameraAt(splitAllCameraAt(clips, a, personId), b, personId)
 }
 
 /** Cut a hole on that person's camera lane. Ripple pulls later clips of the same person. */

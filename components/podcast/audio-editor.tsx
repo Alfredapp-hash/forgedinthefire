@@ -57,6 +57,7 @@ import {
   cropToRange,
   deleteRange,
   duckWithSidechain,
+  rippleDeleteSession,
   duplicateClipAt,
   fullClipForBuffer,
   joinAdjacentClips,
@@ -77,8 +78,10 @@ import {
   REC_MODE_META,
   attachInputMeter,
   computePunchAlignmentOffset,
+  createSessionContext,
   decodePunchAlignment,
   playCountIn,
+  punchAlignSec,
   punchInTime,
   sharedPunchInTime,
   sleep,
@@ -87,6 +90,21 @@ import {
   type CueHandle,
   type RecMode,
 } from '@/lib/podcast/record-session'
+import { renderMaster } from '@/lib/podcast/master'
+import { requestPersistentStorage } from '@/lib/podcast/take-journal'
+import { useWakeLock } from '@/components/podcast/studio/use-wake-lock'
+import { useLeaveGuard } from '@/components/podcast/studio/leave-guard'
+import { watchInputs } from '@/components/podcast/studio/track-watchdog'
+import { createLiveStore, LiveStoreContext } from '@/components/podcast/studio/live-store'
+import { LiveMeters } from '@/components/podcast/studio/live-readouts'
+import {
+  describeExportRange,
+  replaceWarning,
+  resolveExportRange,
+  selectionOf,
+  shortExportWarning,
+  type ExportScope,
+} from '@/components/podcast/studio/export-range'
 import {
   checkStorageQuota,
   clearRecoverableTakes,
@@ -133,6 +151,7 @@ import { SessionTimeline } from '@/components/podcast/session-timeline'
 import { GuestInvitePanel } from '@/components/podcast/guest-invite-panel'
 import { RecordingBooth, type BoothParticipant } from '@/components/podcast/recording-booth'
 import { ShortcutsHelpModal } from '@/components/podcast/shortcuts-help-modal'
+import { RecoveryBanner } from '@/components/podcast/studio/recovery-banner'
 import type { GuestTallyPhase } from '@/lib/podcast/guest-types'
 import { CameraClipReview, CameraLane } from '@/components/podcast/camera-lane'
 import { CameraPreview } from '@/components/podcast/camera-preview'
@@ -244,11 +263,14 @@ type Props = {
   /** Optional stage navigator. When supplied, a successful Record-stage export
    *  surfaces a "View in editor" toast action that jumps to the Edit stage. */
   onGoToStage?: (stage: StudioStage) => void
+  /** Episode status; 'published' makes "replace the episode audio" a stronger confirm. */
+  episodeStatus?: string | null
 }
 
 type Snapshot = {
   tracks: StudioTrack[]
   cameras: CameraClip[]
+  switchEdl: SwitchEDL
   selectedId: string | null
   selectedCamClipId: string | null
 }
@@ -276,7 +298,7 @@ function snapshotTracks(tracks: StudioTrack[]): StudioTrack[] {
   }))
 }
 
-export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage, onGoToStage }: Props) {
+export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage, onGoToStage, episodeStatus }: Props) {
   // Stage gating. `stage == null` keeps legacy behavior (show everything). These
   // are presentational only — nothing below unmounts on a stage switch, so a live
   // recording, its checkpoints, and all editor state persist across stages.
@@ -348,8 +370,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [camWarnFor, setCamWarnFor] = useState<string | null>(null)
   const [camStorageHint, setCamStorageHint] = useState<string | null>(null)
   const camWarnedRef = useRef(false)
-  const [inputPeaks, setInputPeaks] = useState<Record<string, number>>({})
-  const [clipHolds, setClipHolds] = useState<Record<string, boolean>>({})
+  /** Input meters + record clock live OUTSIDE React state (≤15 Hz to subscribers). */
+  const liveStore = useMemo(() => createLiveStore(), [])
   const [matchLufs, setMatchLufs] = useState(true)
   const [loudness, setLoudness] = useState<{ lufs: number; peakDb: number } | null>(null)
   const [recClock, setRecClock] = useState(0)
@@ -363,6 +385,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   const [crashTakes, setCrashTakes] = useState<CheckpointMeta[]>([])
   /** Recording watchdog — updated by capture ticks; UI reads via recWatchdogRef. */
   const [recFlowStalled, setRecFlowStalled] = useState(false)
+  /** Device / permission watchdog: a mic unplugged, muted by the OS, or permission pulled mid-take. */
+  const [inputLost, setInputLost] = useState<string | null>(null)
+  const inputWatchStopRef = useRef<(() => void) | null>(null)
+  /** One 48 kHz AudioContext per recording session: cue playback + every mic share its clock. */
+  const sessionCtxRef = useRef<AudioContext | null>(null)
+  /** What "Save mix" exports. Whole episode by default; a selection only when asked explicitly. */
+  const [exportScope, setExportScope] = useState<ExportScope>('full')
+  /** Edits since the last saved mix (takes are still backed up on this computer). */
+  const [dirty, setDirty] = useState(false)
+  const mountedEditsRef = useRef(false)
 
   const recorderRef = useRef<LaneCapture[]>([])
   const capturesRef = useRef<LaneCapture[]>([])
@@ -465,6 +497,18 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
   cueToGuestRef.current = cueToGuest
 
+  // Keep the screen awake while recording; confirm before leaving with a live take or unsaved mix.
+  useWakeLock(recording)
+  useLeaveGuard({ recording, unsaved: dirty })
+  useEffect(() => {
+    // The first tracks/cameras value is the mount (or restore) — only later changes are edits.
+    if (!mountedEditsRef.current) {
+      mountedEditsRef.current = true
+      return
+    }
+    if (tracks.some((t) => t.buffer) || cameraClips.length > 0) setDirty(true)
+  }, [tracks, cameraClips])
+
   const publishGuestCue = useCallback((handle: CueHandle | null) => {
     setGuestCueStream(handle?.stream ?? null)
   }, [])
@@ -482,12 +526,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     historyRef.current.push({
       tracks: snapshotTracks(tracks),
       cameras: cameraClips.map((c) => ({ ...c })),
+      switchEdl: switchEdl.map((e) => ({ ...e })),
       selectedId,
       selectedCamClipId,
     })
     if (historyRef.current.length > 20) historyRef.current.shift()
     setHistoryLen(historyRef.current.length)
-  }, [tracks, cameraClips, selectedId, selectedCamClipId])
+  }, [tracks, cameraClips, switchEdl, selectedId, selectedCamClipId])
 
   const onRemoteGuestStream = useCallback((stream: MediaStream | null) => {
     remoteGuestRef.current = stream
@@ -791,6 +836,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       abortRef.current?.abort()
       if (recRafRef.current) cancelAnimationFrame(recRafRef.current)
       if (watchdogRafRef.current) window.clearInterval(watchdogRafRef.current)
+      inputWatchStopRef.current?.()
+      inputWatchStopRef.current = null
+      void sessionCtxRef.current?.close().catch(() => {})
+      sessionCtxRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -888,14 +937,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           ]
           const meterKey = names.join(' + ') || (key === REMOTE_GUEST_KEY ? 'Guest' : 'Mic')
           return attachInputMeter(stream, (peak) => {
-            setInputPeaks((prev) => ({ ...prev, [meterKey]: peak }))
+            liveStore.setPeak(meterKey, peak)
             if (peak >= 0.98) {
-              setClipHolds((prev) => ({ ...prev, [meterKey]: true }))
+              liveStore.setClip(meterKey, true)
               const timers = clipTimerRef.current
               if (timers[meterKey]) window.clearTimeout(timers[meterKey])
-              timers[meterKey] = window.setTimeout(() => {
-                setClipHolds((prev) => ({ ...prev, [meterKey]: false }))
-              }, 1600)
+              timers[meterKey] = window.setTimeout(() => liveStore.setClip(meterKey, false), 1600)
             }
           })
         })
@@ -954,18 +1001,27 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       recRafRef.current = null
       return
     }
+    // Every frame goes to the live store; React state only ~10×/s so the editor is not
+    // re-rendered 60 times a second for a clock that shows whole seconds.
+    let lastState = 0
     const tick = () => {
       const elapsed = (performance.now() - recStartedAtRef.current) / 1000
       const t = punchRef.current + Math.max(0, elapsed)
-      setRecClock(t)
-      setHead(t)
+      liveStore.set({ recClock: t, playhead: t })
+      playheadRef.current = t
+      const now = performance.now()
+      if (now - lastState >= 100) {
+        lastState = now
+        setRecClock(t)
+        setHead(t)
+      }
       recRafRef.current = requestAnimationFrame(tick)
     }
     recRafRef.current = requestAnimationFrame(tick)
     return () => {
       if (recRafRef.current) cancelAnimationFrame(recRafRef.current)
     }
-  }, [recording, setHead])
+  }, [recording, setHead, liveStore])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -1044,7 +1100,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       }
       if ((event.key === 'Backspace' || event.key === 'Delete') && !recording) {
         event.preventDefault()
-        editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, event.shiftKey), event.shiftKey ? 'Ripple-deleted range' : 'Cut hole in lane')
+        if (event.shiftKey && applyRangeAll) rippleDeleteEverything()
+        else editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, event.shiftKey), event.shiftKey ? 'Ripple-deleted range' : 'Cut hole in lane')
       }
       if ((event.key === 'm' || event.key === 'M') && !recording && event.shiftKey) {
         event.preventDefault()
@@ -1154,6 +1211,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       })),
     )
     setCameraClips(prev.cameras.map((c) => normalizeCameraClip({ ...c })))
+    setSwitchEdl(prev.switchEdl || [])
     setSelectedId(prev.selectedId)
     setSelectedCamClipId(prev.selectedCamClipId)
     setApplied([])
@@ -1716,7 +1774,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setRecTally(countInBeats > 0 ? 'count-in' : 'rec')
     setError(null)
     setOk(null)
-    setInputPeaks({})
+    liveStore.resetPeaks()
     stopMix()
 
     try {
@@ -1726,6 +1784,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       idleStreamRef.current = []
       // Storage-quota preflight — crash-safe autosave needs room to checkpoint.
       if (episodeId) {
+        // Ask the browser not to evict the studio's storage (checkpoints + autosave) under pressure.
+        void requestPersistentStorage()
         const quota = await checkStorageQuota()
         if (quota.supported && quota.low) {
           setError(
@@ -1760,14 +1820,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         if (!stream) return () => {}
         const meterKey = job.sharedNames.join(' + ') || 'mic'
         return attachInputMeter(stream, (peak) => {
-          setInputPeaks((prev) => ({ ...prev, [meterKey]: peak }))
+          liveStore.setPeak(meterKey, peak)
           if (peak >= 0.98) {
-            setClipHolds((prev) => ({ ...prev, [meterKey]: true }))
+            liveStore.setClip(meterKey, true)
             const timers = clipTimerRef.current
             if (timers[meterKey]) window.clearTimeout(timers[meterKey])
-            timers[meterKey] = window.setTimeout(() => {
-              setClipHolds((prev) => ({ ...prev, [meterKey]: false }))
-            }, 1600)
+            timers[meterKey] = window.setTimeout(() => liveStore.setClip(meterKey, false), 1600)
           }
         })
       })
@@ -1780,10 +1838,19 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         /* ignore */
       }
 
+      // One shared 48 kHz context for the count-in, the cue mix and every mic capture, so
+      // their frame clocks are directly comparable (sample-accurate punch alignment).
+      let sessionCtx = sessionCtxRef.current
+      if (!sessionCtx || sessionCtx.state === 'closed') {
+        sessionCtx = createSessionContext()
+        sessionCtxRef.current = sessionCtx
+      }
+      await sessionCtx.resume().catch(() => {})
+
       if (countInBeats > 0) {
         setRecTally('count-in')
         setOk('Count-in…')
-        await playCountIn(countInBeats, bpm, ac.signal)
+        await playCountIn(countInBeats, bpm, ac.signal, sessionCtx)
       }
 
       setRecTally('rec')
@@ -1795,6 +1862,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           excludeIds,
           gain: cueGain,
           monitor: cueEnabled,
+          context: sessionCtx,
         })
         cueRef.current = cue
         publishGuestCue(cue)
@@ -1805,9 +1873,10 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
 
       const recTrim = Math.max(0, prerollSec)
-      const captureRate = cueRef.current?.ctx.sampleRate || sampleRateProbe()
+      const captureRate = sessionCtx.sampleRate || cueRef.current?.ctx.sampleRate || sampleRateProbe()
       watchdogsRef.current = []
-      const captures = await Promise.all(
+      // Per-lane failure isolation: one mic that will not open must not cancel the others.
+      const settled = await Promise.allSettled(
         jobs.map(async (job) => {
           const stream = streams.get(job.key)
           if (!stream) {
@@ -1839,9 +1908,29 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           return {
             job,
             checkpoint,
-            capture: await startLaneCapture(job.lane.id, stream, { checkpoint, watchdog }),
+            capture: await startLaneCapture(job.lane.id, stream, { checkpoint, watchdog, context: sessionCtx }),
           }
         }),
+      )
+      const captures = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+      const laneFailures = settled.flatMap((r, i) =>
+        r.status === 'rejected'
+          ? [`${jobs[i].sharedNames.join(' + ') || 'Voice'}: ${r.reason instanceof Error ? r.reason.message : 'could not start'}`]
+          : [],
+      )
+      if (captures.length === 0) {
+        throw new Error(laneFailures[0] || 'No microphone could be started')
+      }
+      if (laneFailures.length) {
+        notifyError('Recording without every voice', `${laneFailures.join(' · ')} — the other mics are rolling.`)
+      }
+      // Device / permission watchdog: unplugged mic, OS mute, permission pulled, Safari interruption.
+      inputWatchStopRef.current?.()
+      setInputLost(null)
+      inputWatchStopRef.current = watchInputs(
+        captures.map((c) => ({ label: c.job.sharedNames.join(' + ') || 'Mic', stream: streams.get(c.job.key)! })),
+        (label, reason) => setInputLost(`${label} ${reason}`),
+        [sessionCtx],
       )
       capturesRef.current = captures.map((c) => c.capture)
       recorderRef.current = captures.map((c) => c.capture)
@@ -1849,10 +1938,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       const camCaptures = camJobs.map((job) => startCameraCapture(job.person.id, job.stream))
       cameraCapturesRef.current = camCaptures
 
+      const cueForAlign = cueRef.current
       void Promise.all([
-        Promise.all(captures.map((c) => c.capture.done)),
+        Promise.allSettled(captures.map((c) => c.capture.done)),
         Promise.all(camCaptures.map((c) => c.done.catch(() => new Blob()))),
-      ]).then(async ([blobs, camBlobs]) => {
+      ]).then(async ([blobResults, camBlobs]) => {
+        const blobs = blobResults.map((r) => (r.status === 'fulfilled' ? r.value : null))
         finishRecCleanup()
         stopLocalRecordStreams()
         recorderRef.current = []
@@ -1873,19 +1964,37 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         )
         try {
           pushHistory()
-          const decoded: { lane: StudioTrack; buffer: AudioBuffer; sharedNames: string[] }[] = []
+          const decoded: { lane: StudioTrack; buffer: AudioBuffer; sharedNames: string[]; late: number }[] = []
           for (let i = 0; i < captures.length; i++) {
             const blob = blobs[i]
-            if (!blob || blob.size < 64) continue
-            let buffer = await bufferFromBlob(blob)
-            if (recTrim > 0.04) {
-              if (buffer.duration <= recTrim + 0.08) continue
-              buffer = sliceBuffer(buffer, recTrim, buffer.duration)
+            const capture = captures[i].capture
+            // Worklet captures hand back their float result directly (no WAV decode round-trip).
+            let buffer = capture.buffer?.() || null
+            if (!buffer) {
+              if (!blob || blob.size < 64) continue
+              buffer = await bufferFromBlob(blob)
+            }
+            // Preroll + device/round-trip latency (+ cue-vs-capture frame delta when they share a
+            // clock). Negative = the capture began after the punch point: lay it later, don't trim.
+            const align = capture.timing
+              ? punchAlignSec({
+                  prerollSec: recTrim,
+                  capture,
+                  cue: cueForAlign,
+                  compensateLatency: captures[i].job.key !== REMOTE_GUEST_KEY,
+                })
+              : recTrim
+            const trim = Math.max(0, align)
+            const late = Math.max(0, -align)
+            if (trim > 0.04) {
+              if (buffer.duration <= trim + 0.08) continue
+              buffer = sliceBuffer(buffer, trim, buffer.duration)
             }
             decoded.push({
               lane: captures[i].job.lane,
               buffer,
               sharedNames: captures[i].job.sharedNames,
+              late,
             })
           }
           if (decoded.length === 0 && camCaptures.length === 0) {
@@ -1900,13 +2009,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             let next = prev
             const laidIds: string[] = []
             const cleanup = voiceIsolate ? VOICE_CLEANUP_INSERTS.map((s) => ({ ...s })) : null
-            for (const { lane, buffer, sharedNames } of decoded) {
+            for (const { lane, buffer, sharedNames, late } of decoded) {
               const person = people.find((p) => p.id === lane.personId)
               const reuse =
                 replaceArmed && lane.buffer
                   ? next.find((t) => t.id === lane.id)
                   : emptyTakeForPerson(next, lane.personId) || (lane.buffer ? null : next.find((t) => t.id === lane.id))
-              const offset = replaceArmed && reuse?.buffer ? reuse.offset : punch
+              const offset = (replaceArmed && reuse?.buffer ? reuse.offset : punch) + late
               const syncGroup = newSyncGroupId()
               const takeLabel =
                 sharedNames.length > 1
@@ -1947,12 +2056,12 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   personId: lane.personId,
                   take,
                   color: person?.color || lane.color,
-                  offset: punch,
+                  offset,
                   armed: true,
                   volume: 1,
                   listen: true,
                   inserts: cleanup || [],
-                  clips: [fullClipForBuffer(buffer, punch, 0.05, 0.15, syncGroup)],
+                  clips: [fullClipForBuffer(buffer, offset, 0.05, 0.15, syncGroup)],
                 })
                 made.buffer = cloneAudioBuffer(buffer)
                 made.url = bufferToUrl(buffer)
@@ -2009,7 +2118,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           if (decoded.length > 0) {
             setOk(
               decoded.length > 1
-                ? `Host + Guest takes at ${formatClock(punch)} — two mics, one punch${autoMuteQuiet ? ' · quieter mic muted on the timeline' : ''}${voiceIsolate ? ' · isolate on the insert rack' : ''}${camNote}`
+                ? `Host + Guest takes at ${formatClock(punch)} — two mics, one punch${autoMuteQuiet ? ' · quieter mic ducks while the other talks' : ''}${voiceIsolate ? ' · isolate on the insert rack' : ''}${camNote}`
                 : decoded[0]?.sharedNames.length > 1
                   ? `Shared mic — ${decoded[0].sharedNames.join(' + ')} on one take at ${formatClock(punch)}${camNote}`
                   : `Take at ${formatClock(punch)}${camNote}`,
@@ -2078,6 +2187,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   }
 
   function finishRecCleanup() {
+    inputWatchStopRef.current?.()
+    inputWatchStopRef.current = null
     cueRef.current?.stop()
     cueRef.current = null
     publishGuestCue(mixRef.current)
@@ -2420,14 +2531,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   function followTalkerNow() {
     const armed = tracks.filter((t) => t.armed && t.buffer)
     if (armed.length < 2) {
-      setError('Arm two recorded takes, then Follow talker. Recordings stay; only clips mute.')
+      setError('Arm two recorded takes, then Follow talker. Recordings stay; only the volume moves.')
       return
     }
     pushHistory()
     const result = applyFollowTalker(tracks, armed[0].id, armed[1].id)
     setTracks(result.tracks)
     setOk(
-      `Quieter mic muted on the timeline (${formatClock(result.mutedA)} / ${formatClock(result.mutedB)}). Both recordings kept.`,
+      `Follow talker: gain-sharing automation written (ducked ${formatClock(result.mutedA)} / ${formatClock(result.mutedB)}). Both recordings kept — no hard mutes.`,
     )
   }
 
@@ -2451,6 +2562,29 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     pushHistory()
     setTracks((prev) => prev.map((t) => (ids.includes(t.id) ? fn(t) : t)))
     notifyOk(label)
+  }
+
+  /**
+   * Ripple delete on the whole session clock: the range leaves every audio lane, every
+   * picture lane and the camera-switch cuts, and everything after it moves left together —
+   * linked picture never drifts from its audio. (Per-lane ripple stays on the lane tools.)
+   */
+  function rippleDeleteEverything() {
+    const cur = rangeRef.current
+    const a = Math.min(cur.start, cur.end)
+    const b = Math.max(cur.start, cur.end)
+    if (b - a < 0.05) {
+      notifyError('Select a range first', 'Drag a range on the timeline, then Ripple delete')
+      return
+    }
+    pushHistory()
+    const next = rippleDeleteSession({ tracks, cameras: cameraClips, switchEdl }, a, b)
+    setTracks(next.tracks)
+    setCameraClips(next.cameras)
+    setSwitchEdl(next.switchEdl)
+    notifyOk(`Ripple-deleted ${formatClock(b - a)} from every lane`, {
+      description: 'Audio, picture and camera cuts all moved together — nothing drifts.',
+    })
   }
 
   function splitSelectedAtPlayhead() {
@@ -2572,10 +2706,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     setBusy(mode === 'pip' ? 'Encoding Host + Guest PIP…' : 'Encoding A-roll…')
     setError(null)
     try {
-      const prepared = await tracksWithInserts(tracks)
-      let mixed = mixdownTracks(prepared)
-      mixed = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
-      if (matchLufs) mixed = applyGainAndFades(mixed, gainForTargetLufs(measureLoudness(mixed).lufs, PODCAST_LUFS), 0, 0)
+      const mixed = await buildMasterMix(false)
       const overlays = cameraClips.filter((c) => cameraLayer(c) === 'overlay')
       const { blob, realtime: usedRealtime } = await renderPictureMix({
         mode,
@@ -2712,6 +2843,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       notifyError('Nothing to export', 'Record or import onto a track first')
       return
     }
+    if (!confirmReplaceAudio(resolveExportRange('full', range, sessionLen))) return
     setError(null)
     setOk(null)
     const notes: string[] = []
@@ -2769,10 +2901,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     try {
       const prepared = await tracksWithInserts(tracks)
       const files: { name: string; data: Uint8Array }[] = []
-      let mixed = mixdownTracks(prepared)
-      mixed = applyGainAndFades(mixed, masterGain, masterFadeIn, masterFadeOut)
-      if (matchLufs) mixed = applyGainAndFades(mixed, gainForTargetLufs(measureLoudness(mixed).lufs, PODCAST_LUFS), 0, 0)
-      const mixBytes = new Uint8Array(await (await encodeMp3(mixed)).arrayBuffer())
+      // Same master render as the feed file (mixdown → gain/fades → loudness → true-peak limiter).
+      const mixed = await buildMasterMix(false)
+      const mixBytes = new Uint8Array(await (await encodeMp3(mixed, { tags: { title } })).arrayBuffer())
       files.push({ name: `${slugFile(title)}-mix.mp3`, data: mixBytes })
       for (const track of prepared) {
         if (!track.buffer) continue
@@ -2810,16 +2941,41 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
    */
   async function buildMasterMix(scopeToRange: boolean): Promise<AudioBuffer> {
     const prepared = await tracksWithInserts(tracks)
-    const mixedRaw =
-      scopeToRange && range.end > range.start + 0.05 && range.end < sessionLen - 0.05
-        ? mixdownTracks(prepared, { startSec: range.start, endSec: range.end })
-        : mixdownTracks(prepared)
-    let mixed = applyGainAndFades(mixedRaw, masterGain, masterFadeIn, masterFadeOut)
-    if (matchLufs) {
-      const loud = measureLoudness(mixed)
-      mixed = applyGainAndFades(mixed, gainForTargetLufs(loud.lufs, PODCAST_LUFS), 0, 0)
+    // Whole episode unless the host explicitly chose "Selection only" (and one exists).
+    const win = resolveExportRange(scopeToRange ? exportScope : 'full', range, sessionLen)
+    const { buffer, lufs, truePeakDb } = await renderMaster(prepared, {
+      startSec: win.isFull ? undefined : win.start,
+      endSec: win.isFull ? undefined : win.end,
+      matchLufs,
+      targetLufs: PODCAST_LUFS,
+      gainDb: masterGain > 0 ? 20 * Math.log10(masterGain) : -80,
+      fadeInSec: masterFadeIn,
+      fadeOutSec: masterFadeOut,
+    })
+    if (Number.isFinite(lufs)) setLoudness({ lufs, peakDb: truePeakDb })
+    return buffer
+  }
+
+  /** The export window the standalone audio export will use (for the UI readout + confirms). */
+  const exportWindow = resolveExportRange(exportScope, range, sessionLen)
+  const hasSelection = selectionOf(range, sessionLen) != null && !resolveExportRange('selection', range, sessionLen).isFull
+
+  /**
+   * Saving over existing episode audio asks first; over a published episode it asks harder.
+   * A far-too-short selection export is called out in the same dialog.
+   */
+  function confirmReplaceAudio(win: ReturnType<typeof resolveExportRange>): boolean {
+    const notes: string[] = []
+    const short = shortExportWarning(win, sessionLen)
+    if (short) notes.push(short)
+    const warn = replaceWarning({ hasExistingAudio: Boolean(audioUrl), published: episodeStatus === 'published' })
+    if (warn === 'published') {
+      notes.push('This episode is already published. Saving replaces the audio listeners get from the feed.')
+    } else if (warn === 'replace') {
+      notes.push('This replaces the audio already saved on this episode.')
     }
-    return applyEffect(mixed, 'limit')
+    if (notes.length === 0) return true
+    return window.confirm(`${notes.join('\n\n')}\n\nSave ${describeExportRange(win)}?`)
   }
 
   /**
@@ -2839,6 +2995,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       setError('Nothing to export — record or import onto a track first')
       return
     }
+    // The combined action already confirmed; the standalone export confirms here.
+    if (!prebuiltMaster && !confirmReplaceAudio(exportWindow)) return
     if (manageBusy) {
       setBusy(thenPublish ? 'Mixing, saving & preparing publish…' : kind === 'wav' ? 'Mixing WAV…' : 'Mixing MP3…')
       setError(null)
@@ -2846,11 +3004,19 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     }
     try {
       // Reuse the shared master when the combined action already built it; otherwise
-      // build one here (honoring a selected range for the standalone audio export).
+      // build one here (honoring an explicit "Selection only" for the standalone export).
       const mixed = prebuiltMaster ?? (await buildMasterMix(true))
       const after = measureLoudness(mixed)
       if (Number.isFinite(after.lufs)) setLoudness({ lufs: after.lufs, peakDb: after.peakDb })
-      const blob = kind === 'wav' ? encodeWav(mixed) : await encodeMp3(mixed)
+      const blob =
+        kind === 'wav'
+          ? encodeWav(mixed)
+          : await encodeMp3(mixed, {
+              tags: {
+                title,
+                chapters: (chapters || []).map((c) => ({ title: c.title, startSec: c.start_ms / 1000 })),
+              },
+            })
       const ext = kind === 'wav' ? 'wav' : 'mp3'
       const file = new File(
         [blob],
@@ -2905,6 +3071,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       }
 
       await onExported(file, durationSeconds)
+      setDirty(false)
       if (warnings.length) {
         notifyError('Saved — check before publish', warnings.join(' · '))
       }
@@ -3106,43 +3273,27 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
 
       <div className="p-4 space-y-4">
         {showRecord && (recover || crashTakes.length > 0) && sessionStatus === 'offer' && (
-          <div className="rounded-xl border border-[#53D6FF]/40 bg-[#0A1820] px-4 py-3 flex flex-wrap items-center gap-3">
-            {crashTakes.length > 0 && (
-              <p className="text-sm text-[#FFB86B] flex-1 min-w-[12rem] w-full">
-                A previous session ended mid-take. {crashTakes.length} in-progress recording
-                {crashTakes.length === 1 ? '' : 's'} ({crashTakes.map((t) => t.label).join(', ')}) were
-                checkpointed and can be recovered.
-              </p>
-            )}
-            {recover && (
-              <p className="text-sm text-[#F6FAFC] flex-1 min-w-[12rem]">
-                Recover {recover.takeCount} take{recover.takeCount === 1 ? '' : 's'}
-                {recover.cameraCount
-                  ? ` + ${recover.cameraCount} camera file${recover.cameraCount === 1 ? '' : 's'}`
-                  : ''}{' '}
-                ({formatClock(recover.durationSec)}) saved {new Date(recover.savedAt).toLocaleTimeString()} on
-                this computer.
-              </p>
-            )}
-            {crashTakes.length > 0 && (
-              <button type="button" className={primary} onClick={() => void restoreCrashTakes()}>
-                Recover in-progress take
-              </button>
-            )}
-            {recover && (
-              <button type="button" className={primary} onClick={() => void restoreSavedSession()}>
-                Restore
-              </button>
-            )}
-            <button type="button" className={btn} onClick={() => dismissRecover(false)}>
-              Keep empty
-            </button>
-            <button type="button" className={btn} onClick={() => dismissRecover(true)}>
-              Discard saved
-            </button>
-          </div>
+          <RecoveryBanner
+            episodeId={episodeId}
+            saved={recover}
+            crashTakes={crashTakes}
+            busy={busy != null}
+            onRestoreCrashTakes={() => void restoreCrashTakes()}
+            onRestoreSession={() => void restoreSavedSession()}
+            onDecideLater={() => dismissRecover(false)}
+            onDelete={() => dismissRecover(true)}
+            onOk={(m) => notifyOk(m)}
+            onError={(m) => notifyError(m)}
+          />
         )}
 
+        {showRecord && recording && inputLost && (
+          <div className="rounded-xl border border-[#FF7A9A]/60 bg-[#20101A] px-4 py-3" role="alert">
+            <p className="text-sm text-[#FF7A9A]">
+              {inputLost}. The take keeps recording what still arrives — reconnect the device, or stop and re-record.
+            </p>
+          </div>
+        )}
         {showRecord && recording && recFlowStalled && (
           <div className="rounded-xl border border-[#FF7A9A]/60 bg-[#20101A] px-4 py-3">
             <p className="text-sm text-[#FF7A9A]">
@@ -3689,7 +3840,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             </label>
             <label className="inline-flex items-center gap-1.5">
               <input type="checkbox" checked={autoMuteQuiet} onChange={(e) => setAutoMuteQuiet(e.target.checked)} />
-              Auto-mute quieter mic
+              Auto-duck quieter mic
             </label>
             <label className="inline-flex items-center gap-1.5">
               <input type="checkbox" checked={voiceIsolate} onChange={(e) => setVoiceIsolate(e.target.checked)} />
@@ -3717,25 +3868,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </div>
           {(recording || anyArmed) && (
             <div className="space-y-1.5">
-              {Object.keys(inputPeaks).length === 0 && (
-                <div className="flex items-center gap-3">
-                  <Meter level={0} aria-label="Input level" className="flex-1" />
-                  <span className="studio-type-timecode text-silver">{recording ? `in ${formatClock(recClock)}` : 'idle'}</span>
-                </div>
-              )}
-              {Object.entries(inputPeaks).map(([key, peak]) => (
-                <div key={key} className="flex items-center gap-3">
-                  <span className="studio-type-label w-16 truncate text-[#7C8B97]">{key}</span>
-                  <Meter
-                    level={Math.min(1, peak * 1.4)}
-                    aria-label={`${key} input level`}
-                    className={clipHolds[key] ? 'shadow-rec' : undefined}
-                  />
-                  <span className={`studio-type-timecode ${clipHolds[key] ? 'text-heart' : 'text-silver'}`}>
-                    {clipHolds[key] ? 'CLIP' : recording ? `in ${formatClock(recClock)}` : 'idle'}
-                  </span>
-                </div>
-              ))}
+              <LiveStoreContext.Provider value={liveStore}>
+                <LiveMeters recording={recording} />
+              </LiveStoreContext.Provider>
             </div>
           )}
           {recHint && (
@@ -3745,7 +3880,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 ? remoteGuest
                   ? ' Remote guest is a second input — Host local, Guest booth, one punch.'
                   : armedDeviceCount > 1
-                    ? ' Two mics, one punch — quieter lane mutes while the other person talks. Both recordings keep rolling.'
+                    ? ' Two mics, one punch — quieter lane ducks (never hard-mutes) while the other person talks. Both recordings keep rolling.'
                     : ' Shared mic — Host and Guest record onto one take.'
                 : ''}{' '}
               Space / L plays. J / K / L is the playhead. R records. S splits audio. V splits picture. Delete cuts a hole. 1–0 drops SFX. C marks a chapter.
@@ -3988,9 +4123,18 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   variant="secondary"
                   size="dense"
                   disabled={!selected?.buffer}
-                  onClick={() => editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, true), 'Ripple delete')}
+                  onClick={() =>
+                    applyRangeAll
+                      ? rippleDeleteEverything()
+                      : editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, true), 'Ripple delete')
+                  }
+                  title={
+                    applyRangeAll
+                      ? 'Remove the range from every audio lane, every picture lane and the camera cuts, then close the gap'
+                      : 'Remove the range from this lane and pull the rest of the lane left'
+                  }
                 >
-                  Ripple delete
+                  {applyRangeAll ? 'Ripple delete (all + picture)' : 'Ripple delete'}
                 </Button>
               </div>
             </details>
@@ -4737,7 +4881,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         {/* Master bus / playhead */}
         <div>
           <p className="studio-type-label text-ice mb-2">
-            Playhead {formatClock(playhead)} · export {formatClock(range.start)} – {formatClock(range.end)}
+            Playhead {formatClock(playhead)} · save {describeExportRange(exportWindow)}
           </p>
           <button
             type="button"
@@ -5056,6 +5200,23 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             <input type="checkbox" checked={matchLufs} onChange={(e) => setMatchLufs(e.target.checked)} />
             Match {PODCAST_LUFS} LUFS
           </label>
+          {hasSelection && (
+            <span className="inline-flex items-center gap-2 text-xs text-[#A9B8C6]">
+              <SegmentedControl
+                size="dense"
+                aria-label="What the audio-only export saves"
+                options={[
+                  { value: 'full', label: 'Whole episode' },
+                  { value: 'selection', label: 'Selection only' },
+                ]}
+                value={exportScope}
+                onValueChange={setExportScope}
+              />
+              <span title="Applies to the Audio only buttons. Export episode always saves the whole episode.">
+                {describeExportRange(exportWindow)}
+              </span>
+            </span>
+          )}
           <Button
             variant="secondary"
             size="compact"
@@ -5103,7 +5264,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
         {(showAll || showEdit) && (
         <p className="text-[11px] text-[#A9B8C6]">
-          After the mix lays the next person at the end of the session. After my last take is a pickup. Cue mix plays live from the other lanes — no bounce before Record. Record capture starts with preroll and trims to punch. Two mics auto-mute the quieter lane (recordings keep rolling). Isolate uses RNNoise on the insert rack. Cam on a voice card is a real local preview; Record also writes a parallel camera file on the same clock (autosaved in this browser, not episode audio_url). Linked moves can nudge picture; Unlinked edits audio and video apart. A broken-sync badge shows if in-points drift. Punch with Cam off lays new audio under existing picture. Preview is live cameras; Program is punched/edited output (titles, B-roll, stingers, keyframes, dissolves, color). Host / Guest / PIP is the Program scene — Cut or Fade takes Preview to Program. Stinger is a black or title flash on the picture clock. Keyframes move opacity and position on the selected clip. Lower third and B-roll sit on the picture lane. Dissolve overlaps the next clip. Color is a non-destructive insert. Chapters (C) tick on the camera lane. V splits picture; J/K/L is the playhead. If this browser runs out of space, takes still save and you are told to download the camera files. Remote guest can send live camera on the same WebRTC peer, plus a local camera backup if the peer is thin. Download A-roll / PIP follows edited clip offsets and encodes as fast as this computer can (WebCodecs); the public feed stays audio. A picks the default audible take; Comp assigns a range to another take; L layers. Drag a range on the music lane to duck without a second track. Export can match −16 LUFS; stems zip is a local download. Mix is hosted on your site (Supabase media). Public feed{' '}
+          After the mix lays the next person at the end of the session. After my last take is a pickup. Cue mix plays live from the other lanes — no bounce before Record. Record capture starts with preroll and trims to punch. Two mics auto-duck the quieter lane with gain-sharing automation (recordings keep rolling). Isolate uses RNNoise on the insert rack. Cam on a voice card is a real local preview; Record also writes a parallel camera file on the same clock (autosaved in this browser, not episode audio_url). Linked moves can nudge picture; Unlinked edits audio and video apart. A broken-sync badge shows if in-points drift. Punch with Cam off lays new audio under existing picture. Preview is live cameras; Program is punched/edited output (titles, B-roll, stingers, keyframes, dissolves, color). Host / Guest / PIP is the Program scene — Cut or Fade takes Preview to Program. Stinger is a black or title flash on the picture clock. Keyframes move opacity and position on the selected clip. Lower third and B-roll sit on the picture lane. Dissolve overlaps the next clip. Color is a non-destructive insert. Chapters (C) tick on the camera lane. V splits picture; J/K/L is the playhead. If this browser runs out of space, takes still save and you are told to download the camera files. Remote guest can send live camera on the same WebRTC peer, plus a local camera backup if the peer is thin. Download A-roll / PIP follows edited clip offsets and encodes as fast as this computer can (WebCodecs); the public feed stays audio. A picks the default audible take; Comp assigns a range to another take; L layers. Drag a range on the music lane to duck without a second track. Export can match −16 LUFS; stems zip is a local download. Mix is hosted on your site (Supabase media). Public feed{' '}
           <code className="text-[#8DEBFF]">/podcast/rss.xml</code> powers Apple Podcasts, Spotify for
           Podcasters, and Amazon Music — submit that URL once; new published mixes appear automatically.
         </p>

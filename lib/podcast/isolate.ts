@@ -3,8 +3,11 @@
  *
  * Primary: RNNoise (Xiph, via @shiguredo/rnnoise-wasm, Apache-2.0) — the same
  * family Jitsi uses. Fallback: Boll-style spectral subtraction + rumble cut.
- * Capture still uses Chrome/WebRTC AEC + NS + optional voiceIsolation.
+ * Capture now records the RAW mic by default (capture.ts `processing: 'raw'`); cleanup
+ * happens here, after the fact, on the insert rack.
  */
+
+import { resampleSinc } from '@/lib/podcast/engine/resample'
 
 const RNN_RATE = 48000
 const PCM_SCALE = 32768
@@ -20,19 +23,9 @@ function mixMono(buffer: AudioBuffer) {
   return out
 }
 
+/** Band-limited (windowed-sinc) resample — no aliasing / imaging like linear interpolation. */
 function resample(data: Float32Array, fromRate: number, toRate: number) {
-  if (fromRate === toRate) return data
-  const ratio = toRate / fromRate
-  const length = Math.max(1, Math.round(data.length * ratio))
-  const out = new Float32Array(length)
-  for (let i = 0; i < length; i++) {
-    const src = i / ratio
-    const i0 = Math.min(data.length - 1, Math.floor(src))
-    const i1 = Math.min(data.length - 1, i0 + 1)
-    const frac = src - i0
-    out[i] = data[i0] * (1 - frac) + data[i1] * frac
-  }
-  return out
+  return resampleSinc(data, fromRate, toRate)
 }
 
 function toBuffer(data: Float32Array, sampleRate: number, channels: number): AudioBuffer {
@@ -68,7 +61,10 @@ async function rnnoiseIsolate(buffer: AudioBuffer): Promise<AudioBuffer | null> 
   const frameSize = rnn.frameSize
   const mono = mixMono(buffer)
   const at48 = resample(mono, buffer.sampleRate, RNN_RATE)
-  const padded = Math.ceil(at48.length / frameSize) * frameSize
+  // RNNoise's overlap-add synthesis delays output by one frame (480 samples @ 48 kHz).
+  // Feed one extra frame of silence to flush the tail, then read from `delay` onward.
+  const delay = frameSize
+  const padded = Math.ceil((at48.length + delay) / frameSize) * frameSize
   const work = new Float32Array(padded)
   work.set(at48)
   const state = rnn.createDenoiseState()
@@ -82,7 +78,8 @@ async function rnnoiseIsolate(buffer: AudioBuffer): Promise<AudioBuffer | null> 
   } finally {
     state.destroy()
   }
-  const restored = resample(work.subarray(0, at48.length), RNN_RATE, buffer.sampleRate)
+  const aligned = work.subarray(delay, delay + at48.length)
+  const restored = resample(aligned, RNN_RATE, buffer.sampleRate)
   const length = Math.min(restored.length, buffer.length)
   const out = new AudioBuffer({
     length: buffer.length,
