@@ -57,6 +57,7 @@ import {
   cropToRange,
   deleteRange,
   duckWithSidechain,
+  rippleDeleteSession,
   duplicateClipAt,
   fullClipForBuffer,
   joinAdjacentClips,
@@ -268,6 +269,7 @@ type Props = {
 type Snapshot = {
   tracks: StudioTrack[]
   cameras: CameraClip[]
+  switchEdl: SwitchEDL
   selectedId: string | null
   selectedCamClipId: string | null
 }
@@ -523,12 +525,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     historyRef.current.push({
       tracks: snapshotTracks(tracks),
       cameras: cameraClips.map((c) => ({ ...c })),
+      switchEdl: switchEdl.map((e) => ({ ...e })),
       selectedId,
       selectedCamClipId,
     })
     if (historyRef.current.length > 20) historyRef.current.shift()
     setHistoryLen(historyRef.current.length)
-  }, [tracks, cameraClips, selectedId, selectedCamClipId])
+  }, [tracks, cameraClips, switchEdl, selectedId, selectedCamClipId])
 
   const onRemoteGuestStream = useCallback((stream: MediaStream | null) => {
     remoteGuestRef.current = stream
@@ -1096,7 +1099,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       }
       if ((event.key === 'Backspace' || event.key === 'Delete') && !recording) {
         event.preventDefault()
-        editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, event.shiftKey), event.shiftKey ? 'Ripple-deleted range' : 'Cut hole in lane')
+        if (event.shiftKey && applyRangeAll) rippleDeleteEverything()
+        else editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, event.shiftKey), event.shiftKey ? 'Ripple-deleted range' : 'Cut hole in lane')
       }
       if ((event.key === 'm' || event.key === 'M') && !recording && event.shiftKey) {
         event.preventDefault()
@@ -1206,6 +1210,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       })),
     )
     setCameraClips(prev.cameras.map((c) => normalizeCameraClip({ ...c })))
+    setSwitchEdl(prev.switchEdl || [])
     setSelectedId(prev.selectedId)
     setSelectedCamClipId(prev.selectedCamClipId)
     setApplied([])
@@ -2110,7 +2115,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           if (decoded.length > 0) {
             setOk(
               decoded.length > 1
-                ? `Host + Guest takes at ${formatClock(punch)} — two mics, one punch${autoMuteQuiet ? ' · quieter mic muted on the timeline' : ''}${voiceIsolate ? ' · isolate on the insert rack' : ''}${camNote}`
+                ? `Host + Guest takes at ${formatClock(punch)} — two mics, one punch${autoMuteQuiet ? ' · quieter mic ducks while the other talks' : ''}${voiceIsolate ? ' · isolate on the insert rack' : ''}${camNote}`
                 : decoded[0]?.sharedNames.length > 1
                   ? `Shared mic — ${decoded[0].sharedNames.join(' + ')} on one take at ${formatClock(punch)}${camNote}`
                   : `Take at ${formatClock(punch)}${camNote}`,
@@ -2523,14 +2528,14 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   function followTalkerNow() {
     const armed = tracks.filter((t) => t.armed && t.buffer)
     if (armed.length < 2) {
-      setError('Arm two recorded takes, then Follow talker. Recordings stay; only clips mute.')
+      setError('Arm two recorded takes, then Follow talker. Recordings stay; only the volume moves.')
       return
     }
     pushHistory()
     const result = applyFollowTalker(tracks, armed[0].id, armed[1].id)
     setTracks(result.tracks)
     setOk(
-      `Quieter mic muted on the timeline (${formatClock(result.mutedA)} / ${formatClock(result.mutedB)}). Both recordings kept.`,
+      `Follow talker: gain-sharing automation written (ducked ${formatClock(result.mutedA)} / ${formatClock(result.mutedB)}). Both recordings kept — no hard mutes.`,
     )
   }
 
@@ -2554,6 +2559,29 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
     pushHistory()
     setTracks((prev) => prev.map((t) => (ids.includes(t.id) ? fn(t) : t)))
     notifyOk(label)
+  }
+
+  /**
+   * Ripple delete on the whole session clock: the range leaves every audio lane, every
+   * picture lane and the camera-switch cuts, and everything after it moves left together —
+   * linked picture never drifts from its audio. (Per-lane ripple stays on the lane tools.)
+   */
+  function rippleDeleteEverything() {
+    const cur = rangeRef.current
+    const a = Math.min(cur.start, cur.end)
+    const b = Math.max(cur.start, cur.end)
+    if (b - a < 0.05) {
+      notifyError('Select a range first', 'Drag a range on the timeline, then Ripple delete')
+      return
+    }
+    pushHistory()
+    const next = rippleDeleteSession({ tracks, cameras: cameraClips, switchEdl }, a, b)
+    setTracks(next.tracks)
+    setCameraClips(next.cameras)
+    setSwitchEdl(next.switchEdl)
+    notifyOk(`Ripple-deleted ${formatClock(b - a)} from every lane`, {
+      description: 'Audio, picture and camera cuts all moved together — nothing drifts.',
+    })
   }
 
   function splitSelectedAtPlayhead() {
@@ -3809,7 +3837,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
             </label>
             <label className="inline-flex items-center gap-1.5">
               <input type="checkbox" checked={autoMuteQuiet} onChange={(e) => setAutoMuteQuiet(e.target.checked)} />
-              Auto-mute quieter mic
+              Auto-duck quieter mic
             </label>
             <label className="inline-flex items-center gap-1.5">
               <input type="checkbox" checked={voiceIsolate} onChange={(e) => setVoiceIsolate(e.target.checked)} />
@@ -3849,7 +3877,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                 ? remoteGuest
                   ? ' Remote guest is a second input — Host local, Guest booth, one punch.'
                   : armedDeviceCount > 1
-                    ? ' Two mics, one punch — quieter lane mutes while the other person talks. Both recordings keep rolling.'
+                    ? ' Two mics, one punch — quieter lane ducks (never hard-mutes) while the other person talks. Both recordings keep rolling.'
                     : ' Shared mic — Host and Guest record onto one take.'
                 : ''}{' '}
               Space / L plays. J / K / L is the playhead. R records. S splits audio. V splits picture. Delete cuts a hole. 1–0 drops SFX. C marks a chapter.
@@ -4092,9 +4120,18 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
                   variant="secondary"
                   size="dense"
                   disabled={!selected?.buffer}
-                  onClick={() => editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, true), 'Ripple delete')}
+                  onClick={() =>
+                    applyRangeAll
+                      ? rippleDeleteEverything()
+                      : editRange((t) => deleteRange(t, rangeRef.current.start, rangeRef.current.end, true), 'Ripple delete')
+                  }
+                  title={
+                    applyRangeAll
+                      ? 'Remove the range from every audio lane, every picture lane and the camera cuts, then close the gap'
+                      : 'Remove the range from this lane and pull the rest of the lane left'
+                  }
                 >
-                  Ripple delete
+                  {applyRangeAll ? 'Ripple delete (all + picture)' : 'Ripple delete'}
                 </Button>
               </div>
             </details>
@@ -5224,7 +5261,7 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
         {ok && <p className="text-sm text-[#8DEBFF]">{ok}</p>}
         {(showAll || showEdit) && (
         <p className="text-[11px] text-[#A9B8C6]">
-          After the mix lays the next person at the end of the session. After my last take is a pickup. Cue mix plays live from the other lanes — no bounce before Record. Record capture starts with preroll and trims to punch. Two mics auto-mute the quieter lane (recordings keep rolling). Isolate uses RNNoise on the insert rack. Cam on a voice card is a real local preview; Record also writes a parallel camera file on the same clock (autosaved in this browser, not episode audio_url). Linked moves can nudge picture; Unlinked edits audio and video apart. A broken-sync badge shows if in-points drift. Punch with Cam off lays new audio under existing picture. Preview is live cameras; Program is punched/edited output (titles, B-roll, stingers, keyframes, dissolves, color). Host / Guest / PIP is the Program scene — Cut or Fade takes Preview to Program. Stinger is a black or title flash on the picture clock. Keyframes move opacity and position on the selected clip. Lower third and B-roll sit on the picture lane. Dissolve overlaps the next clip. Color is a non-destructive insert. Chapters (C) tick on the camera lane. V splits picture; J/K/L is the playhead. If this browser runs out of space, takes still save and you are told to download the camera files. Remote guest can send live camera on the same WebRTC peer, plus a local camera backup if the peer is thin. Download A-roll / PIP follows edited clip offsets and encodes as fast as this computer can (WebCodecs); the public feed stays audio. A picks the default audible take; Comp assigns a range to another take; L layers. Drag a range on the music lane to duck without a second track. Export can match −16 LUFS; stems zip is a local download. Mix is hosted on your site (Supabase media). Public feed{' '}
+          After the mix lays the next person at the end of the session. After my last take is a pickup. Cue mix plays live from the other lanes — no bounce before Record. Record capture starts with preroll and trims to punch. Two mics auto-duck the quieter lane with gain-sharing automation (recordings keep rolling). Isolate uses RNNoise on the insert rack. Cam on a voice card is a real local preview; Record also writes a parallel camera file on the same clock (autosaved in this browser, not episode audio_url). Linked moves can nudge picture; Unlinked edits audio and video apart. A broken-sync badge shows if in-points drift. Punch with Cam off lays new audio under existing picture. Preview is live cameras; Program is punched/edited output (titles, B-roll, stingers, keyframes, dissolves, color). Host / Guest / PIP is the Program scene — Cut or Fade takes Preview to Program. Stinger is a black or title flash on the picture clock. Keyframes move opacity and position on the selected clip. Lower third and B-roll sit on the picture lane. Dissolve overlaps the next clip. Color is a non-destructive insert. Chapters (C) tick on the camera lane. V splits picture; J/K/L is the playhead. If this browser runs out of space, takes still save and you are told to download the camera files. Remote guest can send live camera on the same WebRTC peer, plus a local camera backup if the peer is thin. Download A-roll / PIP follows edited clip offsets and encodes as fast as this computer can (WebCodecs); the public feed stays audio. A picks the default audible take; Comp assigns a range to another take; L layers. Drag a range on the music lane to duck without a second track. Export can match −16 LUFS; stems zip is a local download. Mix is hosted on your site (Supabase media). Public feed{' '}
           <code className="text-[#8DEBFF]">/podcast/rss.xml</code> powers Apple Podcasts, Spotify for
           Podcasters, and Amazon Music — submit that URL once; new published mixes appear automatically.
         </p>
