@@ -1226,10 +1226,17 @@ function GuestInvitePanelP2P({
           <p className="studio-type-label inline-flex items-start gap-2 normal-case tracking-normal text-lane-cohost-1">
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <span>
-              Relay (TURN) not configured. Guests on strict or office networks may fail to connect — set TURN_URL + TURN_SECRET
-              (or TURN_USERNAME + TURN_CREDENTIAL), or have the guest use a phone hotspot.
+              Relay server not set up yet — ask your admin. Guests on strict office or school networks may not connect;
+              a phone hotspot usually works meanwhile.
             </span>
           </p>
+          <details className="mt-1">
+            <summary className="studio-type-label cursor-pointer normal-case tracking-normal text-silver-label">For your admin</summary>
+            <p className="studio-type-label mt-1 normal-case tracking-normal text-silver-label">
+              Set <code>TURN_URL</code> + <code>TURN_SECRET</code> (or <code>TURN_USERNAME</code> + <code>TURN_CREDENTIAL</code>) in the
+              site’s environment, then redeploy.
+            </p>
+          </details>
         </div>
       )}
       <p className={HINT}>
@@ -1238,7 +1245,7 @@ function GuestInvitePanelP2P({
         pause screen. Their backup uploads in 10-second parts while you record; Retry uses the same invite — no new token.
       </p>
       {error && (
-        <div className="rounded-control border border-heart/50 bg-heart/10 px-3 py-2">
+        <div className="rounded-control border border-heart/50 bg-heart/10 px-3 py-2" role="alert">
           <p className="studio-type-label inline-flex items-start gap-2 normal-case tracking-normal text-heart">
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <span>{error}</span>
@@ -1400,7 +1407,7 @@ export function GuestTakesPanel({ invite }: { invite: GuestInviteAdmin }) {
               </div>
             )
           })}
-          {error && <p className="studio-type-label normal-case tracking-normal text-heart">{error}</p>}
+          {error && <p className="studio-type-label normal-case tracking-normal text-heart" role="alert">{error}</p>}
           <p className={HINT}>
             Files stay in the private bucket; links used here expire in 10 minutes. “Lay uploaded guest take” in the editor places
             the same audio on the timeline at its start time.
