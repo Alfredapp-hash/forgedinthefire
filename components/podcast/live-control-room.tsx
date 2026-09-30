@@ -55,7 +55,7 @@ import {
   type RecordState,
 } from '@/components/studio-ui'
 import { cn } from '@/lib/utils'
-import { GuestInvitePanel } from '@/components/podcast/guest-invite-panel'
+import { GuestInvitePanel, type RemoteGuestLane } from '@/components/podcast/guest-invite-panel'
 import { LiveChatModerationPanel } from '@/components/podcast/live-chat'
 import { LiveSimulcastCard } from '@/components/podcast/live-simulcast-card'
 import { paintPinnedQuestion } from '@/lib/podcast/live/chat-overlay'
@@ -110,6 +110,8 @@ import {
 } from '@/lib/podcast/live/client'
 import {
   EMPTY_HEALTH,
+  isCameraScene,
+  type LiveCameraScene,
   type LiveHealth,
   type LiveProviderStatus,
   type LiveScene,
@@ -124,7 +126,7 @@ type Props = {
 }
 
 type Phase = 'off' | 'connecting' | 'live' | 'ending' | 'ended'
-type CameraScene = Extract<LiveScene, 'host' | 'guest' | 'pip'>
+type CameraScene = LiveCameraScene
 
 const HEARTBEAT_MS = 60_000
 const END_SLATE_MS = 3000
@@ -133,6 +135,7 @@ const CAMERA_OPTIONS: { value: CameraScene; label: string }[] = [
   { value: 'host', label: 'Host' },
   { value: 'guest', label: 'Guest' },
   { value: 'pip', label: 'PIP' },
+  { value: 'grid', label: 'Grid' },
 ]
 
 /** Studio tone convention (see guest-invite-panel): green = live, amber = wait/warn, heart = fail/rec. */
@@ -218,6 +221,8 @@ export function LiveControlRoom({ episodes = [] }: Props) {
   const [hostStream, setHostStream] = useState<MediaStream | null>(null)
   const [guestStream, setGuestStream] = useState<MediaStream | null>(null)
   const [guestName, setGuestName] = useState<string | null>(null)
+  /** Room guests (2+ invites): one lane each for the grid scene. Empty on the P2P path. */
+  const [guestLanes, setGuestLanes] = useState<RemoteGuestLane[]>([])
 
   // Program
   const [scene, setSceneState] = useState<LiveScene>('starting')
@@ -445,6 +450,14 @@ export function LiveControlRoom({ episodes = [] }: Props) {
     mixRef.current?.setGuest(guestStream)
   }, [guestStream, guestName])
 
+  // Room guests → grid tiles (audio already arrives merged on guestStream via mergeGuestAudio).
+  const onRemoteGuests = useCallback((lanes: RemoteGuestLane[]) => setGuestLanes(lanes), [])
+  useEffect(() => {
+    compositorRef.current?.setGuests(
+      guestLanes.map((lane) => ({ id: lane.inviteId, stream: lane.stream, label: lane.name })),
+    )
+  }, [guestLanes])
+
   useEffect(() => {
     mixRef.current?.setHostMuted(hostMuted)
   }, [hostMuted])
@@ -461,7 +474,7 @@ export function LiveControlRoom({ episodes = [] }: Props) {
   function putScene(next: LiveScene, fade = false) {
     compositorRef.current?.setScene(next, fade)
     setSceneState(next)
-    if (next === 'host' || next === 'guest' || next === 'pip') setLastCamera(next)
+    if (isCameraScene(next)) setLastCamera(next)
   }
 
   function takeCamera(next: CameraScene) {
@@ -1002,7 +1015,7 @@ export function LiveControlRoom({ episodes = [] }: Props) {
   const recordState: RecordState = transportRecordState({ phase, blockers: blockers.length, hasActiveShow: Boolean(active) })
   const recordLabel = transportLabel(transport)
   const recordDisabled = transportDisabled(transport)
-  const cameraValue: CameraScene = scene === 'host' || scene === 'guest' || scene === 'pip' ? scene : lastCamera
+  const cameraValue: CameraScene = isCameraScene(scene) ? scene : lastCamera
 
   return (
     <div className="space-y-4" ref={rootRef}>
@@ -1726,8 +1739,11 @@ export function LiveControlRoom({ episodes = [] }: Props) {
             recTally={recTally}
             hostStream={hostTalkStream}
             onRemoteStream={setGuestStream}
+            onRemoteGuests={onRemoteGuests}
+            mergeGuestAudio
             onGuestName={setGuestName}
             onTakeUrl={noop}
+            safePause={safe}
           />
         ) : (
           <p className="studio-type-body text-silver">

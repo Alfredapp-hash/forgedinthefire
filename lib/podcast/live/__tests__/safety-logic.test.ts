@@ -181,3 +181,15 @@ describe('voice disguise', () => {
     expect(semitonesToRatio(0)).toBe(1)
   })
 })
+
+describe('live scenes', () => {
+  it('grid is a camera scene (overlays paint; fades allowed) and slates are not', async () => {
+    const { isCameraScene } = await import('@/lib/podcast/live/types')
+    const { isSlateScene } = await import('@/lib/podcast/live/compositor')
+    expect(isCameraScene('grid')).toBe(true)
+    expect(isCameraScene('pip')).toBe(true)
+    expect(isCameraScene('slate')).toBe(false)
+    expect(isSlateScene('grid')).toBe(false)
+    expect(isSlateScene('starting')).toBe(true)
+  })
+})

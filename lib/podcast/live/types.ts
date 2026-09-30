@@ -48,8 +48,17 @@ export type LivePublicPayload = {
 
 /**
  * Program scenes the host can put on air. `slate` is the survivor-safety kill switch.
+ * `grid` is host + every room guest in equal tiles (lib/podcast/rooms/layout.ts).
  */
-export type LiveScene = 'host' | 'guest' | 'pip' | 'starting' | 'slate' | 'ended'
+export type LiveScene = 'host' | 'guest' | 'pip' | 'grid' | 'starting' | 'slate' | 'ended'
+
+/** Scenes that show cameras (overlays paint on these; slates never carry them). */
+export const LIVE_CAMERA_SCENES = ['host', 'guest', 'pip', 'grid'] as const
+export type LiveCameraScene = (typeof LIVE_CAMERA_SCENES)[number]
+
+export function isCameraScene(scene: LiveScene): scene is LiveCameraScene {
+  return (LIVE_CAMERA_SCENES as readonly string[]).includes(scene)
+}
 
 export type LiveProviderKind = 'cloudflare' | 'mediamtx' | 'livekit' | 'other'
 

@@ -17,7 +17,8 @@
  */
 
 import { PICTURE_HEIGHT, PICTURE_WIDTH } from '@/lib/podcast/picture'
-import type { LiveScene } from '@/lib/podcast/live/types'
+import { isCameraScene, type LiveScene } from '@/lib/podcast/live/types'
+import { gridCells } from '@/lib/podcast/rooms/layout'
 import {
   createFaceBlurrer,
   paintPrivacyCard,
@@ -40,6 +41,14 @@ export type SlateCopy = {
 
 export type LivePerson = 'host' | 'guest'
 export type VisionState = 'off' | FaceBlurState
+
+/** One room guest for the `grid` scene (see GuestRoomPanel's RemoteGuestLane). */
+export type LiveGuestTile = {
+  /** Stable key (the invite id) so a guest who drops and rejoins keeps their tile and blurrer. */
+  id: string
+  stream: MediaStream | null
+  label: string
+}
 
 type Source = {
   who: LivePerson
@@ -89,6 +98,9 @@ export class LiveCompositor {
   private ctx: CanvasRenderingContext2D
   private host: Source = makeSource('host', 'Host')
   private guest: Source = makeSource('guest', 'Guest')
+  /** Room guests for the `grid` scene, in lane order. Empty on the one-guest P2P path. */
+  private guests: Source[] = []
+  private guestIds: string[] = []
   /** Called after every Program paint (drives the broadcast delay from the same tick). */
   onFrame: (() => void) | null = null
   /** Face-blur state changes per person (loading / ok / stalled / failed / off). */
@@ -138,6 +150,31 @@ export class LiveCompositor {
     this.attach(this.guest, stream, label)
   }
 
+  /**
+   * Room guests for the `grid` scene, in lane order. Tiles are keyed by `id` so a guest
+   * keeps their (blurred) tile across reconnects; a new tile inherits the guest blur setting.
+   */
+  setGuests(tiles: LiveGuestTile[]) {
+    const next: Source[] = []
+    const nextIds: string[] = []
+    for (const tile of tiles) {
+      const idx = this.guestIds.indexOf(tile.id)
+      let src = idx >= 0 ? this.guests[idx] : null
+      if (!src) {
+        src = makeSource('guest', tile.label)
+        if (this.guest.blur) this.applyBlur(src, true)
+      }
+      this.attach(src, tile.stream, tile.label)
+      next.push(src)
+      nextIds.push(tile.id)
+    }
+    for (let i = 0; i < this.guests.length; i++) {
+      if (!nextIds.includes(this.guestIds[i])) this.releaseSource(this.guests[i])
+    }
+    this.guests = next
+    this.guestIds = nextIds
+  }
+
   setCopy(copy: Partial<SlateCopy>) {
     this.copy = { ...this.copy, ...copy }
   }
@@ -152,8 +189,9 @@ export class LiveCompositor {
    */
   setFaceBlur(who: LivePerson, on: boolean) {
     const src = who === 'host' ? this.host : this.guest
-    if (src.blur === on) return
-    this.applyBlur(src, on)
+    if (src.blur !== on) this.applyBlur(src, on)
+    // `guest` covers every guest tile on the grid, never just the first lane.
+    if (who === 'guest') for (const g of this.guests) if (g.blur !== on) this.applyBlur(g, on)
   }
 
   /** Blur one source. */
@@ -190,7 +228,7 @@ export class LiveCompositor {
 
   getFaceBlur(who: LivePerson) {
     const src = who === 'host' ? this.host : this.guest
-    return { on: src.blur, state: src.vision }
+    return { on: src.blur, state: who === 'guest' ? this.worstGuestVision() : src.vision }
   }
 
   /** Paint a hold slate into another context (the air canvas while the delay (re)builds). */
@@ -202,8 +240,7 @@ export class LiveCompositor {
   /** Cut (or short fade between camera layouts). Slates always cut. */
   setScene(next: LiveScene, fade = false) {
     if (next === this.scene) return
-    const camera = (s: LiveScene) => s === 'host' || s === 'guest' || s === 'pip'
-    this.fromScene = fade && camera(next) && camera(this.scene) ? this.scene : null
+    this.fromScene = fade && isCameraScene(next) && isCameraScene(this.scene) ? this.scene : null
     this.fadeStart = performance.now()
     this.scene = next
     this.paint()
@@ -215,7 +252,9 @@ export class LiveCompositor {
     this.worker = null
     if (this.fallbackTimer != null) window.clearInterval(this.fallbackTimer)
     this.fallbackTimer = null
-    for (const src of [this.host, this.guest]) this.releaseSource(src)
+    for (const src of [this.host, this.guest, ...this.guests]) this.releaseSource(src)
+    this.guests = []
+    this.guestIds = []
     this.output?.getTracks().forEach((t) => t.stop())
     this.output = null
   }
@@ -231,7 +270,16 @@ export class LiveCompositor {
   private setVision(src: Source, state: VisionState, detail?: string) {
     if (src.vision === state && state !== 'failed') return
     src.vision = state
-    this.onVision?.(src.who, state, detail)
+    // Every guest tile reports through the `guest` person: the worst state wins so a
+    // silhouette on any guest shows in the control room.
+    this.onVision?.(src.who, src.who === 'guest' ? this.worstGuestVision() : state, detail)
+  }
+
+  private worstGuestVision(): VisionState {
+    const rank: VisionState[] = ['off', 'ok', 'loading', 'stalled', 'failed']
+    let worst: VisionState = this.guest.vision
+    for (const g of this.guests) if (rank.indexOf(g.vision) > rank.indexOf(worst)) worst = g.vision
+    return worst
   }
 
   private attach(src: Source, stream: MediaStream | null, label: string) {
@@ -306,6 +354,10 @@ export class LiveCompositor {
         this.paintLowerThird()
         return
       }
+      case 'grid':
+        this.paintGrid()
+        this.paintLowerThird()
+        return
       case 'starting':
         this.paintSlate('Starting soon', this.copy.episodeTitle || '', true)
         return
@@ -320,6 +372,19 @@ export class LiveCompositor {
 
   private paintFull(src: Source) {
     this.paintSource(src, 0, 0, this.width, this.height)
+  }
+
+  /**
+   * Host + every guest in equal tiles: 1 → full, 2 → side by side, 3 → two up + one
+   * centred, 4 → 2×2. Without room guests the single P2P guest fills the second tile.
+   */
+  private paintGrid() {
+    const people: Source[] = [this.host, ...(this.guests.length ? this.guests : this.guest.stream ? [this.guest] : [])]
+    const cells = gridCells(people.length, this.width, this.height)
+    const ctx = this.ctx
+    ctx.fillStyle = '#0A1016'
+    ctx.fillRect(0, 0, this.width, this.height)
+    cells.forEach((cell, i) => this.paintSource(people[i], cell.x, cell.y, cell.w, cell.h))
   }
 
   /** Cover-fit a camera into a box, or a calm placeholder if the camera is off. */
