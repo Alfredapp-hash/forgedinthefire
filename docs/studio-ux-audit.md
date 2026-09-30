@@ -204,6 +204,32 @@ People & takes / Mixer / Export. Make them headings (`<h2>`) and wrap each in `<
 | AudioWorklet punch | (remove from status line) | `:2055` |
 | TURN_URL … on Netlify | Relay server not set up — ask your admin | `guest-invite-panel.tsx:780`, `:792` |
 
+---
+
+## Fix status (2026-09-29, branch `studio-unified`)
+
+Line numbers below refer to the base as audited; the fixes landed in these commits.
+
+| # | Sev | Finding | Status | Commit |
+|---|---|---|---|---|
+| 1 | P0 | Record stage gives no visual confirmation | **Fixed** — ruler + per-person lanes render on Record (mixer stays on Edit); the post-take message reads "Take at 0:00 — it is on the timeline below"; before any audio, one "Record your first take" empty state. | `2682cf0` |
+| 2 | P0 | Errors/success are plain `<p>` | **Fixed** — editor `setOk`/`setError` now toast through the mounted `Toaster` AND render an inline `role=status` / `role=alert` line under the transport; `RecordingStudio` ok/error/saving carry roles; guest-invite errors are `role=alert` (guest portal already used `Notice role=alert` / `role=status`). | `1e55769` `09ac253` `2682cf0` |
+| 3 | P0 | Unlabeled track controls | **Fixed** — person/take name inputs, mic picker, M/S/R/A/L/Comp, duplicate/clear/remove, session overview button, start offset, BPM, headphone level, new-person input, chapter start/title and planned-topic select all have accessible names. | `2682cf0` `44de83c` |
+| 4 | P0 | Jargon on the primary path | **Fixed** — rename table applied (Lead-in, Re-record from here, Pick up, Hear the mix in headphones, Voice clean-up, Mic processing: off, Auto-duck the quieter mic, Auto-switch to who's talking, Selection tools / More tools, Lower music under voices, Effects, Apply permanently, Export this track, Flatten mix, Start over with the mix, Episode audio file / Audio file size / Episode length); technical names stay in tooltips. Status enum → plain labels; "AudioWorklet punch" removed; env-var names moved into a "For your admin" details. | `2682cf0` `1e55769` `09ac253` `91c54ef` |
+| 5 | P0 | Power features not behind Advanced | **Fixed** — persistent `Advanced` toggle (localStorage `studio-advanced-tools`, try/catch) in the editor header with a "More tools under Advanced" chip. Simple view: lanes, transport, Undo/Redo, zoom, Split, Remove selection, Clean up voice, M/S, volume, fade, Best take, Add music, Export. Empty take slots hidden until they hold audio or are armed. Measured: 104 focusable controls on Edit (simple) vs 225 (advanced) on a one-take session. | `2682cf0` |
+| 6 | P1 | Keyboard: no Ctrl+Z, global letters, no focus management, unstable tab names, tiny trim handles | **Fixed** — Cmd/Ctrl+Z / Shift+Cmd/Ctrl+Z (+Cmd/Ctrl+Y) with a new redo stack; single-letter keys fire only with nothing focused or the studio surface focused (never from a button/link/field); timeline + picture scrollers are `tabIndex=0` `role=region` with names; stage change focuses a tabbable stage `<h2>`; stage buttons carry a stable `aria-label` ("Record — step 2"); trim handles 10px with hover/focus fill and per-take names. | `1e55769` `03ca048` `2682cf0` |
+| 7 | P1 | Dead ends / destructive actions | **Fixed** — Publish rows for audio file / size / length / type get "Fix in Edit →"; the compliance panel renders BELOW the editor's export buttons; "Start over with the mix" (was Replace session) confirms; camera empty state says Record also saves a video file; "Episode page" confirms before leaving with unsaved edits (`onDirtyChange`). Guest relay notice: reworded as conditional advice ("If you cannot connect… try your phone's hotspot"); not yet gated on ICE failure (no ICE-failed signal reaches the lobby). | `1e55769` `2682cf0` |
+| 8 | P1 | Missing / noisy empty states | **Fixed** — one "Record your first take" panel on Record and Edit; empty lanes read "no take yet"; a person with no audio has no mixer card in the simple view; Publish header says "Nothing to export yet" when there is no mix; the Remote guest explainer collapses into a details. | `2682cf0` `1657aa9` `91c54ef` |
+| 9 | P1 | Contrast | **Fixed** — `#5C6B77`/`#5E6B78` → `text-silver-label` (#9AABBA); lane-rail text on the guest tint → `text-silver-body` (#B8C4CF, ≥5.9:1); the arm/mute danger chip uses the heart interior (#950D12 + rim border) instead of `bg-red-500/90`. 10-px tracking labels left as is (P2 note). | `2682cf0` |
+| 10 | P1 | Help paragraph + shortcut cheat-line | **Fixed** — the paragraph is now `STUDIO_HOW_IT_WORKS` (seven topics) in the "Shortcuts & how it works" modal and per-panel "How this works" `<details>` (Record, Selection tools, Export); the cheat-line under the Host lane is gone. | `ae1ecfa` `2682cf0` |
+| 11 | P2 | Plan overflows at phone width | **Fixed** — `minmax(0,…)` grid columns + `min-w-0`; measured 390px scrollWidth at 390px viewport. | `44de83c` |
+| 12 | P2 | Record button pulses forever | Not changed (respects reduced motion; e2e dispatches the click). | — |
+| 13 | P2 | Target size / density | Partially — the empty-state CTA and Publish actions use `size="touch"`; 28-px chips remain. | — |
+| 14 | P2 | Landmarks and headings | **Fixed** — episode title is the `<h1>`, stage heading `<h2>`, editor title `<h2>`, Selection tools / People & takes / Master / Effects / export are `<h3>` inside `<section aria-labelledby>`. | `1e55769` `2682cf0` |
+| 15 | P2 | Guest booth | Consent step already shipped on this branch (e2e un-fixme'd); headphones label / "punches Record" copy not changed. | `764444a` |
+
+e2e after the fixes: 16 passed / 5 fixme / 0 failed (`npx playwright test`); `npx vitest run` 479/479; `npm run build` clean.
+
 ## What already works well (keep)
 - Stage bar with "Next · …" line (`studio-stage-bar.tsx:139`–`:143`) and the first-run tip.
 - Plan-stage "Fix →" jump from checklist rows to the field (`RecordingStudio.tsx:157`–`:177`).
