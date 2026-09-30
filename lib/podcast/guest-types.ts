@@ -19,6 +19,21 @@ export type GuestInviteRow = {
   created_by: string | null
   created_at: string
   updated_at: string
+  /** sha256 of the active guest device session (20260923 migration). Never sent to clients. */
+  guest_session_hash?: string | null
+  /** When the guest accepted the recording notice in the booth. */
+  consent_at?: string | null
+  /** Guest chose audio only on the consent step. */
+  audio_only?: boolean | null
+  /** Episode room (panel shows, 20260925 migration). NULL = one-guest P2P call. */
+  room_id?: string | null
+}
+
+/** What a client needs to join the episode room. No keys: the token is minted per request. */
+export type GuestRoomPublic = {
+  name: string
+  url: string
+  provider: 'livekit'
 }
 
 export type GuestInvitePublic = {
@@ -33,6 +48,8 @@ export type GuestInvitePublic = {
   takeUrl: string | null
   cameraReady: boolean
   cameraUrl: string | null
+  /** Set when this invite is part of a panel room (2+ guests). Absent/null = P2P. */
+  room?: GuestRoomPublic | null
 }
 
 export type GuestInviteAdmin = GuestInvitePublic & {
@@ -41,6 +58,10 @@ export type GuestInviteAdmin = GuestInvitePublic & {
   lastSeenAt: string | null
   revoked: boolean
   expired: boolean
+  /** Short code the guest sees after leaving; quote it when they ask for removal. */
+  referenceCode?: string
+  /** Guest accepted the consent screen at (v1 column). Full choices: GET /api/admin/podcast/invites/[id]/consent. */
+  consentAt?: string | null
 }
 
 export const GUEST_SIGNAL_KINDS = [
@@ -55,11 +76,48 @@ export const GUEST_SIGNAL_KINDS = [
   'camera',
   'mute',
   'reconnect',
+  'pause',
 ] as const
 
 export type GuestSignalKind = (typeof GUEST_SIGNAL_KINDS)[number]
 
 export const GUEST_SIGNAL_KIND_SET = new Set<string>(GUEST_SIGNAL_KINDS)
+
+/** Kinds the guest booth may send. Host-only controls (record, talkback, cue, tally) are not here. */
+export const GUEST_SENDABLE_KINDS = new Set<string>(['offer', 'ice', 'hangup', 'camera', 'mute', 'reconnect', 'pause'])
+/** Kinds the admin may send. The guest is always the offerer. */
+export const ADMIN_SENDABLE_KINDS = new Set<string>([
+  'answer',
+  'ice',
+  'hangup',
+  'record',
+  'talkback',
+  'cue',
+  'tally',
+  'camera',
+  'mute',
+  'reconnect',
+  'pause',
+])
+
+/**
+ * Control kinds that may also travel on the RTCDataChannel once the peer is up.
+ * offer/answer/ice always go through the HTTP signal table.
+ */
+export const GUEST_CONTROL_KINDS = new Set<string>([
+  'hangup',
+  'record',
+  'talkback',
+  'cue',
+  'tally',
+  'camera',
+  'mute',
+  'reconnect',
+  'pause',
+])
+
+/** Control kinds written to the signal table even when the data channel is open (safety/recording critical). */
+export const GUEST_DURABLE_KINDS = new Set<string>(['hangup', 'record', 'mute', 'camera', 'pause'])
 
 export type GuestSignal = {
   id: number
@@ -98,17 +156,13 @@ export function describeGuestTally(phase: GuestTallyPhase): { label: string; ton
   return { label: 'Waiting', tone: 'wait' }
 }
 
-export function iceLooksUp(ice?: RTCIceConnectionState | '') {
-  return ice === 'connected' || ice === 'completed'
-}
-
 /**
- * A live-with-host presence that hasn't heartbeat in ~2-3 beats (guest posts one
- * every 8s). Older than this and the tab is almost certainly gone even though the
- * peer never fired `failed`. Admin-side only — the guest always knows its own tab
- * is open, so it never marks itself stale.
+ * A live-with-host presence that hasn't heartbeat in ~2-3 beats. Older than
+ * this and the tab is almost certainly gone even though the peer never fired
+ * `failed`. Admin-side only — the guest always knows its own tab is open, so it
+ * never marks itself stale.
  */
-export const GUEST_STALE_MS = 20_000
+export const GUEST_STALE_MS = 45_000
 
 export function guestLooksStale(lastSeenAt?: string | null, now = Date.now()) {
   if (!lastSeenAt) return false
@@ -147,6 +201,10 @@ export function describeIceProgress(
   }
 }
 
+export function iceLooksUp(ice?: RTCIceConnectionState | '') {
+  return ice === 'connected' || ice === 'completed'
+}
+
 export function iceLooksDead(ice?: RTCIceConnectionState | '') {
   return ice === 'failed' || ice === 'closed'
 }
@@ -163,7 +221,7 @@ export function describeGuestSession(opts: {
   expired?: boolean
   ice?: RTCIceConnectionState | ''
   recording?: boolean
-  /** Admin-side: guest hasn't heartbeat in ~2-3 beats. Surfaces as "not responding". */
+  /** Admin-side: guest hasn't heartbeat in a while. Surfaces as "not responding". */
   stale?: boolean
 }): { phase: GuestUiPhase; label: string; tone: GuestUiTone } {
   const { side, state, revoked, expired, ice } = opts
