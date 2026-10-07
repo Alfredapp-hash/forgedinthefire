@@ -67,6 +67,8 @@ export type FeedOptions = {
   /** Private subscriber feed: token goes on enclosure / transcript / chapter URLs. */
   privateToken?: string | null
   privateLabel?: string | null
+  /** WebSub hub URL to advertise (atom:link rel="hub"), so subscribers get push updates. */
+  webSubHub?: string | null
 }
 
 export function feedSelfUrl(meta: ShowMeta, privateToken?: string | null) {
@@ -192,6 +194,9 @@ export function buildFeedXml(opts: FeedOptions) {
     `    <podcast:medium>podcast</podcast:medium>`,
     `    <podcast:person role="host">${escapeXml(meta.author)}</podcast:person>`,
   ]
+  if (isSafeHttpUrl(opts.webSubHub)) {
+    channel.push(`    <atom:link href="${escapeXml(opts.webSubHub)}" rel="hub" />`)
+  }
   if (isSafeHttpUrl(meta.funding)) {
     channel.push(`    <podcast:funding url="${escapeXml(meta.funding)}">${escapeXml(meta.funding_label.slice(0, 128))}</podcast:funding>`)
   }

@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { PODCAST, probeRemoteSize } from '@/lib/podcast'
 import { releaseConsentStatus } from '@/lib/podcast/guest-consent'
 import { releaseBlockers, releaseChecks } from '@/lib/studio/release'
+import { notifyFeedUpdate } from '@/lib/podcast/notify-feeds'
 import type { PodcastEpisode } from '@/lib/studio/types'
 
 export const dynamic = 'force-dynamic'
@@ -123,6 +124,11 @@ async function run(request: Request) {
     const posts = await publishPosts(admin, now)
     const podcast = await publishEpisodes(admin, now)
     const fileSizesFixed = podcast.note ? 0 : await backfillFileSizes(admin)
+    // Tell PodPing + the WebSub hub the feed changed so platforms ingest in
+    // seconds instead of waiting for their next poll. Fail-soft: never blocks.
+    if (podcast.published.length) {
+      await notifyFeedUpdate(PODCAST.feed).catch((e) => console.error('notify-feeds failed:', e))
+    }
     if (podcast.held.length) console.warn('publish-scheduled: episodes held', JSON.stringify(podcast.held))
     return NextResponse.json({
       published: posts.length,

@@ -8,7 +8,7 @@ export async function GET(request: Request) {
   const show = await getDefaultShow()
   const meta = showToMeta(show)
   const episodes = await getPublishedEpisodes()
-  const xml = buildFeedXml({ meta, episodes })
+  const xml = buildFeedXml({ meta, episodes, webSubHub: process.env.WEBSUB_HUB || null })
   return feedResponse(
     request,
     xml,
