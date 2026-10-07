@@ -1,7 +1,7 @@
 'use client'
 
 import { CheckCircle2, Circle, Mic2, Plus, Trash2 } from 'lucide-react'
-import { Button, Checkbox, Input, Panel, Select, Textarea } from '@/components/studio-ui'
+import { Button, Checkbox, EmptyState, Input, Panel, Select, Textarea } from '@/components/studio-ui'
 import type {
   ContentTopic,
   EpisodeType,
@@ -204,10 +204,13 @@ export function EpisodePlan({
             {/* Status-grouped card queue: replaces the flat <select> so the host
                 sees each episode's stage, S#E#, summary, and audio state at a glance. */}
             {queuedEpisodes.length === 0 ? (
-              <Panel elevation="flat" className="p-4">
-                <p className="studio-type-body text-silver-body">
-                  No episodes in this view. Write one on the right, or switch the filter above.
-                </p>
+              <Panel elevation="flat">
+                <EmptyState
+                  size="compact"
+                  icon={<Mic2 size={18} />}
+                  title="No episodes in this view"
+                  description="Write one on the right, or switch the filter above."
+                />
               </Panel>
             ) : (
               <div className="space-y-4">

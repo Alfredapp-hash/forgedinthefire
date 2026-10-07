@@ -69,7 +69,7 @@ export function StudioStageBar({ episode, stage, onStageChange, status }: Props)
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
           <p className="studio-type-label text-ice">Podcast production room</p>
-          <h1 className="studio-type-section mt-1 truncate !text-[18px]">{episode.title || 'Untitled episode'}</h1>
+          <h1 className="studio-type-title mt-1 truncate">{episode.title || 'Untitled episode'}</h1>
           <p className="studio-type-body mt-0.5 text-silver-body">{PRODUCTION_ROOM_SUBTITLE}</p>
         </div>
 

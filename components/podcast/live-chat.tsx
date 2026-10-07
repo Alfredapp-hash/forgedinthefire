@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Ban, Eye, EyeOff, Flag, MessageCircle, Pin, PinOff, Send } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { Button, Checkbox, Chip, Select } from '@/components/studio-ui'
+import { Button, Checkbox, Chip, EmptyState, LoadingState, Select } from '@/components/studio-ui'
 import { cn } from '@/lib/utils'
 import {
   CHAT_BROADCAST_EVENT,
@@ -413,7 +413,20 @@ export function LiveChatModerationPanel({ sessionId, live, onPinned, onError }: 
         ))}
       </div>
       <ul className="max-h-72 space-y-1.5 overflow-y-auto" aria-live="polite">
-        {shown.length === 0 && <li className={hint}>{data ? 'Nothing here yet.' : 'Loading…'}</li>}
+        {shown.length === 0 && (
+          <li>
+            {data ? (
+              <EmptyState
+                size="compact"
+                icon={<MessageCircle size={18} />}
+                title="No messages yet"
+                description="Comments and questions from viewers show up here."
+              />
+            ) : (
+              <LoadingState size="compact" label="Loading chat…" />
+            )}
+          </li>
+        )}
         {shown.map((m: ChatMessageAdmin) => (
           <li
             key={m.id}

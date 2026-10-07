@@ -89,3 +89,7 @@ tsconfig.tsbuildinfo
 /test-results/
 /playwright-report/
 /e2e/.screens/
+
+# temp files created in a sandboxed session (safe to delete)
+_delta_for_container.patch
+*.tsbuildinfo
