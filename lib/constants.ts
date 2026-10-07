@@ -296,6 +296,7 @@ export const NAV_LINKS = [
   { href: '/about', label: 'About' },
   { href: '/services', label: 'Services' },
   { href: '/blog', label: 'Blog' },
+  { href: '/podcast', label: 'Podcast' },
   { href: '/get-help', label: 'Get Help', priority: true },
   { href: '/donate', label: 'Donate' },
   { href: '/volunteer', label: 'Volunteer' },
