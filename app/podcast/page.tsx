@@ -23,7 +23,12 @@ export async function generateMetadata(): Promise<Metadata> {
     description: meta.description,
     alternates: {
       canonical: meta.page,
-      types: { 'application/rss+xml': meta.feed },
+      types: {
+        'application/rss+xml': [
+          { url: meta.feed, title: `${meta.title} (audio)` },
+          { url: `${meta.site}/podcast/video.xml`, title: `${meta.title} (video)` },
+        ],
+      },
     },
     openGraph: {
       title: `${meta.title} Podcast`,
