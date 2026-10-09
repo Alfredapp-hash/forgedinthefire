@@ -1,0 +1,16 @@
+name: publish-scheduled
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch: {}
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger scheduled publish
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE: https://forgedinthefireohio.org
+        run: |
+          code=$(curl -sS -o /tmp/out.json -w "%{http_code}" -X POST "$SITE/api/cron/publish-scheduled" -H "Authorization: Bearer $CRON_SECRET")
+          echo "HTTP $code"; cat /tmp/out.json; echo; test "$code" = "200"
