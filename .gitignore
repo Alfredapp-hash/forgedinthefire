@@ -84,3 +84,16 @@ AUDIT_REPORT.txt
 
 # TypeScript incremental build cache
 tsconfig.tsbuildinfo
+
+# Playwright
+/test-results/
+/playwright-report/
+/e2e/.screens/
+
+# temp files created in a sandboxed session (safe to delete)
+_delta_for_container.patch
+*.tsbuildinfo
+
+# transient data applied to Supabase (not source)
+_populate_scripts.json
+_schedule_apply.json

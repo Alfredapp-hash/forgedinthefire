@@ -7,6 +7,7 @@ import type { PodcastChapter } from '@/lib/studio/types'
 const ALLOWED = [
   'topic_id', 'show_id', 'title', 'slug', 'summary', 'show_notes', 'guest_name', 'guest_bio',
   'audio_url', 'audio_mime', 'duration_seconds', 'file_size', 'cover_url', 'transcript',
+  'video_url', 'video_mime', 'video_size', 'video_duration_seconds',
   'season', 'episode_number', 'episode_type', 'visibility', 'explicit', 'status',
   'scheduled_for', 'published_at', 'chapters', 'keywords', 'ad_markers',
 ] as const

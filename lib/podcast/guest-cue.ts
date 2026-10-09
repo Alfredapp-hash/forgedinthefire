@@ -37,12 +37,21 @@ export type GuestHeadphoneMix = {
   setCueVolume: (gain: number) => void
   talkPeak: () => number
   stop: () => void
+  /** iOS/Safari: resume audio from inside a tap if the context was suspended. */
+  resume?: () => Promise<void>
+  /** False while the browser is still blocking sound (needs a tap). */
+  running?: () => boolean
 }
 
-/** Mix talkback + cue in the booth. Talkback ducks cue so the host still cuts through. */
-export function createGuestHeadphoneMix(): GuestHeadphoneMix {
-  const ctx = new AudioContext()
-  void ctx.resume()
+/**
+ * Mix talkback + cue in the booth. Talkback ducks cue so the host still cuts through.
+ * Pass the booth's shared AudioContext (unlocked in the Join tap) so iOS/Safari
+ * never needs a second gesture; a shared context is not closed by stop().
+ */
+export function createGuestHeadphoneMix(shared?: AudioContext | null): GuestHeadphoneMix {
+  const ctx = shared && shared.state !== 'closed' ? shared : new AudioContext()
+  const ownsContext = ctx !== shared
+  if (ownsContext) void ctx.resume()
   const talkGain = ctx.createGain()
   const cueUser = ctx.createGain()
   const cueDuck = ctx.createGain()
@@ -61,6 +70,7 @@ export function createGuestHeadphoneMix(): GuestHeadphoneMix {
   let cueVol = 0.85
   let lastPeak = 0
   let raf = 0
+  let stopped = false
 
   const applyGains = () => {
     talkGain.gain.value = talkOn ? 1 : 0
@@ -105,11 +115,30 @@ export function createGuestHeadphoneMix(): GuestHeadphoneMix {
     talkPeak() {
       return lastPeak
     },
+    async resume() {
+      try {
+        await ctx.resume()
+      } catch {
+        /* still blocked; caller shows the tap prompt */
+      }
+    },
+    running() {
+      return ctx.state === 'running'
+    },
     stop() {
+      // Idempotent: the booth effect cleanup and teardown() may both stop the same mix.
+      if (stopped) return
+      stopped = true
       cancelAnimationFrame(raf)
       talkSrc?.disconnect()
       cueSrc?.disconnect()
-      void ctx.close()
+      try {
+        talkGain.disconnect()
+        cueDuck.disconnect()
+      } catch {
+        /* ignore */
+      }
+      if (ownsContext) closeQuietly(ctx)
     },
   }
 }
@@ -141,6 +170,7 @@ export function createHostFallbackSendMix(): HostFallbackSendMix {
   let talkOn = false
   let cueOn = false
   let raf = 0
+  let stopped = false
 
   const tick = () => {
     const peak = talkOn ? peakFromAnalyser(analyser, data) : 0
@@ -164,10 +194,23 @@ export function createHostFallbackSendMix(): HostFallbackSendMix {
       void ctx.resume()
     },
     stop() {
+      // Idempotent: the booth effect cleanup and teardown() may both stop the same mix.
+      if (stopped) return
+      stopped = true
       cancelAnimationFrame(raf)
       talkSrc?.disconnect()
       cueSrc?.disconnect()
-      void ctx.close()
+      closeQuietly(ctx)
     },
+  }
+}
+
+/** Close an AudioContext we own without throwing if it is already closed (or closing). */
+function closeQuietly(ctx: AudioContext) {
+  if (ctx.state === 'closed') return
+  try {
+    void ctx.close().catch(() => {})
+  } catch {
+    /* already closing */
   }
 }

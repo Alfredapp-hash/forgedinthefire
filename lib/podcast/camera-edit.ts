@@ -56,7 +56,9 @@ export function trimCameraClip(
       const src = cameraSourceStart(c)
       const fileDur = c.sourceDuration || src + c.duration
       if (edge === 'in') {
-        const t = Math.max(c.offset, Math.min(sessionTime, cameraClipEnd(c) - MIN_CLIP))
+        // Clamp to the file, not the current in-point, so a trimmed head can be dragged back.
+        const earliest = Math.max(0, c.offset - src)
+        const t = Math.max(earliest, Math.min(sessionTime, cameraClipEnd(c) - MIN_CLIP))
         const delta = t - c.offset
         const sourceStart = Math.max(0, src + delta)
         const duration = Math.min(fileDur - sourceStart, c.duration - delta)
@@ -104,11 +106,38 @@ export function splitCameraAt(clips: CameraClip[], sessionTime: number, personId
   )
 }
 
+/**
+ * Razor every clip (every person, every layer — or one person's) that spans `sessionTime`.
+ * Range edits need this: splitCameraAt only cuts the first clip it finds, which left other
+ * people's lanes (and overlays) uncut when a range covered several lanes.
+ */
+export function splitAllCameraAt(clips: CameraClip[], sessionTime: number, personId?: string): CameraClip[] {
+  let changed = false
+  const out = clips.flatMap((hit) => {
+    if (personId && hit.personId !== personId) return [hit]
+    if (sessionTime <= hit.offset + MIN_CLIP || sessionTime >= cameraClipEnd(hit) - MIN_CLIP) return [hit]
+    changed = true
+    const leftDur = sessionTime - hit.offset
+    const src = cameraSourceStart(hit)
+    const left: CameraClip = { ...hit, duration: leftDur }
+    const right: CameraClip = {
+      ...hit,
+      id: newCameraClipId(),
+      offset: sessionTime,
+      sourceStart: src + leftDur,
+      trimStart: src + leftDur,
+      duration: hit.duration - leftDur,
+    }
+    return [left, right]
+  })
+  return changed ? withCameraClips(clips, out) : clips
+}
+
 export function splitCameraRange(clips: CameraClip[], start: number, end: number, personId?: string) {
   const a = Math.min(start, end)
   const b = Math.max(start, end)
   if (b - a < MIN_CLIP) return clips
-  return splitCameraAt(splitCameraAt(clips, a, personId), b, personId)
+  return splitAllCameraAt(splitAllCameraAt(clips, a, personId), b, personId)
 }
 
 /** Cut a hole on that person's camera lane. Ripple pulls later clips of the same person. */
@@ -244,6 +273,61 @@ export function dissolveCameraPair(clips: CameraClip[], clipId: string, seconds 
     clips.map((c) => {
       if (c.id === a.id) return { ...c, fadeOut: overlap }
       if (c.id === b.id) return { ...c, offset: nextOffset, fadeIn: overlap }
+      return c
+    }),
+  )
+}
+
+/**
+ * Detect a rendered dissolve between adjacent same-lane clips: two clips of the
+ * same person/kind/layer whose timeline seats overlap AND whose facing edges both
+ * carry a fade (as `dissolveCameraPair` writes). Returns the overlap band in
+ * session time so the lane can draw a labeled crossfade region. The compositor
+ * already renders this as a true crossfade via per-clip opacity — this is purely
+ * a read for visualization, never a mutation.
+ */
+export function cameraDissolveSpans(
+  clips: CameraClip[],
+): { start: number; end: number; seconds: number; leftId: string; rightId: string }[] {
+  const spans: { start: number; end: number; seconds: number; leftId: string; rightId: string }[] = []
+  const ordered = withCameraClips(clips, clips)
+  for (let i = 0; i < ordered.length - 1; i++) {
+    const a = ordered[i]
+    for (let j = i + 1; j < ordered.length; j++) {
+      const b = ordered[j]
+      if (
+        a.personId !== b.personId ||
+        cameraKind(a) !== cameraKind(b) ||
+        cameraLayer(a) !== cameraLayer(b) ||
+        cameraKind(a) !== 'camera'
+      )
+        continue
+      const overlap = cameraClipEnd(a) - b.offset
+      if (overlap > MIN_CLIP && (a.fadeOut || 0) > 0.01 && (b.fadeIn || 0) > 0.01) {
+        spans.push({ start: b.offset, end: cameraClipEnd(a), seconds: overlap, leftId: a.id, rightId: b.id })
+      }
+      break
+    }
+  }
+  return spans
+}
+
+/** True when this clip dissolves into (or from) an adjacent same-lane clip. */
+export function clipHasDissolve(clips: CameraClip[], clipId: string): boolean {
+  return cameraDissolveSpans(clips).some((s) => s.leftId === clipId || s.rightId === clipId)
+}
+
+/** Undo a dissolve: pull the right clip back to abut the left and clear the facing fades. */
+export function clearCameraDissolve(clips: CameraClip[], clipId: string): CameraClip[] {
+  const span = cameraDissolveSpans(clips).find((s) => s.leftId === clipId || s.rightId === clipId)
+  if (!span) return clips
+  const left = clips.find((c) => c.id === span.leftId)
+  if (!left) return clips
+  return withCameraClips(
+    clips,
+    clips.map((c) => {
+      if (c.id === span.leftId) return { ...c, fadeOut: 0 }
+      if (c.id === span.rightId) return { ...c, offset: cameraClipEnd(left), fadeIn: 0 }
       return c
     }),
   )
