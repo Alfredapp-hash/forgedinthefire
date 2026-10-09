@@ -96,7 +96,7 @@ function BlogErrorState() {
   return (
     <div className="min-h-screen">
       {/* Hero Section */}
-      <section className="relative py-16 md:py-24 bg-transparent">
+      <section className="relative page-hero bg-transparent">
         <div className="container-wide section-padding">
           <div className="max-w-3xl mx-auto text-center">
             <span className="text-[#53D6FF] font-medium text-sm tracking-widest uppercase mb-4 block">
@@ -276,7 +276,7 @@ export default async function BlogPage({
   return (
     <div className="min-h-screen">
       {/* Hero Section */}
-      <section className="relative py-16 md:py-24 bg-transparent">
+      <section className="relative page-hero bg-transparent">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-[#53D6FF]/5 via-transparent to-transparent" />
         
         <div className="container-wide section-padding relative">

@@ -57,7 +57,7 @@ export default async function PodcastEpisodePage({ params }: { params: Promise<{
         }}
       />
 
-      <article className="container-wide section-padding py-16 md:py-24 max-w-3xl mx-auto">
+      <article className="container-wide section-padding page-hero max-w-3xl mx-auto">
         <Link href="/podcast" className="inline-flex items-center gap-2 text-sm text-[#8DEBFF] mb-8">
           <ArrowLeft className="w-4 h-4" />
           All episodes

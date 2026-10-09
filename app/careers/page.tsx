@@ -44,7 +44,7 @@ export default async function CareersPage() {
   return (
     <div className="min-h-screen">
       {/* Hero Section */}
-      <section className="relative py-16 md:py-24 bg-gradient-to-b from-charcoal to-charcoal-800">
+      <section className="relative page-hero bg-gradient-to-b from-charcoal to-charcoal-800">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-3xl mx-auto text-center">
             <h1 className="font-playfair text-4xl md:text-5xl lg:text-6xl font-bold text-cream-100 mb-6">
@@ -189,7 +189,7 @@ function JobCard({ job }: { job: JobPosition }) {
 
 function EmptyState() {
   return (
-    <div className="max-w-2xl mx-auto text-center py-16">
+    <div className="max-w-2xl mx-auto text-center py-16 pb-28">
       <div className="w-20 h-20 rounded-full bg-charcoal-700 flex items-center justify-center mx-auto mb-6">
         <Briefcase className="w-10 h-10 text-silver-label" />
       </div>

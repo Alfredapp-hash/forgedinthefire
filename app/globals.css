@@ -154,15 +154,22 @@
 
   body {
     /* Not flat black — the page emerges from darkness so the hero can be the
-       emotional centrepiece. */
+       emotional centrepiece. iOS treats background-attachment:fixed as a
+       compositor trap that glitches overlays, so phones stay on scroll. */
     background-color: var(--obsidian);
     background-image: var(--page-gradient);
     background-repeat: no-repeat;
-    background-attachment: fixed;
+    background-attachment: scroll;
     color: var(--white);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     font-feature-settings: 'rlig' 1, 'calt' 1;
+  }
+
+  @media (min-width: 1024px) {
+    body {
+      background-attachment: fixed;
+    }
   }
 
   /* Trauma-informed: motion is opt-out at the root, and ambient/particle
@@ -409,6 +416,12 @@
     @apply px-4 sm:px-6 lg:px-8 xl:px-16 2xl:px-24;
   }
 
+  /* Public page heroes sit below the fixed 5rem header. py-16 alone tucks
+     titles under the bar on phones (blog, podcast, careers). */
+  .page-hero {
+    @apply pt-28 pb-16 md:pt-32 md:pb-24;
+  }
+
   /* Container max widths */
   .container-tight {
     @apply max-w-4xl mx-auto;
@@ -612,9 +625,10 @@
   }
 }
 
-/* Mobile nav: checkbox + sheet are portaled to document.body so header
-   glass (inner pages always, Home after scroll) cannot trap position:fixed.
-   The header control is a <label for> that toggles the checkbox with no JS. */
+/* Mobile nav: checkbox is a body-level sibling of the sheet (not inside the
+   header) so :checked ~ .mobile-nav-sheet works without :has(), and header
+   glass cannot become the containing block for position:fixed.
+   Stack: cookie 40 < sheet 55 < header 60 < quick-exit 70 < subscribe 80. */
 .site-mobile-nav-input {
   position: absolute;
   width: 1px;
@@ -626,28 +640,50 @@
   padding: 0;
   margin: -1px;
 }
-.site-mobile-nav-input:not(:checked) + .mobile-nav-sheet,
-.mobile-nav-sheet {
-  display: none !important;
+.site-header {
+  padding-top: env(safe-area-inset-top, 0px);
 }
+.mobile-nav-sheet {
+  display: none;
+  position: fixed;
+  top: calc(5rem + env(safe-area-inset-top, 0px));
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 55;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background-color: #05070a;
+}
+.site-mobile-nav-input:checked ~ .mobile-nav-sheet,
 body:has(.site-mobile-nav-input:checked) .mobile-nav-sheet {
-  display: block !important;
+  display: flex;
+  flex-direction: column;
 }
 .mobile-nav-icon-close {
   display: none;
 }
+.site-mobile-nav-input:checked ~ .site-header .mobile-nav-icon-open,
 body:has(.site-mobile-nav-input:checked) .mobile-nav-icon-open {
   display: none;
 }
+.site-mobile-nav-input:checked ~ .site-header .mobile-nav-icon-close,
 body:has(.site-mobile-nav-input:checked) .mobile-nav-icon-close {
   display: block;
 }
+body:has(.site-mobile-nav-input:checked),
+html:has(.site-mobile-nav-input:checked) {
+  overflow: hidden;
+}
 body:has(.site-mobile-nav-input:checked) .header-glass {
-  background-color: #05070a !important;
-  border-color: rgba(83, 214, 255, 0.08) !important;
+  background-color: #05070a;
+  border-color: rgba(83, 214, 255, 0.08);
 }
 body:has(.site-mobile-nav-input:checked) .header-glass::before {
-  display: none !important;
+  display: none;
+}
+body:has(.site-mobile-nav-input:checked) .cookie-consent-banner {
+  display: none;
 }
 .header-glass-on {
   background-color: rgba(5, 7, 10, 0.45);
@@ -668,28 +704,12 @@ body:has(.site-mobile-nav-input:checked) .header-glass::before {
   background-color: #05070a;
   border-color: rgba(83, 214, 255, 0.08);
 }
-.mobile-nav-sheet {
-  position: fixed !important;
-  top: 5rem !important;
-  right: 0 !important;
-  bottom: 0 !important;
-  left: 0 !important;
-  z-index: 45 !important;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  background-color: #05070a !important;
-  opacity: 1 !important;
-  visibility: visible !important;
-  transform: none !important;
-  pointer-events: auto !important;
-  -webkit-overflow-scrolling: touch;
-}
 
 @media (min-width: 1024px) {
   .mobile-nav-toggle,
   .mobile-nav-sheet,
   .site-mobile-nav-input,
+  .site-mobile-nav-input:checked ~ .mobile-nav-sheet,
   body:has(.site-mobile-nav-input:checked) .mobile-nav-sheet {
     display: none !important;
   }

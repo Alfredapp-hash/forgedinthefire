@@ -19,7 +19,7 @@ export default function CookieConsentBanner() {
   if (!visible) return null
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 p-4 bg-charcoal border-t border-charcoal-600 shadow-lg">
+    <div className="cookie-consent-banner fixed bottom-0 left-0 right-0 z-40 p-4 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] md:pb-4 bg-charcoal border-t border-charcoal-600 shadow-lg">
       <div className="container mx-auto flex flex-col md:flex-row md:items-center gap-4">
         <p className="text-sm text-cream-100/90 flex-1">
           We use cookies to analyze site traffic and improve your experience. See our{' '}

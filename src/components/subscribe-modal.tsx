@@ -137,7 +137,7 @@ export function SubscribeModal({ isOpen, onClose }: SubscribeModalProps) {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[80]"
             aria-hidden="true"
           />
           
@@ -147,17 +147,17 @@ export function SubscribeModal({ isOpen, onClose }: SubscribeModalProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md z-50 p-4"
+            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md z-[80] p-4 max-h-[100dvh] overflow-y-auto"
             role="dialog"
             aria-modal="true"
             aria-labelledby="subscribe-title"
           >
-            <div className="bg-[#05070A] border border-[#1A232C] rounded-2xl shadow-2xl overflow-hidden">
+            <div className="bg-[#05070A] border border-[#1A232C] rounded-2xl shadow-2xl overflow-hidden max-h-[min(40rem,calc(100dvh-2rem))] overflow-y-auto">
               {/* Header */}
               <div className="relative bg-gradient-to-r from-[#53D6FF] to-[#53D6FF] p-6 text-center">
                 <button
                   onClick={onClose}
-                  className="absolute right-4 top-4 p-1 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+                  className="absolute right-4 top-4 min-h-11 min-w-11 p-2 rounded-full text-white/70 hover:text-white hover:bg-white/10 transition-colors"
                   aria-label="Close modal"
                 >
                   <X className="w-5 h-5" />
