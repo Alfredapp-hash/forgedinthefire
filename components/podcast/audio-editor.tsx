@@ -3730,6 +3730,17 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onV
 
   /* Everything the booth renders — one object for the inline stage and the overlay. */
   const boothVoicePeople = people.filter((person) => person.kind === 'voice')
+  // Two-host safety: flag when people who are both live would capture from the SAME
+  // device, which silently records them onto one track instead of two.
+  const boothLocalVoices = boothVoicePeople.filter((person) => !(person.id === 'guest' && Boolean(remoteGuest)))
+  const boothCamsOn = boothLocalVoices.filter((person) => cameraStreams[person.id])
+  const boothDupCamera =
+    boothCamsOn.length > 1 &&
+    new Set(boothCamsOn.map((person) => person.videoDeviceId || 'default')).size < boothCamsOn.length
+  const boothArmedVoices = boothLocalVoices.filter((person) => tracks.some((t) => t.armed && t.personId === person.id))
+  const boothSharedMic =
+    boothArmedVoices.length > 1 &&
+    new Set(boothArmedVoices.map((person) => person.inputDeviceId || micId || 'default')).size < boothArmedVoices.length
   const boothDeviceBar = (
     <div className="space-y-2 rounded-panel border border-divider bg-[#080C10] px-3 py-2">
       <div className="flex items-center justify-between gap-2">
@@ -3814,6 +3825,16 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onV
       {!cams.some((c) => c.label) && (
         <span className="block text-[10px] text-[#7C8B97]">
           Turn a camera on once to name devices — each person&apos;s iPhone shows up as a Continuity Camera.
+        </span>
+      )}
+      {boothDupCamera && (
+        <span className="block rounded bg-[#2A1E0B] px-2 py-1 text-[10px] text-[#F5C451]">
+          Two cameras are set to the same device — give each person their own camera (e.g. each phone) so they record separately.
+        </span>
+      )}
+      {boothSharedMic && (
+        <span className="block rounded bg-[#2A1E0B] px-2 py-1 text-[10px] text-[#F5C451]">
+          Both people are armed on the same mic — they&apos;ll record onto one track. Pick a separate mic for each for two tracks.
         </span>
       )}
     </div>
