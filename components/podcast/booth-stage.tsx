@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BookmarkPlus, ChevronRight, Headphones, Maximize2, Minimize2, Radio, Square, Users } from 'lucide-react'
+import { BookmarkPlus, ChevronRight, Headphones, Maximize2, Minimize2, Radio, ScrollText, Square, Users } from 'lucide-react'
 
 import { Button, Chip, IconButton, Panel, RecordButton, SegmentedControl } from '@/components/studio-ui'
 import { createActiveSpeakerTracker } from '@/lib/podcast/active-speaker'
@@ -88,6 +88,12 @@ export type BoothStageProps = {
   minHeightClass?: string
   /** Inline alerts (camera size warning, input lost…) shown above the transport. */
   notices?: React.ReactNode
+  /** Host camera/mic device pickers, built by the editor — shown under the video stage. */
+  deviceBar?: React.ReactNode
+  /** GarageBand-style multitrack (video + audio) for the record view, built by the editor. */
+  timeline?: React.ReactNode
+  /** Built-in teleprompter (the episode script), built by the editor. Toggled from the header. */
+  teleprompter?: React.ReactNode
 }
 
 /** True when a keydown should be ignored because the user is typing. */
@@ -138,6 +144,9 @@ export function BoothStage(props: BoothStageProps): React.JSX.Element {
     autoFocusRecord,
     minHeightClass,
     notices,
+    deviceBar,
+    timeline,
+    teleprompter,
   } = props
 
   const inline = variant === 'inline'
@@ -149,6 +158,7 @@ export function BoothStage(props: BoothStageProps): React.JSX.Element {
   // API (iOS Safari) fall back to the overlay via onExpand.
   const sectionRef = useRef<HTMLElement | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [showPrompter, setShowPrompter] = useState(false)
   useEffect(() => {
     if (!inline) return
     const onChange = () => setIsFullscreen(document.fullscreenElement === sectionRef.current)
@@ -336,6 +346,17 @@ export function BoothStage(props: BoothStageProps): React.JSX.Element {
           ) : (
             <Chip tone="neutral">{tally === 'stopped' ? 'Stopped' : 'Standby'}</Chip>
           )}
+          {teleprompter ? (
+            <Button
+              variant={showPrompter ? 'primary' : 'secondary'}
+              size="dense"
+              aria-pressed={showPrompter}
+              onClick={() => setShowPrompter((v) => !v)}
+              title="Show the episode script as a teleprompter"
+            >
+              <ScrollText size={13} /> Teleprompter
+            </Button>
+          ) : null}
           {hasDrawer ? (
             <Button
               variant={drawerOpen ? 'primary' : 'secondary'}
@@ -370,9 +391,38 @@ export function BoothStage(props: BoothStageProps): React.JSX.Element {
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* Video stage + transport */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="relative min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:overflow-hidden">{stage}</div>
+          <div className="relative min-h-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:overflow-hidden">
+            {stage}
+            {showPrompter && teleprompter ? (
+              <div className="absolute inset-0 z-30 flex flex-col bg-obsidian/95 backdrop-blur-sm">
+                <div className="flex shrink-0 items-center justify-between border-b border-divider px-3 py-2">
+                  <span className="studio-type-label inline-flex items-center gap-1.5 text-ice">
+                    <ScrollText size={14} /> Teleprompter
+                  </span>
+                  <IconButton
+                    aria-label="Close teleprompter"
+                    title="Close teleprompter"
+                    variant="secondary"
+                    size="dense"
+                    onClick={() => setShowPrompter(false)}
+                  >
+                    <Minimize2 size={14} />
+                  </IconButton>
+                </div>
+                <div className="min-h-0 flex-1">{teleprompter}</div>
+              </div>
+            ) : null}
+          </div>
+
+          {deviceBar ? <div className="shrink-0 px-3 pb-2 sm:px-4">{deviceBar}</div> : null}
 
           {notices ? <div className="shrink-0 space-y-2 px-3 pb-2 sm:px-4">{notices}</div> : null}
+
+          {timeline ? (
+            <div className="shrink-0 overflow-x-auto border-t border-divider bg-obsidian px-3 py-2 sm:px-4">
+              {timeline}
+            </div>
+          ) : null}
 
           {/* Transport — sticky to the bottom on phones so Record is always reachable. */}
           <Panel

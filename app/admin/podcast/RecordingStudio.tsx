@@ -623,6 +623,7 @@ export function RecordingStudio({
                 episodeId={episode.id}
                 audioUrl={episode.audio_url}
                 title={episode.title}
+                script={episode.show_notes}
                 episodeStatus={episode.status}
                 onExported={saveMix}
                 onPublished={publish}

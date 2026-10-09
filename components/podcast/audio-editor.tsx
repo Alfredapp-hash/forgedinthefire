@@ -153,6 +153,7 @@ import { fetchGuestTakeBlob } from '@/lib/podcast/upload/guest-take-client'
 import { isRemoteLaneKey, remoteLaneKey } from '@/lib/podcast/rooms/layout'
 import { RecordingBooth, type BoothParticipant, type BoothStageProps } from '@/components/podcast/recording-booth'
 import { BoothStage } from '@/components/podcast/booth-stage'
+import { Teleprompter } from '@/components/podcast/teleprompter'
 import type { BoothTakeSummary } from '@/lib/podcast/booth-layout'
 import { ShortcutsHelpModal } from '@/components/podcast/shortcuts-help-modal'
 import { STUDIO_HOW_IT_WORKS } from '@/lib/podcast/shortcuts'
@@ -275,6 +276,8 @@ type Props = {
   onDirtyChange?: (dirty: boolean) => void
   /** Live transport signals for the production-room header chip (Idle / Count-in / REC / Saving). */
   onTransportStatus?: (status: { recording: boolean; countIn: boolean; saving: boolean; elapsedSec: number }) => void
+  /** Episode recording script (show notes) for the built-in teleprompter. */
+  script?: string | null
 }
 
 const ADVANCED_KEY = 'studio-advanced-tools'
@@ -338,7 +341,7 @@ function snapshotTracks(tracks: StudioTrack[]): StudioTrack[] {
   }))
 }
 
-export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage, onGoToStage, episodeStatus, onDirtyChange, onTransportStatus }: Props) {
+export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage, onGoToStage, episodeStatus, onDirtyChange, onTransportStatus, script }: Props) {
   // Stage gating. `stage == null` keeps legacy behavior (show everything). These
   // are presentational only — nothing below unmounts on a stage switch, so a live
   // recording, its checkpoints, and all editor state persist across stages.
@@ -3717,6 +3720,149 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
   ) : null
 
   /* Everything the booth renders — one object for the inline stage and the overlay. */
+  const boothVoicePeople = people.filter((person) => person.kind === 'voice')
+  const boothDeviceBar = (
+    <div className="space-y-2 rounded-panel border border-divider bg-[#080C10] px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-[0.14em] text-[#8DEBFF]">
+          <Video size={12} /> Cameras &amp; mics · this room
+        </span>
+        <button
+          type="button"
+          className={chip}
+          disabled={recording}
+          onClick={() => void refreshMediaDevices()}
+          title="Rescan after connecting an iPhone (Continuity Camera) or a USB mic"
+        >
+          Rescan
+        </button>
+      </div>
+      {boothVoicePeople.map((person) => {
+        const isRemote = person.id === 'guest' && Boolean(remoteGuest)
+        const lc = laneFor(person.id)
+        return (
+          <div key={person.id} className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex min-w-[92px] items-center gap-1.5 text-[11px] font-medium" style={{ color: lc?.base }}>
+              <span className="h-2 w-2 rounded-full" style={{ background: lc?.base }} aria-hidden="true" />
+              {person.name || 'Voice'}
+            </span>
+            {isRemote ? (
+              <span className="text-[11px] text-silver-label">On their own device (joined by invite)</span>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className={cameraStreams[person.id] ? primary : chip}
+                  disabled={recording}
+                  onClick={() => void toggleCamera(person.id)}
+                  title={cameraStreams[person.id] ? 'Turn this camera off' : 'Turn on this person’s camera'}
+                >
+                  {cameraStreams[person.id] ? <Video size={12} /> : <VideoOff size={12} />}
+                  {cameraStreams[person.id] ? 'Cam on' : 'Cam off'}
+                </button>
+                <label className="inline-flex items-center gap-1 text-[11px] text-[#A9B8C6]">
+                  Camera
+                  <select
+                    className={select}
+                    value={person.videoDeviceId || ''}
+                    disabled={recording}
+                    onChange={(e) => void changeCameraDevice(person.id, e.target.value)}
+                    aria-label={`Camera for ${person.name}`}
+                    title="An iPhone appears here as a Continuity Camera once you allow it"
+                  >
+                    <option value="">Default camera</option>
+                    {cams.map((cam, idx) => (
+                      <option key={cam.deviceId} value={cam.deviceId}>
+                        {cam.label || `Camera ${idx + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="inline-flex items-center gap-1 text-[11px] text-[#A9B8C6]">
+                  Mic
+                  <select
+                    className={select}
+                    value={person.inputDeviceId || ''}
+                    disabled={recording}
+                    onChange={(e) =>
+                      setPeople((prev) => prev.map((pp) => (pp.id === person.id ? { ...pp, inputDeviceId: e.target.value } : pp)))
+                    }
+                    aria-label={`Microphone for ${person.name}`}
+                  >
+                    <option value="">Default mic</option>
+                    {mics.map((mic, idx) => (
+                      <option key={mic.deviceId} value={mic.deviceId}>
+                        {mic.label || `Mic ${idx + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
+          </div>
+        )
+      })}
+      {!cams.some((c) => c.label) && (
+        <span className="block text-[10px] text-[#7C8B97]">
+          Turn a camera on once to name devices — each person&apos;s iPhone shows up as a Continuity Camera.
+        </span>
+      )}
+    </div>
+  )
+  const boothVoices = people.filter((person) => person.kind === 'voice')
+  const boothHasContent = tracks.some((t) => clipsOf(t).length > 0) || cameraClips.length > 0
+  const boothTimeline = (
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <p className="studio-type-label text-ice">Timeline · video &amp; audio</p>
+          <span className="text-[10px] uppercase tracking-wider text-silver-label">
+            {recording
+              ? 'Recording — takes land here on stop'
+              : boothHasContent
+                ? 'Your session, left to right'
+                : 'Record a take to fill these lanes'}
+          </span>
+        </div>
+        <SessionTimeline {...timelineBoard} rulerOnly showRuler gutterLeft={116} />
+        {boothVoices.map((person) => {
+          const personCam = cameraClips.filter((c) => c.personId === person.id)
+          const lc = laneFor(person.id)
+          return (
+            <div key={person.id} className="flex items-stretch gap-2">
+              <div
+                className="w-[108px] shrink-0 truncate pt-1 text-[11px] font-medium"
+                style={{ color: lc?.base }}
+                title={person.name || 'Voice'}
+              >
+                {person.name || 'Voice'}
+              </div>
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="relative h-6 overflow-hidden rounded border border-divider bg-[#0A1016]">
+                  {personCam.length === 0 ? (
+                    <span className="absolute inset-0 flex items-center px-2 text-[10px] text-silver-label">
+                      No video
+                    </span>
+                  ) : (
+                    personCam.map((c) => (
+                      <div
+                        key={c.id}
+                        className="absolute top-0.5 bottom-0.5 rounded-sm border border-forged/60 bg-forged/30"
+                        style={{ left: c.offset * zoom, width: Math.max(2, c.duration * zoom) }}
+                        title="Camera take"
+                      />
+                    ))
+                  )}
+                </div>
+                <SessionTimeline {...timelineBoard} personId={person.id} embedded showRuler={false} />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    )
+
+  const boothTeleprompter = script && script.trim() ? <Teleprompter text={script} title={title} /> : null
+
   const boothProps: Omit<BoothStageProps, 'variant'> = {
     title,
     participants: boothParticipants,
@@ -3784,6 +3930,9 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           autoFocusRecord
           notices={boothNotices}
           invitePanel={invitePanel}
+          deviceBar={boothDeviceBar}
+          timeline={boothTimeline}
+          teleprompter={boothTeleprompter}
           onExpand={() => setBoothOpen(true)}
           extraControls={
             <>
@@ -4325,6 +4474,8 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
           </Button>
           </div>
           </div>
+          {showRecord && boothDeviceBar}
+
           {!showRecord ? null : (Object.keys(cameraStreams).length > 0 ||
             (remoteGuest && (remoteGuestVideo || streamHasLiveVideo(remoteGuest))) ||
             cameraClips.length > 0) ? (
