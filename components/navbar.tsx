@@ -63,6 +63,17 @@ export function Navbar() {
   }, [closeMenu]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('subscribe') !== '1') return;
+    closeMenu();
+    setIsSubscribeOpen(true);
+    params.delete('subscribe');
+    const query = params.toString();
+    const next = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
+    window.history.replaceState(null, '', next);
+  }, [closeMenu]);
+
+  useEffect(() => {
     if (!isOpen) return;
     const { body, documentElement } = document;
     const previousBody = body.style.overflow;
@@ -96,7 +107,17 @@ export function Navbar() {
 
   return (
     <>
-      <header className="fixed top-0 left-0 right-0 z-40" role="banner">
+      {/* Checkbox lives outside <header> so the sheet can be a sibling and
+          :checked ~ .mobile-nav-sheet opens without JS or :has(). */}
+      <input
+        id={MOBILE_NAV_ID}
+        type="checkbox"
+        className="site-mobile-nav-input"
+        aria-hidden="true"
+        tabIndex={-1}
+        onChange={(event) => setIsOpen(event.target.checked)}
+      />
+      <header className="site-header fixed top-0 left-0 right-0 z-[60]" role="banner">
         {/* Blur lives on this sibling layer, never on <header>, and never on
             the menu sheet. Inner pages always use the glass bar; Home does
             not until scroll. A fixed sheet inside the header was clipped to
@@ -179,17 +200,9 @@ export function Navbar() {
             </Button>
           </div>
 
-          <input
-            id={MOBILE_NAV_ID}
-            type="checkbox"
-            className="site-mobile-nav-input"
-            aria-hidden="true"
-            tabIndex={-1}
-            onChange={(event) => setIsOpen(event.target.checked)}
-          />
           <label
             htmlFor={MOBILE_NAV_ID}
-            className="mobile-nav-toggle relative z-10 lg:hidden cursor-pointer p-2 text-[#B8C4CF] hover:text-[#53D6FF] transition-colors [&_svg]:pointer-events-none"
+            className="mobile-nav-toggle relative z-10 lg:hidden cursor-pointer touch-manipulation p-2 text-[#B8C4CF] hover:text-[#53D6FF] transition-colors [&_svg]:pointer-events-none"
             aria-expanded={isOpen}
             aria-controls="mobile-menu"
             aria-label={isOpen ? 'Close menu' : 'Open menu'}
@@ -207,9 +220,10 @@ export function Navbar() {
         role="dialog"
         aria-modal="true"
         aria-label="Site menu"
+        aria-hidden={!isOpen}
       >
-        <nav className="flex min-h-full flex-col px-5 pb-28 pt-2" aria-label="Mobile navigation">
-          <ul className="flex flex-col">
+        <nav className="flex h-full min-h-0 flex-col" aria-label="Mobile navigation">
+          <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pt-2">
             {NAV_LINKS.map((link) => (
               <li key={link.href}>
                 <Link
@@ -223,6 +237,7 @@ export function Navbar() {
                   )}
                   aria-current={isActive(link.href) ? 'page' : undefined}
                   onClick={closeMenu}
+                  tabIndex={isOpen ? 0 : -1}
                 >
                   {link.label}
                 </Link>
@@ -230,43 +245,47 @@ export function Navbar() {
             ))}
           </ul>
 
-          <div className="mt-8 flex flex-col gap-3">
-            <Button asChild variant="outline" size="lg" className="w-full min-h-12">
-              <Link href="/get-help" onClick={closeMenu}>
-                Get Help Now
-              </Link>
-            </Button>
-            <Button
-              type="button"
-              onClick={() => {
-                closeMenu();
-                setIsSubscribeOpen(true);
-              }}
-              variant="outline"
-              size="lg"
-              className="w-full min-h-12"
-            >
-              <Mail className="mr-2 h-4 w-4" />
-              Subscribe to Updates
-            </Button>
-            <Button asChild variant="default" size="lg" className="w-full min-h-12">
-              <Link href="/donate" onClick={closeMenu}>
-                Donate Today
-              </Link>
-            </Button>
-          </div>
+          <div className="shrink-0 border-t border-[#1A232C] bg-[#05070A] px-5 pt-4 pb-[calc(5.75rem+env(safe-area-inset-bottom,0px))]">
+            <div className="flex flex-col gap-3">
+              <Button asChild variant="outline" size="lg" className="w-full min-h-12">
+                <Link href="/get-help" onClick={closeMenu} tabIndex={isOpen ? 0 : -1}>
+                  Get Help Now
+                </Link>
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  closeMenu();
+                  setIsSubscribeOpen(true);
+                }}
+                variant="outline"
+                size="lg"
+                className="w-full min-h-12"
+                tabIndex={isOpen ? 0 : -1}
+              >
+                <Mail className="mr-2 h-4 w-4" />
+                Subscribe to Updates
+              </Button>
+              <Button asChild variant="default" size="lg" className="w-full min-h-12">
+                <Link href="/donate" onClick={closeMenu} tabIndex={isOpen ? 0 : -1}>
+                  Donate Today
+                </Link>
+              </Button>
+            </div>
 
-          <div className="mt-8 rounded-lg border border-[#27313B]/30 bg-[#11161C] p-4">
-            <p className="mb-2 text-sm font-medium text-[#B8C4CF]">
-              National Human Trafficking Hotline
-            </p>
-            <a
-              href="tel:1-888-373-7888"
-              className="text-lg font-bold text-[#8DEBFF] hover:text-[#A9B8C6]"
-            >
-              1-888-373-7888
-            </a>
-            <p className="mt-1 text-xs text-[#A9B8C6]">Text &quot;BEFREE&quot; to 233733</p>
+            <div className="mt-4 rounded-lg border border-[#27313B]/30 bg-[#11161C] p-3">
+              <p className="mb-1 text-sm font-medium text-[#B8C4CF]">
+                National Human Trafficking Hotline
+              </p>
+              <a
+                href="tel:1-888-373-7888"
+                className="text-lg font-bold text-[#8DEBFF] hover:text-[#A9B8C6]"
+                tabIndex={isOpen ? 0 : -1}
+              >
+                1-888-373-7888
+              </a>
+              <p className="mt-1 text-xs text-[#A9B8C6]">Text &quot;BEFREE&quot; to 233733</p>
+            </div>
           </div>
         </nav>
       </div>

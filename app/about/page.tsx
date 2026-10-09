@@ -75,10 +75,10 @@ export default function AboutPage() {
             <span className="inline-block text-[#8DEBFF] font-medium mb-4 tracking-wide uppercase text-sm">
               About Us
             </span>
-            <h1 className="font-serif text-5xl sm:text-6xl font-bold text-[#F6FAFC] mb-6 leading-tight">
+            <h1 className="font-serif text-3xl sm:text-5xl lg:text-6xl font-bold text-[#F6FAFC] mb-6 leading-tight">
               About Forged in the Fire: Lorain County Anti Trafficking Nonprofit
             </h1>
-            <p className="text-xl text-[#B8C4CF] leading-relaxed max-w-2xl mx-auto mb-4">
+            <p className="text-base sm:text-xl text-[#B8C4CF] leading-relaxed max-w-2xl mx-auto mb-4">
               Restoring hope. Rebuilding lives. Empowering survivors.
             </p>
             <p className="text-lg text-[#A9B8C6] leading-relaxed max-w-2xl mx-auto">

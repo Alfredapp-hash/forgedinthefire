@@ -80,7 +80,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
       {heroBlock ? (
         <BlockRenderer block={heroBlock} />
       ) : (
-        <section className="py-16 md:py-24 bg-gradient-to-b from-charcoal to-charcoal-800">
+        <section className="page-hero bg-gradient-to-b from-charcoal to-charcoal-800">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8">
             <div className="max-w-3xl mx-auto text-center">
               <Badge className="mb-4 bg-forged text-forged-on">

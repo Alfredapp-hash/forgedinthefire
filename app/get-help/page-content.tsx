@@ -40,10 +40,10 @@ export default function GetHelpPageContent() {
               <AlertTriangle className="h-4 w-4" />
               If you are in immediate danger, call 911
             </div>
-            <h1 className="font-serif text-5xl sm:text-6xl font-bold text-cream-100 mb-6">
+            <h1 className="font-serif text-3xl sm:text-5xl lg:text-6xl font-bold text-cream-100 mb-6 leading-tight">
               Get Help for Human Trafficking in Lorain County, Ohio
             </h1>
-            <p className="text-xl text-cream-300/80 leading-relaxed max-w-2xl mx-auto">
+            <p className="text-base sm:text-xl text-cream-300/80 leading-relaxed max-w-2xl mx-auto">
               You are not alone. Confidential support is available 24/7. 
               Reach out when you&apos;re ready—we&apos;re here to help.
             </p>

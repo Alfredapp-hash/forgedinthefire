@@ -35,10 +35,10 @@ export default function ServicesPage() {
         <div className="container-wide section-padding relative z-10">
           <div className="max-w-4xl mx-auto text-center">
             <span className="font-medium mb-4 block" style={{ color: '#8DEBFF' }}>Comprehensive Support</span>
-            <h1 className="font-serif text-5xl sm:text-6xl font-bold mb-6" style={{ color: '#F6FAFC' }}>
+            <h1 className="font-serif text-3xl sm:text-5xl lg:text-6xl font-bold mb-6 leading-tight" style={{ color: '#F6FAFC' }}>
               Human Trafficking Survivor Support Services in Lorain County, Ohio
             </h1>
-            <p className="text-xl leading-relaxed max-w-3xl mx-auto" style={{ color: '#B8C4CF' }}>
+            <p className="text-base sm:text-xl leading-relaxed max-w-3xl mx-auto" style={{ color: '#B8C4CF' }}>
               Holistic, trauma-informed programs available in Lorain County, Ohio and throughout 
               Northeast Ohio. Designed to meet survivors where they are and support them on 
               their journey to healing, independence, and hope.

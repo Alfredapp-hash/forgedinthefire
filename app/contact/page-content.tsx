@@ -28,10 +28,10 @@ export default function ContactPage() {
       <section className="pt-32 pb-20 bg-gradient-to-b from-charcoal-900 to-charcoal">
         <div className="container-wide section-padding">
           <div className="max-w-4xl mx-auto text-center">
-            <h1 className="font-serif text-5xl sm:text-6xl font-bold text-cream-100 mb-6">
+            <h1 className="font-serif text-3xl sm:text-5xl lg:text-6xl font-bold text-cream-100 mb-6 leading-tight">
               Contact Our Lorain County Victim Advocacy Team
             </h1>
-            <p className="text-xl text-cream-300/80 leading-relaxed max-w-2xl mx-auto">
+            <p className="text-base sm:text-xl text-cream-300/80 leading-relaxed max-w-2xl mx-auto">
               Have questions about our victim advocacy services in Lorain County and Northeast Ohio? 
               We&apos;d love to hear from you. For immediate help, please use the resources below.
             </p>

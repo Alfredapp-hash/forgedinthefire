@@ -44,7 +44,7 @@ export default async function CareersPage() {
   return (
     <div className="min-h-screen">
       {/* Hero Section */}
-      <section className="relative py-16 md:py-24 bg-gradient-to-b from-charcoal to-charcoal-800">
+      <section className="relative page-hero bg-gradient-to-b from-charcoal to-charcoal-800">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="max-w-3xl mx-auto text-center">
             <h1 className="font-playfair text-4xl md:text-5xl lg:text-6xl font-bold text-cream-100 mb-6">

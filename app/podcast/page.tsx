@@ -48,7 +48,7 @@ export default async function PodcastIndexPage() {
         }}
       />
 
-      <section className="relative py-16 md:py-24">
+      <section className="relative page-hero">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-[#53D6FF]/5 via-transparent to-transparent" />
         <div className="container-wide section-padding relative">
           <div className="max-w-3xl mx-auto text-center">

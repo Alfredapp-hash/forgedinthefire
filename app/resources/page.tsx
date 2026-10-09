@@ -53,10 +53,10 @@ export default function ResourcesPage() {
         <div className="container-wide section-padding">
           <div className="max-w-4xl mx-auto text-center">
             <span className="text-ember font-medium mb-4 block">Knowledge is Power</span>
-            <h1 className="font-serif text-5xl sm:text-6xl font-bold text-cream-100 mb-6">
+            <h1 className="font-serif text-3xl sm:text-5xl lg:text-6xl font-bold text-cream-100 mb-6 leading-tight">
               Human Trafficking Resources for Lorain County and Northeast Ohio
             </h1>
-            <p className="text-xl text-cream-300/80 leading-relaxed max-w-2xl mx-auto">
+            <p className="text-base sm:text-xl text-cream-300/80 leading-relaxed max-w-2xl mx-auto">
               Access educational materials, downloadable guides, and trusted external 
               resources for human trafficking awareness and survivor support in Lorain County 
               and Northeast Ohio.

@@ -102,7 +102,7 @@ export default async function JobDetailPage({ params }: JobPageProps) {
   return (
     <div className="min-h-screen">
       {/* Premium Hero Section */}
-      <section className="relative py-16 md:py-24 bg-gradient-to-b from-charcoal via-charcoal-800 to-charcoal">
+      <section className="relative page-hero bg-gradient-to-b from-charcoal via-charcoal-800 to-charcoal">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-teal/5 via-transparent to-transparent" />
         
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 relative">

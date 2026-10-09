@@ -26,14 +26,14 @@ export default function DonatePageContent() {
       <section className="pt-32 pb-20 bg-gradient-to-b from-[#53D6FF]/10 to-charcoal">
         <div className="container-wide section-padding">
           <div className="max-w-4xl mx-auto text-center">
-            <div className="inline-flex items-center gap-2 px-4 py-2 mb-6 text-sm font-medium text-ember bg-ember/10 rounded-full border border-ember/20">
+            <div className="inline-flex items-center gap-2 px-4 py-2 mb-6 text-sm font-medium text-ember bg-ember/10 rounded-xl border border-ember/20 max-w-full text-center">
               <Heart className="h-4 w-4 text-heart fill-heart" />
               100% of donations support survivor services
             </div>
-            <h1 className="font-serif text-5xl sm:text-6xl font-bold text-cream-100 mb-6">
+            <h1 className="font-serif text-3xl sm:text-5xl lg:text-6xl font-bold text-cream-100 mb-6 leading-tight">
               Support Human Trafficking Survivors in Lorain County, Ohio
             </h1>
-            <p className="text-xl text-cream-300/80 leading-relaxed max-w-2xl mx-auto">
+            <p className="text-base sm:text-xl text-cream-300/80 leading-relaxed max-w-2xl mx-auto">
               Your generosity directly empowers survivors in Lorain County and Northeast Ohio 
               on their journey to healing, independence, and hope. Every dollar creates 
               real impact in our local community.
