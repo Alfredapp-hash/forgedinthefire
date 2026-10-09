@@ -6,8 +6,11 @@ export type UploadedAsset = {
 
 /** Upload audio/cover to site media. Large audio uses a signed PUT to skip the function body limit. */
 export async function uploadPodcastMedia(file: File, alt: string): Promise<UploadedAsset> {
-  const isAudio = file.type.startsWith('audio/') || /\.(mp3|wav|m4a|webm)$/i.test(file.name)
-  const useSigned = isAudio && file.size > 4.5 * 1024 * 1024
+  const isLargeMedia =
+    file.type.startsWith('audio/') ||
+    file.type.startsWith('video/') ||
+    /\.(mp3|wav|m4a|webm|mp4|mov|m4v)$/i.test(file.name)
+  const useSigned = isLargeMedia && file.size > 4.5 * 1024 * 1024
 
   if (useSigned) {
     const signRes = await fetch('/api/admin/media/sign', {

@@ -36,6 +36,9 @@ export function EpisodePlayer({
   durationSeconds,
   chapters,
   transcript,
+  videoUrl,
+  videoMime,
+  poster,
 }: {
   episodeId: string
   showId: string | null
@@ -46,8 +49,11 @@ export function EpisodePlayer({
   durationSeconds: number | null
   chapters: PlayerChapter[]
   transcript: PlayerTranscript
+  videoUrl?: string | null
+  videoMime?: string | null
+  poster?: string | null
 }) {
-  const audio = useRef<HTMLAudioElement>(null)
+  const audio = useRef<HTMLMediaElement>(null)
   const tracked = useRef(false)
   const [playing, setPlaying] = useState(false)
   const [time, setTime] = useState(0)
@@ -105,17 +111,34 @@ export function EpisodePlayer({
   return (
     <div className="space-y-8 mb-10">
       <div className="rounded-2xl border border-[#27313B] bg-[#11161C] p-5 md:p-6">
-        <audio
-          ref={audio}
-          src={audioUrl}
-          preload="metadata"
-          onPlay={() => { setPlaying(true); track() }}
-          onPause={() => setPlaying(false)}
-          onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-          onLoadedMetadata={(e) => { if (Number.isFinite(e.currentTarget.duration)) setDuration(e.currentTarget.duration) }}
-          onRateChange={(e) => setRate(e.currentTarget.playbackRate)}
-          className="hidden"
-        />
+        {videoUrl ? (
+          <video
+            ref={(el) => { audio.current = el }}
+            src={videoUrl}
+            poster={poster || undefined}
+            controls
+            playsInline
+            preload="metadata"
+            onPlay={() => { setPlaying(true); track() }}
+            onPause={() => setPlaying(false)}
+            onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+            onLoadedMetadata={(e) => { if (Number.isFinite(e.currentTarget.duration)) setDuration(e.currentTarget.duration) }}
+            onRateChange={(e) => setRate(e.currentTarget.playbackRate)}
+            className="mb-4 aspect-video w-full rounded-xl bg-black"
+          />
+        ) : (
+          <audio
+            ref={(el) => { audio.current = el }}
+            src={audioUrl}
+            preload="metadata"
+            onPlay={() => { setPlaying(true); track() }}
+            onPause={() => setPlaying(false)}
+            onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+            onLoadedMetadata={(e) => { if (Number.isFinite(e.currentTarget.duration)) setDuration(e.currentTarget.duration) }}
+            onRateChange={(e) => setRate(e.currentTarget.playbackRate)}
+            className="hidden"
+          />
+        )}
         <div className="flex items-center gap-4">
           <button
             type="button"

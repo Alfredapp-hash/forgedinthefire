@@ -260,6 +260,8 @@ type Props = {
   audioUrl?: string | null
   title: string
   onExported: (file: File, durationSeconds: number) => Promise<void>
+  /** Combined export's muxed program video → episode.video_url (watch on site + video feed). */
+  onVideoExported?: (file: File) => Promise<void>
   onPublished?: () => Promise<void>
   onMarkChapter?: (seconds: number) => void
   chapters?: PodcastChapter[]
@@ -341,7 +343,7 @@ function snapshotTracks(tracks: StudioTrack[]): StudioTrack[] {
   }))
 }
 
-export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onPublished, onMarkChapter, chapters, stage, onGoToStage, episodeStatus, onDirtyChange, onTransportStatus, script }: Props) {
+export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onVideoExported, onPublished, onMarkChapter, chapters, stage, onGoToStage, episodeStatus, onDirtyChange, onTransportStatus, script }: Props) {
   // Stage gating. `stage == null` keeps legacy behavior (show everything). These
   // are presentational only — nothing below unmounts on a stage switch, so a live
   // recording, its checkpoints, and all editor state persist across stages.
@@ -3079,6 +3081,13 @@ export function PodcastAudioEditor({ episodeId, audioUrl, title, onExported, onP
       a.download = out.filename
       a.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 4000)
+      if (onVideoExported) {
+        try {
+          await onVideoExported(new File([out.blob], out.filename, { type: out.blob.type || 'video/mp4' }))
+        } catch (err) {
+          setError(err instanceof Error ? err.message : 'Video upload failed')
+        }
+      }
       if (manageBusy) {
         notifyOk(`Downloaded ${out.ext.toUpperCase()} deliverable`, {
           description: `${out.filename}${out.blob.size ? ` · ${formatBytes(out.blob.size)}` : ''}${
