@@ -189,7 +189,7 @@ function JobCard({ job }: { job: JobPosition }) {
 
 function EmptyState() {
   return (
-    <div className="max-w-2xl mx-auto text-center py-16">
+    <div className="max-w-2xl mx-auto text-center py-16 pb-28">
       <div className="w-20 h-20 rounded-full bg-charcoal-700 flex items-center justify-center mx-auto mb-6">
         <Briefcase className="w-10 h-10 text-silver-label" />
       </div>

@@ -168,6 +168,14 @@ async function measure(page) {
       h1: h1 ? { box: box(h1), text: h1.textContent?.trim().slice(0, 80) } : null,
       hotline: hotlineCard ? { box: box(hotlineCard) } : null,
       hotlineHitsQuick: intersects(box(hotlineCard), box(quick)),
+      contactClipped: (() => {
+        const contact = [...(sheet?.querySelectorAll('a') || [])].find(
+          (a) => a.textContent?.trim() === 'Contact'
+        )
+        if (!contact || !sheet || sheetStyle.display === 'none') return false
+        const r = contact.getBoundingClientRect()
+        return r.height < 20 || r.bottom > vh - 4 || r.top < 72
+      })(),
     }
   })
 }
@@ -217,6 +225,9 @@ function issuesFrom(snapshot, state) {
     }
     if (snapshot.hotlineHitsQuick) {
       issues.push('quick-exit covers menu hotline')
+    }
+    if (snapshot.contactClipped) {
+      issues.push('Contact link clipped in open menu')
     }
     if (!snapshot.input?.checked) issues.push('checkbox not checked after open click')
   }

@@ -245,9 +245,9 @@ export function Navbar() {
             ))}
           </ul>
 
-          <div className="shrink-0 border-t border-[#1A232C] bg-[#05070A] px-5 pt-4 pb-[calc(5.75rem+env(safe-area-inset-bottom,0px))]">
-            <div className="flex flex-col gap-3">
-              <Button asChild variant="outline" size="lg" className="w-full min-h-12">
+          <div className="shrink-0 border-t border-[#1A232C] bg-[#05070A] px-5 pt-3 pb-[calc(5.25rem+env(safe-area-inset-bottom,0px))]">
+            <div className="flex flex-col gap-2">
+              <Button asChild variant="outline" size="lg" className="w-full min-h-11">
                 <Link href="/get-help" onClick={closeMenu} tabIndex={isOpen ? 0 : -1}>
                   Get Help Now
                 </Link>
@@ -260,20 +260,20 @@ export function Navbar() {
                 }}
                 variant="outline"
                 size="lg"
-                className="w-full min-h-12"
+                className="w-full min-h-11"
                 tabIndex={isOpen ? 0 : -1}
               >
                 <Mail className="mr-2 h-4 w-4" />
                 Subscribe to Updates
               </Button>
-              <Button asChild variant="default" size="lg" className="w-full min-h-12">
+              <Button asChild variant="default" size="lg" className="w-full min-h-11">
                 <Link href="/donate" onClick={closeMenu} tabIndex={isOpen ? 0 : -1}>
                   Donate Today
                 </Link>
               </Button>
             </div>
 
-            <div className="mt-4 rounded-lg border border-[#27313B]/30 bg-[#11161C] p-3">
+            <div className="mt-3 rounded-lg border border-[#27313B]/30 bg-[#11161C] px-3 py-2.5">
               <p className="mb-1 text-sm font-medium text-[#B8C4CF]">
                 National Human Trafficking Hotline
               </p>
