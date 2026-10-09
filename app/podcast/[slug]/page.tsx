@@ -178,6 +178,9 @@ export default async function PodcastEpisodePage({ params }: Props) {
           durationSeconds={episode.duration_seconds}
           chapters={chapters}
           transcript={transcript}
+          videoUrl={episode.video_url}
+          videoMime={episode.video_mime}
+          poster={episode.cover_url}
         />
 
         {clips.length > 0 && (

@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { PODCAST, probeRemoteSize } from '@/lib/podcast'
 import { releaseConsentStatus } from '@/lib/podcast/guest-consent'
 import { releaseBlockers, releaseChecks } from '@/lib/studio/release'
+import { notifyFeedUpdate } from '@/lib/podcast/notify-feeds'
+import { dispatchAndRecord, type DispatchAccount, type DispatchPost } from '@/lib/social/post'
 import type { PodcastEpisode } from '@/lib/studio/types'
 
 export const dynamic = 'force-dynamic'
@@ -110,6 +112,42 @@ async function backfillFileSizes(admin: Admin) {
   return fixed
 }
 
+/** Due scheduled social posts → dispatched to their platforms, campaign status rolled up. */
+async function publishDuePosts(admin: Admin, now: string) {
+  const { data: due, error } = await admin
+    .from('social_posts')
+    .select('id, campaign_id, platform, caption, link_url, media_urls, account_id')
+    .eq('status', 'scheduled')
+    .lte('scheduled_at', now)
+  if (error) return { sent: 0, failed: 0, note: error.message }
+  const posts = (due ?? []) as (DispatchPost & { campaign_id: string | null })[]
+  if (!posts.length) return { sent: 0, failed: 0, note: null as string | null }
+
+  const { data: accounts } = await admin
+    .from('social_accounts')
+    .select('id, platform, account_id, access_token, connection_status, enabled')
+  const byId = new Map<string, DispatchAccount>()
+  const byPlat = new Map<string, DispatchAccount>()
+  for (const a of (accounts ?? []) as DispatchAccount[]) {
+    byId.set(a.id, a)
+    const k = (a.platform || '').toLowerCase()
+    if (!byPlat.has(k)) byPlat.set(k, a)
+  }
+
+  const results = await dispatchAndRecord(admin, posts, byId, byPlat)
+
+  const campaignIds = [...new Set(posts.map((p) => p.campaign_id).filter((x): x is string => Boolean(x)))]
+  for (const cid of campaignIds) {
+    const { data: all } = await admin.from('social_posts').select('status').eq('campaign_id', cid)
+    const statuses = (all ?? []).map((r) => (r as { status: string }).status)
+    const okc = statuses.filter((x) => x === 'posted' || x === 'mock_posted').length
+    const pending = statuses.some((x) => x === 'scheduled' || x === 'draft')
+    const cs = okc === 0 ? 'failed' : pending || statuses.some((x) => x === 'failed') ? 'partially_posted' : 'posted'
+    await admin.from('social_campaigns').update({ campaign_status: cs, updated_at: now }).eq('id', cid)
+  }
+  return { sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length, note: null as string | null }
+}
+
 async function run(request: Request) {
   const auth = authorized(request)
   if (!auth.ok) {
@@ -123,6 +161,12 @@ async function run(request: Request) {
     const posts = await publishPosts(admin, now)
     const podcast = await publishEpisodes(admin, now)
     const fileSizesFixed = podcast.note ? 0 : await backfillFileSizes(admin)
+    const social = await publishDuePosts(admin, now)
+    // Tell PodPing + the WebSub hub the feed changed so platforms ingest in
+    // seconds instead of waiting for their next poll. Fail-soft: never blocks.
+    if (podcast.published.length) {
+      await notifyFeedUpdate(PODCAST.feed).catch((e) => console.error('notify-feeds failed:', e))
+    }
     if (podcast.held.length) console.warn('publish-scheduled: episodes held', JSON.stringify(podcast.held))
     return NextResponse.json({
       published: posts.length,
@@ -132,6 +176,9 @@ async function run(request: Request) {
       podcast_held: podcast.held,
       podcast_note: podcast.note,
       file_sizes_fixed: fileSizesFixed,
+      social_sent: social.sent,
+      social_failed: social.failed,
+      social_note: social.note,
     })
   } catch (err) {
     console.error('Scheduled publish cron error:', err)

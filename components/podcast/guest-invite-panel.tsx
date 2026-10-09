@@ -22,7 +22,7 @@ import {
   Volume2,
   WifiOff,
 } from 'lucide-react'
-import { Button, Chip, Select, toast } from '@/components/studio-ui'
+import { Button, Chip, LoadingState, Select, toast } from '@/components/studio-ui'
 import { openInputStream, stopStreams } from '@/lib/podcast/capture'
 import { createHostFallbackSendMix, type HostFallbackSendMix } from '@/lib/podcast/guest-cue'
 import {
@@ -1403,7 +1403,7 @@ export function GuestTakesPanel({ invite }: { invite: GuestInviteAdmin }) {
       </button>
       {open && (
         <div className="space-y-2">
-          {loading && <p className={HINT}>Loading…</p>}
+          {loading && <LoadingState size="compact" label="Loading backups…" />}
           {!loading && !takes.length && (
             <p className={HINT}>No backup parts yet. They appear while you record (about one part every 10 seconds).</p>
           )}

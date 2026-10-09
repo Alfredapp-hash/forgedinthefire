@@ -239,6 +239,21 @@
     --type-label: 400 12px/1.2 var(--font-inter, Inter, system-ui, sans-serif);
     --type-label-tracking: 0.16em;
     --type-timecode-tracking: 0.02em;
+
+    /* Title — the one normal-case heading step, for the episode title and
+       stage-level headings. Sits above `section` (which is a tracked caps
+       eyebrow) so titles no longer need a `!text-[18px]` override. */
+    --type-title: 600 18px/1.25 var(--font-inter, Inter, system-ui, sans-serif);
+    --type-title-tracking: -0.01em;
+    /* Value — tabular numeric readouts (dB, counts, times) so figures line up
+       and read as data rather than prose. */
+    --type-value: 600 13px/1 var(--font-inter, Inter, system-ui, sans-serif);
+    --type-value-tracking: 0.01em;
+
+    /* Unified focus ring: the ice-blue outline the whole studio shares, plus a
+       soft cyan bloom so focus reads as deliberate rather than a browser default. */
+    --focus-ring: 0 0 0 2px var(--obsidian), 0 0 0 4px var(--ice-blue),
+      0 0 12px rgba(141, 235, 255, 0.35);
   }
 }
 
@@ -858,6 +873,24 @@ html {
     letter-spacing: var(--type-timecode-tracking);
     font-variant-numeric: tabular-nums;
     color: var(--silver);
+  }
+  .studio-type-title {
+    font: var(--type-title);
+    letter-spacing: var(--type-title-tracking);
+    color: var(--white);
+  }
+  .studio-type-value {
+    font: var(--type-value);
+    letter-spacing: var(--type-value-tracking);
+    font-variant-numeric: tabular-nums;
+    color: var(--white);
+  }
+  /* Opt-in unified focus ring for custom/canvas controls whose outline would be
+     clipped by a scroll container — a shadow ring is drawn on focus-visible. */
+  .studio-focus:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+    border-radius: 6px;
   }
 }
 

@@ -75,7 +75,7 @@ export function ShortcutsHelpModal({ open, onClose }: Props): React.JSX.Element 
         <div className="flex items-center justify-between gap-4 border-b border-divider px-5 py-4">
           <div>
             <p className="studio-type-label text-ice">Studio</p>
-            <h2 className="studio-type-section mt-0.5 !text-[18px]">Shortcuts &amp; how it works</h2>
+            <h2 className="studio-type-title mt-0.5">Shortcuts &amp; how it works</h2>
           </div>
           <Button
             variant="secondary"

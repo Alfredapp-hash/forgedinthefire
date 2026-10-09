@@ -65,6 +65,10 @@ export type PodcastEpisode = {
   guest_bio: string | null
   audio_url: string | null
   audio_mime: string | null
+  video_url?: string | null
+  video_mime?: string | null
+  video_size?: number | null
+  video_duration_seconds?: number | null
   duration_seconds: number | null
   file_size: number | null
   cover_url: string | null

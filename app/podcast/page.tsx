@@ -23,7 +23,12 @@ export async function generateMetadata(): Promise<Metadata> {
     description: meta.description,
     alternates: {
       canonical: meta.page,
-      types: { 'application/rss+xml': meta.feed },
+      types: {
+        'application/rss+xml': [
+          { url: meta.feed, title: `${meta.title} (audio)` },
+          { url: `${meta.site}/podcast/video.xml`, title: `${meta.title} (video)` },
+        ],
+      },
     },
     openGraph: {
       title: `${meta.title} Podcast`,
@@ -42,6 +47,10 @@ const PLATFORM_ORDER = ['apple', 'spotify', 'youtube', 'amazon', 'pocket_casts',
 export default async function PodcastIndexPage() {
   const show = await getDefaultShow()
   const meta = showToMeta(show)
+  // The feed/OG tags need the absolute image URL; the on-page <img> uses a
+  // same-origin relative path so the cover also renders in dev + preview deploys
+  // (external cover URLs stay absolute).
+  const coverSrc = meta.image.startsWith(meta.site) ? meta.image.slice(meta.site.length) || '/' : meta.image
   const [episodes, links] = await Promise.all([getPublishedEpisodes(), getSubscribeLinks(show?.id)])
   const subscribe = links.slice().sort(
     (a, b) => PLATFORM_ORDER.indexOf(a.platform as (typeof PLATFORM_ORDER)[number]) - PLATFORM_ORDER.indexOf(b.platform as (typeof PLATFORM_ORDER)[number]),
@@ -80,7 +89,7 @@ export default async function PodcastIndexPage() {
           <div className="max-w-3xl mx-auto flex flex-col md:flex-row items-center gap-8 md:gap-10 text-center md:text-left">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={meta.image}
+              src={coverSrc}
               alt={`${meta.title} podcast artwork`}
               width={224}
               height={224}

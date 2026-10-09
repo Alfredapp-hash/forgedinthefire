@@ -64,9 +64,13 @@ export function showNotesHtml(text: string) {
 export type FeedOptions = {
   meta: ShowMeta
   episodes: PodcastEpisode[]
+  /** 'video' builds a video enclosure feed (episodes with video_url). Defaults to audio. */
+  media?: 'audio' | 'video'
   /** Private subscriber feed: token goes on enclosure / transcript / chapter URLs. */
   privateToken?: string | null
   privateLabel?: string | null
+  /** WebSub hub URL to advertise (atom:link rel="hub"), so subscribers get push updates. */
+  webSubHub?: string | null
 }
 
 export function feedSelfUrl(meta: ShowMeta, privateToken?: string | null) {
@@ -110,6 +114,10 @@ export function buildItem(ep: PodcastEpisode, opts: FeedOptions) {
     : ''
   const html = `${notesHtml}${guestHtml}` || `<p>${escapeHtml(meta.description)}</p>`
   const episodeType = ep.episode_type || 'full'
+  const enclosureLine =
+    opts.media === 'video' && ep.video_url
+      ? `      <enclosure url="${escapeXml(ep.video_url)}" length="${Math.max(0, Math.round(ep.video_size || 0))}" type="${escapeXml(ep.video_mime || 'video/mp4')}" />`
+      : `      <enclosure url="${escapeXml(enclosureUrl(meta.site, ep, token))}" length="${Math.max(0, Math.round(ep.file_size || 0))}" type="${escapeXml(mime)}" />`
   const lines: string[] = [
     `      <title>${escapeXml(ep.title)}</title>`,
     `      <link>${escapeXml(link)}</link>`,
@@ -117,7 +125,7 @@ export function buildItem(ep: PodcastEpisode, opts: FeedOptions) {
     `      <pubDate>${pub}</pubDate>`,
     `      <description>${cdata(html)}</description>`,
     `      <content:encoded>${cdata(html)}</content:encoded>`,
-    `      <enclosure url="${escapeXml(enclosureUrl(meta.site, ep, token))}" length="${Math.max(0, Math.round(ep.file_size || 0))}" type="${escapeXml(mime)}" />`,
+    enclosureLine,
     `      <itunes:title>${escapeXml(ep.title)}</itunes:title>`,
     `      <itunes:author>${escapeXml(meta.author)}</itunes:author>`,
   ]
@@ -189,15 +197,19 @@ export function buildFeedXml(opts: FeedOptions) {
     `    <image>\n      <url>${escapeXml(meta.image)}</url>\n      <title>${escapeXml(title)}</title>\n      <link>${escapeXml(meta.page)}</link>\n    </image>`,
     `    <podcast:guid>${guid}</podcast:guid>`,
     `    <podcast:locked owner="${escapeXml(meta.email)}">${privateToken || meta.locked ? 'yes' : 'no'}</podcast:locked>`,
-    `    <podcast:medium>podcast</podcast:medium>`,
+    `    <podcast:medium>${opts.media === 'video' ? 'video' : 'podcast'}</podcast:medium>`,
     `    <podcast:person role="host">${escapeXml(meta.author)}</podcast:person>`,
   ]
+  if (isSafeHttpUrl(opts.webSubHub)) {
+    channel.push(`    <atom:link href="${escapeXml(opts.webSubHub)}" rel="hub" />`)
+  }
   if (isSafeHttpUrl(meta.funding)) {
     channel.push(`    <podcast:funding url="${escapeXml(meta.funding)}">${escapeXml(meta.funding_label.slice(0, 128))}</podcast:funding>`)
   }
   if (privateToken) channel.push('    <itunes:block>Yes</itunes:block>')
 
-  const items = episodes.map((ep) => buildItem(ep, opts)).join('\n')
+  const feedEpisodes = opts.media === 'video' ? episodes.filter((ep) => ep.video_url) : episodes
+  const items = feedEpisodes.map((ep) => buildItem(ep, opts)).join('\n')
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"

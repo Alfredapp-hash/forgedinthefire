@@ -72,9 +72,17 @@ const FAKE_TOPICS: ContentTopic[] = [
  * - mode=editor: the bare `PodcastAudioEditor` with every stage visible and the export
  *   handed to the browser as a download, plus `window.__e2e` hooks for assertions.
  */
+const SAMPLE_SCRIPT = `What Victim Advocates Really Do
+Single host  |  about 4 minutes before music
+[Opening music fades.]
+Imagine handing someone the right phone number at the exact moment they are ready to reach for it. That is often what advocacy looks like — not rescue, not control, but the right help at the right time.
+A victim advocate helps a person understand their options and make their own decisions. The advocate carries information and steadiness, not authority over the person's life.
+[Pause. Let the idea settle.]
+So what does an advocate actually do, hour to hour? They explain rights in plain language. They sit with someone through a hard phone call. They keep showing up.`
+
 export function StudioHarness({ episodeId, mode }: { episodeId: string; mode: StudioHarnessMode }) {
   const [episodes, setEpisodes] = useState<PodcastEpisode[]>(() => [
-    fakeEpisode(episodeId),
+    fakeEpisode(episodeId, { show_notes: SAMPLE_SCRIPT }),
     fakeEpisode(`${episodeId}-queued`, {
       title: 'Second queued episode',
       slug: 'second-queued-episode',

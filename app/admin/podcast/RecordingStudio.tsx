@@ -308,6 +308,19 @@ export function RecordingStudio({
     )
   }
 
+  async function saveVideo(file: File) {
+    if (!episode) throw new Error('Pick or write an episode first')
+    const asset = await uploadPodcastMedia(file, `${episode.title} (video)`)
+    await saveEpisode(
+      {
+        video_url: asset.url,
+        video_mime: asset.mime_type || file.type || 'video/mp4',
+        video_size: asset.size_bytes || file.size,
+      },
+      'Video saved — watch on the site + video feed',
+    )
+  }
+
   async function saveMix(file: File, durationSeconds: number) {
     if (!episode) throw new Error('Pick or write an episode first')
     const asset = await uploadPodcastMedia(file, episode.title)
@@ -623,8 +636,10 @@ export function RecordingStudio({
                 episodeId={episode.id}
                 audioUrl={episode.audio_url}
                 title={episode.title}
+                script={episode.show_notes}
                 episodeStatus={episode.status}
                 onExported={saveMix}
+                onVideoExported={saveVideo}
                 onPublished={publish}
                 onMarkChapter={markChapterAt}
                 chapters={episode.chapters}

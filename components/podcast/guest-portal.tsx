@@ -1366,7 +1366,7 @@ export function GuestPortal({
         <header className="flex items-start justify-between gap-3 border-b border-divider pb-4">
           <div className="min-w-0">
             <p className="studio-type-label text-ice">Forged in the Fire · Guest booth</p>
-            <h1 className="mt-1 text-xl font-medium">{session?.episodeTitle || 'Podcast recording'}</h1>
+            <h1 className="studio-type-title mt-1">{session?.episodeTitle || 'Podcast recording'}</h1>
           </div>
           {canLeave && (
             <Button variant="secondary" size="touch" onClick={() => void leave()} className="shrink-0 border-heart/50 text-heart hover:border-heart">

@@ -102,7 +102,7 @@ check(uuidv5('podnews.net/rss') === '9b024349-ccf0-5f69-a609-6b82873eab3c', 'UUI
 check(podcastGuid('https://podnews.net/rss/') === '9b024349-ccf0-5f69-a609-6b82873eab3c', 'podcast:guid strips scheme + trailing slash')
 
 for (const [label, opts] of [
-  ['public', { meta, episodes }],
+  ['public', { meta, episodes, webSubHub: 'https://hub.example.org/' }],
   ['private', { meta, episodes: [{ ...episodes[0], visibility: 'private' }, episodes[1]], privateToken: 'abcdef0123456789abcdef0123456789abcdef0123456789', privateLabel: 'a@b.org' }],
 ]) {
   const xml = buildFeedXml(opts)
@@ -123,6 +123,9 @@ for (const [label, opts] of [
   check(label === 'private' || one('podcast:funding')?.getAttribute('url') === 'https://forgedinthefireohio.org/donate', `[${label}] podcast:funding → /donate`)
   const self = one('atom:link')
   check(self?.getAttribute('rel') === 'self' && self.getAttribute('type') === 'application/rss+xml', `[${label}] atom:link rel=self`)
+  const hubLink = Array.from(ch.children).find((n) => n.tagName === 'atom:link' && n.getAttribute('rel') === 'hub')
+  if (label === 'public') check(hubLink?.getAttribute('href') === 'https://hub.example.org/', `[${label}] WebSub atom:link rel=hub advertised`)
+  else check(!hubLink, `[${label}] no WebSub hub on private feed`)
   check(label === 'public' || one('itunes:block')?.textContent === 'Yes', `[${label}] itunes:block on private feed`)
   check(!!one('lastBuildDate') && !Number.isNaN(Date.parse(one('lastBuildDate').textContent)), `[${label}] lastBuildDate`)
 
