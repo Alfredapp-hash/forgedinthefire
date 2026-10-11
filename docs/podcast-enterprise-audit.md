@@ -22,7 +22,7 @@ The public feed at `https://forgedinthefireohio.org/podcast/rss.xml` returns RSS
 Still a person, not this repository:
 
 - Submit `https://forgedinthefireohio.org/podcast/rss.xml` to Apple Podcasts and Spotify, and name someone on the Distribution tab.
-- Provision LiveKit, TURN, WHIP or Cloudflare Stream, and PodPing, then set those secrets on Netlify. Names are in `.env.local.example`. `CRON_SECRET` must match the GitHub Actions secret used by `.github/workflows/publish-scheduled.yml`.
+- Provision LiveKit, TURN, WHIP or Cloudflare Stream, and PodPing, then set those secrets on the Vercel project `forged-in-the-fire`. Names are in `.env.local.example`. `CRON_SECRET` must match the GitHub Actions secret used by `.github/workflows/publish-scheduled.yml`.
 - A sitewide Content-Security-Policy was not turned on. Face blur loads MediaPipe from jsDelivr and model files from Google Storage. An enforcing policy needs those hosts and a Next.js nonce, and a wrong policy takes the public site down.
 - IAB download certification is out of scope. The unique-download count is the same day-hash the desk already used.
 - Hosted recording still encodes in the host browser. A second operator can already end a live show; that action is now in the audit log. Provisioning the media server is the remaining step.
