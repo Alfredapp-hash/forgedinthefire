@@ -114,9 +114,10 @@ export function buildItem(ep: PodcastEpisode, opts: FeedOptions) {
     : ''
   const html = `${notesHtml}${guestHtml}` || `<p>${escapeHtml(meta.description)}</p>`
   const episodeType = ep.episode_type || 'full'
+  const videoDownload = withToken(`${meta.site}/podcast/dl/${ep.id}/video.mp4`, token)
   const enclosureLine =
     opts.media === 'video' && ep.video_url
-      ? `      <enclosure url="${escapeXml(ep.video_url)}" length="${Math.max(0, Math.round(ep.video_size || 0))}" type="${escapeXml(ep.video_mime || 'video/mp4')}" />`
+      ? `      <enclosure url="${escapeXml(videoDownload)}" length="${Math.max(0, Math.round(ep.video_size || 0))}" type="${escapeXml(ep.video_mime || 'video/mp4')}" />`
       : `      <enclosure url="${escapeXml(enclosureUrl(meta.site, ep, token))}" length="${Math.max(0, Math.round(ep.file_size || 0))}" type="${escapeXml(mime)}" />`
   const lines: string[] = [
     `      <title>${escapeXml(ep.title)}</title>`,

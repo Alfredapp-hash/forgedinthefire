@@ -1,6 +1,6 @@
 # Podcast LIVE show mode
 
-Run a live show from the browser. There is no server-side encoder (Netlify has no
+Run a live show from the browser. There is no server-side encoder (the host has no
 long-running process and no ffmpeg), so the host's browser does all the work:
 
 ```
@@ -49,7 +49,7 @@ All writes go through admin API routes with the service role.
    - **WHIP publish URL** — `https://customer-<code>.cloudflarestream.com/<secret>/webRTC/publish`.
      This URL *is* the credential. Never put it in client code or a `NEXT_PUBLIC_*` var.
    - **WHEP playback URL** — `https://customer-<code>.cloudflarestream.com/<input-uid>/webRTC/play`.
-4. Netlify → Site configuration → Environment variables:
+4. Vercel → forged-in-the-fire → Settings → Environment Variables:
    - `LIVE_WHIP_URL` = the WHIP publish URL
    - `LIVE_PLAYBACK_WHEP_URL` = the WHEP playback URL
    - `LIVE_PLAYBACK_HLS_URL` = `https://customer-<code>.cloudflarestream.com/<input-uid>/manifest/video.m3u8`
@@ -197,8 +197,8 @@ dynamic `import()` so it is a separate client chunk); at runtime the WASM runtim
 (`FACE_DETECTOR_MODEL_URL`).
 **When you upgrade the npm package, update `MEDIAPIPE_VERSION` in that file** (JS and WASM must match).
 
-*Netlify:* nothing to configure. The two runtime files are absolute `https://` URLs fetched by the host's
-browser, so they resolve the same on `*.netlify.app`, a custom domain and deploy previews; Netlify serves
+Nothing to configure on the host for face blur. The two runtime files are absolute `https://` URLs fetched by the host's
+browser, so they resolve the same on a custom domain and deploy previews. The host serves
 only the Next.js JS chunk. The site sets no Content-Security-Policy today (`next.config.ts` adds
 X-Frame-Options, nosniff, Referrer-Policy and Permissions-Policy). If you add one, allow
 `script-src https://cdn.jsdelivr.net 'wasm-unsafe-eval'` and
@@ -354,7 +354,7 @@ messages.
   boundary; the anon key can never insert.
 - `LIVE_CHAT_SALT` (optional) salts the viewer hash. Changing it "forgets" every ban.
 - Broadcasts use Supabase's HTTP broadcast endpoint from the server (`channel.httpSend`), so they work
-  from Netlify Functions without a websocket.
+  from the server without a websocket.
 
 ## Simulcast (YouTube Live, Facebook Live, custom RTMP(S)/WHIP)
 
@@ -371,7 +371,7 @@ the server creates one output per enabled destination
 (`POST /accounts/{account}/stream/live_inputs/{input}/outputs`), polls their state every 10 s while on
 air, and deletes them on **End show** so the next show starts clean.
 
-Environment (Netlify → Environment variables):
+Environment (Vercel → forged-in-the-fire → Environment Variables):
 
 | variable | value |
 | --- | --- |
@@ -452,13 +452,13 @@ need HLS (hls.js or native Safari) or WHEP (any modern browser).
   free. A 60-minute show watched by 100 people ≈ 6,000 delivered minutes ≈ $6.
 - **MediaMTX on a VPS:** $5–20/month flat, plus bandwidth. ~2.5 Mbps per viewer at 720p — 100
   viewers ≈ 250 Mbps; put a CDN in front of HLS for bigger audiences.
-- **Netlify:** only the tiny WHIP signaling requests and the cached `/api/podcast/live` poll.
+- **Vercel:** only the tiny WHIP signaling requests and the cached `/api/podcast/live` poll.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
-| "Not set up yet — an admin needs to add the streaming settings" | Set `LIVE_WHIP_URL` (+ playback vars) on Netlify and redeploy. The exact variable names are under **Advanced** in the Live provider card. |
+| "Not set up yet — an admin needs to add the streaming settings" | Set `LIVE_WHIP_URL` (+ playback vars) on Vercel and redeploy. The exact variable names are under **Advanced** in the Live provider card. |
 | Viewers stuck on the slate with no sound | You are DUMPED (red badge). Press **Resume broadcast**; then **Release safe slate** for cameras. |
 | "This browser could not store it on disk" after the show | IndexedDB unavailable/full (private window, quota). Download the video before closing the tab. |
 | Show ended by a crash — where is the recording? | Reopen the Live tab: **Recordings kept in this browser** lists it (same browser profile only). |

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
-import { studioError, withStudioAdmin } from '@/lib/studio/api'
+import { studioError, withStudioStaff } from '@/lib/studio/api'
+import { parsePrivateMediaRef } from '@/lib/podcast/enterprise'
+import { signedPrivateUrl } from '@/lib/podcast/private-media'
 import { hashRemoteAudio } from '@/lib/podcast/safety/audio-hash'
 import { SAFETY_MIGRATION, SAFETY_TABLE, missingSafetyTable } from '@/lib/podcast/safety/server'
 import {
@@ -36,7 +38,7 @@ type Episode = Record<string, unknown> & { id: string; audio_url: string | null;
 export async function GET(_request: Request, { params }: Params) {
   try {
     const { episodeId } = await params
-    const { supabase } = await withStudioAdmin()
+    const { supabase } = await withStudioStaff()
     const { data, error } = await supabase.from(SAFETY_TABLE).select('*').eq('episode_id', episodeId).maybeSingle()
     if (error) {
       if (missingSafetyTable(error)) return NextResponse.json({ available: false, record: null }, { headers: noStore })
@@ -64,7 +66,7 @@ export async function GET(_request: Request, { params }: Params) {
 export async function PATCH(request: Request, { params }: Params) {
   try {
     const { episodeId } = await params
-    const { user, supabase } = await withStudioAdmin()
+    const { user, supabase } = await withStudioStaff()
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null
     if (!body || typeof body !== 'object') return bad('Invalid body')
 
@@ -100,7 +102,13 @@ export async function PATCH(request: Request, { params }: Params) {
         if (!isIsoDate(g.on)) return bad('Add the date the guest approved (YYYY-MM-DD, not in the future)')
         if (!isApprovalMethod(g.method)) return bad('Choose how the guest approved')
         if (!ep.audio_url) return bad('Upload the final audio before recording approval')
-        const hashed = await hashRemoteAudio(ep.audio_url)
+        let audioSource = ep.audio_url
+        if (parsePrivateMediaRef(audioSource)) {
+          const signed = await signedPrivateUrl(audioSource)
+          if (!signed) return bad('Could not open the private audio file')
+          audioSource = signed
+        }
+        const hashed = await hashRemoteAudio(audioSource)
         Object.assign(signoff, {
           guest_final_cut_approved: true,
           guest_final_cut_approved_at: now,

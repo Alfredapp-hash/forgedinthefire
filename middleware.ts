@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { isProducerRole, isStaffRole } from '@/lib/admin/roles'
 
 function normalizeEmail(email: string | undefined): string {
   return (email || '').trim().toLowerCase()
@@ -77,10 +78,16 @@ export async function middleware(request: NextRequest) {
       .single()
     
     // If not an admin, redirect to unauthorized page
-    if (adminError || !adminUser || (adminUser.role !== 'admin' && adminUser.role !== 'owner')) {
+    if (adminError || !adminUser || !isStaffRole(adminUser.role)) {
       console.warn(`Non-admin user attempted access: ${user.email} (normalized: ${normalizedUserEmail})`)
       const url = request.nextUrl.clone()
       url.pathname = '/unauthorized'
+      return NextResponse.redirect(url)
+    }
+    // Safeguarding reviews the show. The rest of the admin portal stays with producers.
+    if (adminUser.role === 'safeguarding' && !pathname.startsWith('/admin/podcast')) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/admin/podcast'
       return NextResponse.redirect(url)
     }
   }
@@ -95,9 +102,9 @@ export async function middleware(request: NextRequest) {
       .eq('email', normalizedUserEmail)
       .single()
     
-    if (adminUser && (adminUser.role === 'admin' || adminUser.role === 'owner')) {
+    if (adminUser && isStaffRole(adminUser.role)) {
       const url = request.nextUrl.clone()
-      url.pathname = '/admin'
+      url.pathname = isProducerRole(adminUser.role) ? '/admin' : '/admin/podcast'
       return NextResponse.redirect(url)
     }
     // If not an admin, let them stay on login page to see error

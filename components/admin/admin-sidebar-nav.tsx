@@ -39,13 +39,14 @@ const navItems = [
   { label: 'Settings', href: '/admin/settings', icon: Settings },
 ]
 
-export function AdminSidebarNav({ email }: { email: string }) {
+export function AdminSidebarNav({ email, role }: { email: string; role?: string }) {
   const pathname = usePathname()
+  const items = role === 'safeguarding' ? navItems.filter((item) => item.href === '/admin/podcast') : navItems
 
   return (
     <>
       <nav className="flex-1 py-4 space-y-0.5 px-2 overflow-y-auto">
-        {navItems.map((item) => {
+        {items.map((item) => {
           const active = item.href === '/admin'
             ? pathname === '/admin'
             : pathname === item.href || pathname.startsWith(item.href + '/')

@@ -35,6 +35,8 @@ type DeskTab = 'studio' | 'live' | 'episodes' | 'show' | 'distribution' | 'analy
 type AnalyticsPayload = {
   days: number
   total: number
+  downloads?: number
+  plays?: number
   by_day: { date: string; count: number }[]
   by_app: { name: string; count: number }[]
   by_country: { name: string; count: number }[]
@@ -45,6 +47,7 @@ type AnalyticsPayload = {
     episode_number: number | null
     published_at: string | null
     downloads: number
+    plays?: number
   }[]
 }
 
@@ -590,8 +593,9 @@ export function PodcastDesk() {
       {tab === 'analytics' && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="grid md:grid-cols-3 gap-3 flex-1">
+            <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-3 flex-1">
               <Stat label="Events (30d)" value={String(analytics?.total ?? 0)} />
+              <Stat label="Unique downloads" value={String(analytics?.downloads ?? 0)} />
               <Stat label="Top app" value={analytics?.by_app[0]?.name || '—'} />
               <Stat label="Top country" value={analytics?.by_country[0]?.name || '—'} />
             </div>
@@ -600,7 +604,7 @@ export function PodcastDesk() {
               onClick={() => {
                 if (!analytics) return
                 const lines = [
-                  'episode,season,episode_number,published_at,downloads',
+                  'episode,season,episode_number,published_at,downloads,plays',
                   ...analytics.episode_compare.map((ep) =>
                     [
                       JSON.stringify(ep.title),
@@ -608,6 +612,7 @@ export function PodcastDesk() {
                       ep.episode_number ?? '',
                       ep.published_at || '',
                       ep.downloads,
+                      ep.plays ?? '',
                     ].join(',')
                   ),
                 ]
@@ -648,6 +653,7 @@ export function PodcastDesk() {
                   <th className="text-left px-4 py-3">Episode</th>
                   <th className="text-left px-4 py-3">Published</th>
                   <th className="text-right px-4 py-3">Downloads</th>
+                  <th className="text-right px-4 py-3">Plays</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#27313B]">
@@ -662,6 +668,7 @@ export function PodcastDesk() {
                       {ep.published_at ? new Date(ep.published_at).toLocaleDateString() : '—'}
                     </td>
                     <td className="px-4 py-3 text-right text-[#8DEBFF]">{ep.downloads}</td>
+                    <td className="px-4 py-3 text-right text-[#A9B8C6]">{ep.plays ?? 0}</td>
                   </tr>
                 ))}
               </tbody>

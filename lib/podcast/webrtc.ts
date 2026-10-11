@@ -25,7 +25,7 @@ export const STUN_SERVERS: RTCIceServer[] = [
 export const ICE_SERVERS = STUN_SERVERS
 
 export const ICE_FAILED_HINT =
-  'Peer failed. This booth is STUN-only until TURN_URL and TURN_SECRET (or TURN_USERNAME + TURN_CREDENTIAL) are set on Netlify. Stay on this tab for a local camera backup, or try a phone hotspot.'
+  'Peer failed. This booth is STUN-only until TURN_URL and TURN_SECRET (or TURN_USERNAME + TURN_CREDENTIAL) are set on Vercel. Stay on this tab for a local camera backup, or try a phone hotspot.'
 
 export function iceFailedHint(turnConfigured: boolean) {
   return turnConfigured

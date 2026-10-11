@@ -4,7 +4,10 @@ import { createAdminClient } from '@/lib/supabase/server'
 import { PODCAST, probeRemoteSize } from '@/lib/podcast'
 import { releaseConsentStatus } from '@/lib/podcast/guest-consent'
 import { releaseBlockers, releaseChecks } from '@/lib/studio/release'
+import { feedsToAnnounce } from '@/lib/podcast/feed-announce'
 import { notifyFeedUpdate } from '@/lib/podcast/notify-feeds'
+import { recordPodcastAudit } from '@/lib/podcast/audit-log'
+import { runPodcastRetention } from '@/lib/podcast/retention'
 import { dispatchAndRecord, type DispatchAccount, type DispatchPost } from '@/lib/social/post'
 import type { PodcastEpisode } from '@/lib/studio/types'
 
@@ -50,10 +53,11 @@ async function publishEpisodes(admin: Admin, now: string) {
     .select('*')
     .eq('status', 'scheduled')
     .lte('scheduled_for', now)
-  if (error) return { published: [] as string[], held: [] as { id: string; reasons: string[] }[], note: error.message }
+  if (error) return { published: [] as string[], held: [] as { id: string; reasons: string[] }[], feeds: [] as string[], note: error.message }
 
   const published: string[] = []
   const held: { id: string; reasons: string[] }[] = []
+  const feeds = new Set<string>()
   for (const row of (data ?? []) as PodcastEpisode[]) {
     const ep = { ...row }
     if (ep.audio_url && !(ep.file_size && ep.file_size > 0)) {
@@ -88,9 +92,15 @@ async function publishEpisodes(admin: Admin, now: string) {
       .eq('id', ep.id)
       .eq('status', 'scheduled')
     if (updateError) held.push({ id: ep.id, reasons: [updateError.message] })
-    else published.push(ep.id)
+    else {
+      published.push(ep.id)
+      for (const url of feedsToAnnounce(
+        { status: 'scheduled', visibility: ep.visibility, audio_url: ep.audio_url, video_url: ep.video_url },
+        { status: 'published', visibility: ep.visibility, audio_url: ep.audio_url, video_url: ep.video_url },
+      )) feeds.add(url)
+    }
   }
-  return { published, held, note: null as string | null }
+  return { published, held, feeds: [...feeds], note: null as string | null }
 }
 
 /** Repair enclosure length on already-live episodes (Apple flags length="0"). */
@@ -164,9 +174,21 @@ async function run(request: Request) {
     const social = await publishDuePosts(admin, now)
     // Tell PodPing + the WebSub hub the feed changed so platforms ingest in
     // seconds instead of waiting for their next poll. Fail-soft: never blocks.
-    if (podcast.published.length) {
-      await notifyFeedUpdate(PODCAST.feed).catch((e) => console.error('notify-feeds failed:', e))
+    if (podcast.feeds.length) {
+      await Promise.all(podcast.feeds.map((url) => notifyFeedUpdate(url).catch((e) => console.error('notify-feeds failed:', e))))
     }
+    for (const id of podcast.published) {
+      await recordPodcastAudit({
+        action: 'episode.publish',
+        episodeId: id,
+        summary: 'Hourly job published a scheduled episode',
+      })
+    }
+    const retention = await runPodcastRetention().catch((err) => ({
+      guestTakes: 0,
+      previousAudio: 0,
+      note: err instanceof Error ? err.message : 'retention failed',
+    }))
     if (podcast.held.length) console.warn('publish-scheduled: episodes held', JSON.stringify(podcast.held))
     return NextResponse.json({
       published: posts.length,
@@ -179,6 +201,9 @@ async function run(request: Request) {
       social_sent: social.sent,
       social_failed: social.failed,
       social_note: social.note,
+      retention_guest_takes: retention.guestTakes,
+      retention_previous_audio: retention.previousAudio,
+      retention_note: retention.note,
     })
   } catch (err) {
     console.error('Scheduled publish cron error:', err)

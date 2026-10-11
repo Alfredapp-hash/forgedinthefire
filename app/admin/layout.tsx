@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { isStaffRole } from '@/lib/admin/roles'
 import { AdminSidebarNav } from '@/components/admin/admin-sidebar-nav'
 import { FBot } from '@/components/admin/fbot'
 
@@ -40,7 +41,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     .single()
   
   // If not an admin, redirect to unauthorized page
-  if (adminError || !adminUser || (adminUser.role !== 'admin' && adminUser.role !== 'owner')) {
+  if (adminError || !adminUser || !isStaffRole(adminUser.role)) {
     console.warn(`Unauthorized admin layout access attempt: ${user.email} (normalized: ${normalizedUserEmail})`)
     redirect('/unauthorized')
   }
@@ -52,7 +53,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <p className="font-bold text-base text-[#8DEBFF]">Forged in the Fire</p>
           <p className="text-xs text-[#A9B8C6]">Admin Portal</p>
         </div>
-        <AdminSidebarNav email={user.email ?? ''} />
+        <AdminSidebarNav email={user.email ?? ''} role={adminUser.role} />
       </aside>
 
       {/* Main */}

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { studioError, withStudioAdmin } from '@/lib/studio/api'
+import { studioError, withStudioAdmin, withStudioStaff } from '@/lib/studio/api'
 import { APPLE_CATEGORIES } from '@/lib/podcast-meta'
 import { isSafeHttpUrl } from '@/lib/podcast'
 
@@ -48,7 +48,7 @@ const ALLOWED = [
 
 export async function GET() {
   try {
-    const { supabase } = await withStudioAdmin()
+    const { supabase } = await withStudioStaff()
     const { data, error } = await supabase
       .from('podcast_shows')
       .select('*')

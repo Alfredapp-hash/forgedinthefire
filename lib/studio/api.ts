@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
-import { requireAdmin } from '@/lib/admin/auth'
+import { requireAdmin, requireStaff } from '@/lib/admin/auth'
 import { createAdminClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /** Admin-gated studio access — uses service role after requireAdmin so RLS cannot leak tokens to any authenticated user. */
@@ -11,6 +12,13 @@ export async function withStudioAdmin() {
     throw new Error('Database not configured')
   }
   return { user, supabase: supabase as SupabaseClient }
+}
+
+/** Staff read path, including safeguarding. Uses the service role so RLS does not hide draft episodes. */
+export async function withStudioStaff() {
+  const user = await requireStaff()
+  const supabase = createServiceClient()
+  return { user, supabase }
 }
 
 export function studioError(err: unknown) {

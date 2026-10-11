@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server'
+import { recordPodcastAudit } from '@/lib/podcast/audit-log'
 import { liveError, livePatchFromBody, withLiveAdmin } from '@/lib/podcast/live/admin'
 import type { LiveSessionRow } from '@/lib/podcast/live/types'
 
@@ -96,6 +97,14 @@ export async function PATCH(request: NextRequest, context: Ctx) {
       .select('*')
       .single()
     if (error) throw error
+    if (action === 'end' && row.status !== 'ended') {
+      await recordPodcastAudit({
+        actorEmail: admin.user.email,
+        action: 'live.end',
+        summary: `Ended live show “${row.title}”`,
+        detail: { session_id: id },
+      })
+    }
     return NextResponse.json({ session: data })
   } catch (err) {
     return liveError(err)

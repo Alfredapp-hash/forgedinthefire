@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 /**
- * Apply studio + podcast enterprise migrations to live FITF Supabase.
+ * Apply the podcast enterprise sprint migration only.
+ *
+ * Do NOT point this script at 20260918_podcast_enterprise.sql or
+ * 20260917_studio.sql. Re-applying 20260918 drops the hardened policies from
+ * 20260921 and 20260923 and re-opens podcast tables to any signed-in user.
+ *
  * Usage: SUPABASE_DB_PASSWORD='…' node scripts/apply-podcast-enterprise.mjs
  */
 import { resolve, dirname } from 'path'
@@ -16,10 +21,7 @@ if (!password) {
   process.exit(1)
 }
 
-const files = [
-  'supabase/migrations/20260917_studio.sql',
-  'supabase/migrations/20260918_podcast_enterprise.sql',
-]
+const files = ['supabase/migrations/20261011140000_podcast_enterprise_sprint.sql']
 
 const dbUrl = `postgresql://postgres:${encodeURIComponent(password)}@db.${ref}.supabase.co:5432/postgres`
 
@@ -36,4 +38,4 @@ for (const rel of files) {
   if (r.status) process.exit(r.status)
 }
 
-console.log('Studio + podcast enterprise migrations applied.')
+console.log('Podcast enterprise sprint migration applied.')

@@ -50,7 +50,7 @@ LIVEKIT_API_KEY=API…
 LIVEKIT_API_SECRET=…
 ```
 
-Set them on Netlify → Environment variables and redeploy. Nothing else to configure:
+Set them on the Vercel project forged-in-the-fire → Settings → Environment Variables and redeploy. Nothing else to configure:
 rooms are created on demand and tokens are minted per join.
 
 If any of the three is missing or malformed the studio does **not** silently fall
