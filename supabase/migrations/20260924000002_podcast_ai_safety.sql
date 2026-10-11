@@ -140,9 +140,15 @@ GRANT ALL ON public.podcast_episode_safety TO service_role;
 -- ────────────────────────────────────────────────────────────────────────────
 -- 3. Release gate (mirrors lib/podcast/safety/checklist.ts)
 -- ────────────────────────────────────────────────────────────────────────────
--- Fires when an episode moves INTO release (draft/review → scheduled/published). The cron's
--- scheduled → published step and edits to live episodes are not re-checked. A guest is on the
--- episode when it names one, is flagged for guest review, or has booth consent records.
+-- Superseded by supabase/migrations/20261011140000_podcast_enterprise_sprint.sql.
+-- That migration replaces this function so a released episode is checked again when
+-- the file, transcript, guest, or sign-off changes. Do not re-apply this file onto a
+-- database that already has the sprint function; it would restore the early return.
+--
+-- Historical behavior of the function below: it fired when an episode moved INTO
+-- release (draft/review → scheduled/published). The cron's scheduled → published step
+-- and edits to live episodes were not re-checked. A guest is on the episode when it
+-- names one, is flagged for guest review, or has booth consent records.
 CREATE OR REPLACE FUNCTION public.podcast_require_guest_approval()
 RETURNS trigger
 LANGUAGE plpgsql

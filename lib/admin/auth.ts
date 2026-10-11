@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { isOwnerRole, isProducerRole, isStaffRole, type StaffRole } from '@/lib/admin/roles'
 
 /**
  * Check if the current authenticated user is an admin
@@ -8,6 +9,8 @@ import { createAdminClient } from '@/lib/supabase/server'
  */
 export async function verifyAdminAccess(): Promise<{
   isAdmin: boolean
+  isStaff: boolean
+  role: StaffRole | null
   user: { id: string; email: string } | null
   error?: string
 }> {
@@ -16,6 +19,8 @@ export async function verifyAdminAccess(): Promise<{
   if (!supabase) {
     return {
       isAdmin: false,
+      isStaff: false,
+      role: null,
       user: null,
       error: 'Database not configured'
     }
@@ -27,6 +32,8 @@ export async function verifyAdminAccess(): Promise<{
   if (userError || !user?.email) {
     return {
       isAdmin: false,
+      isStaff: false,
+      role: null,
       user: null,
       error: 'Not authenticated'
     }
@@ -39,25 +46,21 @@ export async function verifyAdminAccess(): Promise<{
     .eq('email', user.email)
     .single()
   
-  if (adminError || !adminUser) {
+  const role = isStaffRole(adminUser?.role) ? adminUser.role : null
+  if (adminError || !adminUser || !role) {
     return {
       isAdmin: false,
+      isStaff: false,
+      role: null,
       user: { id: user.id, email: user.email },
       error: 'Not authorized as admin'
     }
   }
-  
-  // Verify role is admin or owner
-  if (adminUser.role !== 'admin' && adminUser.role !== 'owner') {
-    return {
-      isAdmin: false,
-      user: { id: user.id, email: user.email },
-      error: 'Insufficient privileges'
-    }
-  }
-  
+
   return {
-    isAdmin: true,
+    isAdmin: isProducerRole(role),
+    isStaff: true,
+    role,
     user: { id: user.id, email: user.email }
   }
 }
@@ -86,7 +89,7 @@ export async function isAdminEmail(email: string): Promise<boolean> {
     return false
   }
   
-  return data.role === 'admin' || data.role === 'owner'
+  return isProducerRole(data.role)
 }
 
 /**
@@ -94,12 +97,28 @@ export async function isAdminEmail(email: string): Promise<boolean> {
  * Use this in API routes and server actions
  * @throws {Error} If user is not an admin
  */
-export async function requireAdmin(): Promise<{ id: string; email: string }> {
-  const { isAdmin, user, error } = await verifyAdminAccess()
+export async function requireAdmin(): Promise<{ id: string; email: string; role: StaffRole }> {
+  const { isAdmin, user, role, error } = await verifyAdminAccess()
   
-  if (!isAdmin || !user) {
+  if (!isAdmin || !user || !role) {
     throw new Error(error || 'Admin access required')
   }
   
-  return user
+  return { ...user, role }
+}
+
+/** Producer, owner, or safeguarding reviewer. */
+export async function requireStaff(): Promise<{ id: string; email: string; role: StaffRole }> {
+  const { isStaff, user, role, error } = await verifyAdminAccess()
+  if (!isStaff || !user || !role) {
+    throw new Error(error || 'Admin access required')
+  }
+  return { ...user, role }
+}
+
+/** Delete episodes and manage staff. */
+export async function requireOwner(): Promise<{ id: string; email: string; role: StaffRole }> {
+  const staff = await requireStaff()
+  if (!isOwnerRole(staff.role)) throw new Error('Forbidden')
+  return staff
 }

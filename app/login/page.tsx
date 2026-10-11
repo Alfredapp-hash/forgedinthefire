@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { isProducerRole, isStaffRole } from '@/lib/admin/roles'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { Eye, EyeOff, Flame, AlertTriangle, KeyRound } from 'lucide-react'
@@ -98,9 +99,9 @@ export default function LoginPage() {
       console.error('[Login] admin_users lookup error:', adminError.message, '| Looking for:', normalizedUserEmail)
     }
 
-    if (adminError || !adminUser || (adminUser.role !== 'admin' && adminUser.role !== 'owner')) {
+    if (adminError || !adminUser || !isStaffRole(adminUser.role)) {
       console.warn('[Login] User not in admin_users:', user.email, '(normalized:', normalizedUserEmail + ')')
-      // Not an admin - sign them out and show error
+      // Not staff - sign them out and show error
       await supabase.auth.signOut()
       setError(`Access denied. The email "${user.email}" is not authorized as an admin. Contact the site owner to request access.`)
       setLoading(false)
@@ -110,7 +111,9 @@ export default function LoginPage() {
     console.log('[Login] Admin access granted, role:', adminUser.role)
 
     const redirect = new URLSearchParams(window.location.search).get('redirect')
-    const next = redirect?.startsWith('/admin') ? redirect : '/admin'
+    const next = isProducerRole(adminUser.role)
+      ? redirect?.startsWith('/admin') ? redirect : '/admin'
+      : redirect?.startsWith('/admin/podcast') ? redirect : '/admin/podcast'
     router.push(next)
     router.refresh()
   }
