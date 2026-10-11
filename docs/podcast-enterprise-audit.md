@@ -1,10 +1,31 @@
 # Podcast enterprise audit
 
-Audited tree: `main` at `74a2be0` (2026-10-11). Method: read the podcast migrations, publish/RSS/download paths, admin auth, live/room docs, and the studio UX audit. This is a code and operations audit. It does not confirm which migrations or environment variables are actually applied on the live Supabase project or on Netlify.
+Audited tree: `main` at `74a2be0` (2026-10-11). Method: read the podcast migrations, publish/RSS/download paths, admin auth, live/room docs, and the studio UX audit. The sprint below is what changed after that read, including the live ForgedDB project.
 
-**Verdict.** The product is a custom studio (record, remote guests, edit, survivor-safety gates, RSS, live show) built for one nonprofit show. It is not yet an enterprise operation. A staff member can produce an episode in the browser, and several safety gates are real. What is missing is the part that makes that trustworthy at scale: durable media that stays private, a safety check that still holds after an episode is live, staff roles with an audit trail, directory-grade measurement, and a runbook for the services the code expects but does not turn on by itself.
+**Verdict.** The product is a custom studio (record, remote guests, edit, survivor-safety gates, RSS, live show) built for one nonprofit show. A staff member can produce an episode in the browser, and the safety gates now hold after an episode is scheduled. What still needs a person is directory submission and the live-show accounts (LiveKit, TURN, WHIP, PodPing).
 
 “Enterprise” here means a small staff can run a public survivor podcast with the controls a board, an insurer, and Apple/Spotify would expect. It does not mean multi-tenant SaaS.
+
+## Sprint status (2026-10-11)
+
+Landed in this branch and applied to ForgedDB (`mxjsbhldmovwpjcotmsd`) as `podcast_enterprise_sprint`:
+
+1. **Guest approval stays pinned.** `podcast_require_guest_approval` runs on every update. A scheduled or published episode is checked again when the audio, transcript, guest, or sign-off changes. Title edits and the hourly scheduled-to-published step with no file change still pass. Episodes with no named guest stay releasable.
+2. **Private files are not permanent public URLs.** Bucket `podcast-private` is private. A private episode’s audio or video is copied there and stored as `private://podcast-private/…`. `/podcast/dl` signs that for four hours. A private episode that still has a public URL returns 404. The video RSS enclosure goes through `/podcast/dl/:id/video.mp4`.
+3. **Retention.** The hourly publish job deletes guest-take objects 14 days after the invite is revoked or expires, and clears `audio_url_previous` 14 days after publish. `pg_cron` is not installed on this project, so the job stays on `/api/cron/publish-scheduled`.
+4. **Analytics.** Anonymous insert on `podcast_analytics_events` is revoked. Plays and downloads are written with the service role. The desk reads `podcast_analytics_summary` (unique listener per episode per day), with a 5,000-row fallback if the function is missing.
+5. **Safeguarding and an audit log.** `admin_users.role` allows `owner`, `admin`, and `safeguarding`. Safeguarding can open `/admin/podcast` and record sign-offs. They are not added to `is_admin()`, so they cannot write every podcast table through the Data API. `podcast_audit_log` is append-only: service-role insert, staff select. Episode create, edit, delete, publish, invite create and revoke, live end, and staff changes are recorded.
+6. **The two existing owners stay owners.** The migration only widens the role check. It does not update or delete `admin_users` rows. `is_admin()` still means owner or admin, so a safeguarding login cannot write every podcast table through the Data API. The users API refuses to remove or demote the last owner. A throwaway scheduled episode was used to confirm a title-only save still passes and adding a guest without approval is rejected, then that row was deleted. Both owners are still owners.
+
+The public feed at `https://forgedinthefireohio.org/podcast/rss.xml` returns RSS with no enclosures yet, which matches zero published episodes. GitHub’s API did not allow this run to list Actions secrets, so confirm `CRON_SECRET` is set on the repository before relying on the hourly job.
+
+Still a person, not this repository:
+
+- Submit `https://forgedinthefireohio.org/podcast/rss.xml` to Apple Podcasts and Spotify, and name someone on the Distribution tab.
+- Provision LiveKit, TURN, WHIP or Cloudflare Stream, and PodPing, then set those secrets on Netlify. Names are in `.env.local.example`. `CRON_SECRET` must match the GitHub Actions secret used by `.github/workflows/publish-scheduled.yml`.
+- A sitewide Content-Security-Policy was not turned on. Face blur loads MediaPipe from jsDelivr and model files from Google Storage. An enforcing policy needs those hosts and a Next.js nonce, and a wrong policy takes the public site down.
+- IAB download certification is out of scope. The unique-download count is the same day-hash the desk already used.
+- Hosted recording still encodes in the host browser. A second operator can already end a live show; that action is now in the audit log. Provisioning the media server is the remaining step.
 
 ## What is already in place
 
@@ -25,6 +46,8 @@ Audited tree: `main` at `74a2be0` (2026-10-11). Method: read the podcast migrati
 Unit tests cover loudness, edit/ripple, guest backup, rooms, chat moderation, and the safety checklist. End-to-end coverage still skips the live room, a full guest WebRTC join, and crash recovery (`e2e/live.spec.ts`, `e2e/guest.spec.ts`, `e2e/studio.spec.ts` are `test.fixme`).
 
 ## Gaps, ranked
+
+The list below is the original audit. The sprint status section is what has landed since. These write-ups stay so the reason for each control is still on the page.
 
 ### P0 — do these before calling the setup enterprise
 
@@ -117,12 +140,12 @@ Fix: promote those specs off `fixme` against the dev harnesses, with the provide
 
 ```
 Staff browser (studio + live control)
-  ├─ Supabase Auth ── admin_users (admin | owner)
-  ├─ Postgres (episodes, safety, invites, live, analytics)
-  ├─ Storage: media (public URLs) + podcast-guest-takes (private)
+  ├─ Supabase Auth ── admin_users (owner | admin | safeguarding)
+  ├─ Postgres (episodes, safety, invites, live, analytics, audit log)
+  ├─ Storage: media (public) + podcast-private + podcast-guest-takes (both private)
   ├─ Optional: LiveKit (2+ guests), TURN, Cloudflare WHIP / MediaMTX
-  └─ RSS ── /podcast/dl 302 ── public audio URL
-         └── hourly cron ── scheduled → published (if checks pass)
+  └─ RSS ── /podcast/dl 302 ── public URL, or a four-hour signed URL for private files
+         └── hourly cron ── scheduled → published (if checks pass) + retention
                             └── PodPing / WebSub if tokens exist
 ```
 

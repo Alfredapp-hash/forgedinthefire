@@ -5,6 +5,7 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { adminInvite } from '@/lib/podcast/guest-invite'
 import { GUEST_STATES, type GuestInviteRow } from '@/lib/podcast/guest-types'
 import { endRoomIfEmpty, roomAvailability } from '@/lib/podcast/rooms/server'
+import { recordPodcastAudit } from '@/lib/podcast/audit-log'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,7 +13,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    await requireAdmin()
+    const user = await requireAdmin()
     const supabase = createServiceClient()
     const { id } = await context.params
     if (!UUID.test(id)) return NextResponse.json({ error: 'Invite not found' }, { status: 404 })
@@ -46,6 +47,15 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       .select('title')
       .eq('id', data.episode_id)
       .maybeSingle()
+    if (body.revoke) {
+      await recordPodcastAudit({
+        actorEmail: user.email,
+        action: 'invite.revoke',
+        episodeId: data.episode_id,
+        summary: `Revoked a guest link for “${episode?.title || 'Episode'}”`,
+        detail: { invite_id: id },
+      })
+    }
     return NextResponse.json(
       { invite: adminInvite(data as GuestInviteRow, episode?.title || 'Episode') },
       { headers: { 'Cache-Control': 'no-store' } },

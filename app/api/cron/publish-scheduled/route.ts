@@ -5,6 +5,8 @@ import { PODCAST, probeRemoteSize } from '@/lib/podcast'
 import { releaseConsentStatus } from '@/lib/podcast/guest-consent'
 import { releaseBlockers, releaseChecks } from '@/lib/studio/release'
 import { notifyFeedUpdate } from '@/lib/podcast/notify-feeds'
+import { recordPodcastAudit } from '@/lib/podcast/audit-log'
+import { runPodcastRetention } from '@/lib/podcast/retention'
 import { dispatchAndRecord, type DispatchAccount, type DispatchPost } from '@/lib/social/post'
 import type { PodcastEpisode } from '@/lib/studio/types'
 
@@ -166,7 +168,19 @@ async function run(request: Request) {
     // seconds instead of waiting for their next poll. Fail-soft: never blocks.
     if (podcast.published.length) {
       await notifyFeedUpdate(PODCAST.feed).catch((e) => console.error('notify-feeds failed:', e))
+      for (const id of podcast.published) {
+        await recordPodcastAudit({
+          action: 'episode.publish',
+          episodeId: id,
+          summary: 'Hourly job published a scheduled episode',
+        })
+      }
     }
+    const retention = await runPodcastRetention().catch((err) => ({
+      guestTakes: 0,
+      previousAudio: 0,
+      note: err instanceof Error ? err.message : 'retention failed',
+    }))
     if (podcast.held.length) console.warn('publish-scheduled: episodes held', JSON.stringify(podcast.held))
     return NextResponse.json({
       published: posts.length,
@@ -179,6 +193,9 @@ async function run(request: Request) {
       social_sent: social.sent,
       social_failed: social.failed,
       social_note: social.note,
+      retention_guest_takes: retention.guestTakes,
+      retention_previous_audio: retention.previousAudio,
+      retention_note: retention.note,
     })
   } catch (err) {
     console.error('Scheduled publish cron error:', err)

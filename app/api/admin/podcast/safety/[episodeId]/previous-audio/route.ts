@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { studioError, withStudioAdmin } from '@/lib/studio/api'
+import { PRIVATE_MEDIA_BUCKET, parsePrivateMediaRef } from '@/lib/podcast/enterprise'
 import { isProjectStorageUrl, parseStorageObject } from '@/lib/podcast/safety/audio-hash'
+import { createServiceClient } from '@/lib/supabase/service'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,8 +46,14 @@ export async function DELETE(_request: Request, { params }: Params) {
     const shared = Boolean(others?.length)
 
     let removed = false
+    const privatePath = parsePrivateMediaRef(previous)
     const obj = isProjectStorageUrl(previous) ? parseStorageObject(previous) : null
-    if (!shared && obj && obj.bucket === 'media') {
+    if (!shared && privatePath) {
+      const service = createServiceClient()
+      const { error: rmError } = await service.storage.from(PRIVATE_MEDIA_BUCKET).remove([privatePath])
+      if (rmError && !/not found/i.test(rmError.message)) throw rmError
+      removed = true
+    } else if (!shared && obj && obj.bucket === 'media') {
       const { error: rmError } = await supabase.storage.from(obj.bucket).remove([obj.path])
       if (rmError && !/not found/i.test(rmError.message)) throw rmError
       removed = true

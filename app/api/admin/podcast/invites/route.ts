@@ -14,6 +14,7 @@ import {
 } from '@/lib/podcast/rooms/server'
 import type { InviteCapacity } from '@/lib/podcast/rooms/types'
 import { PODCAST } from '@/lib/podcast-meta'
+import { recordPodcastAudit } from '@/lib/podcast/audit-log'
 
 export const dynamic = 'force-dynamic'
 
@@ -158,6 +159,13 @@ export async function POST(request: Request) {
     if (roomId) insert.room_id = roomId
     const { data, error } = await supabase.from('podcast_guest_invites').insert(insert).select('*').single()
     if (error) throw error
+    await recordPodcastAudit({
+      actorEmail: user.email,
+      action: 'invite.create',
+      episodeId,
+      summary: `Created a guest link for “${episode.title}”`,
+      detail: { invite_id: data.id, hours: Number(body.hours) || 24, panel: Boolean(roomId) },
+    })
     const liveNow = roomId ? live.length + 1 : 1
     return NextResponse.json(
       {

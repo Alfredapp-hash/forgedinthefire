@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
-import { studioError, withStudioAdmin } from '@/lib/studio/api'
+import { requireOwner } from '@/lib/admin/auth'
+import { studioError, withStudioAdmin, withStudioStaff } from '@/lib/studio/api'
 import { slugify, uniqueSlug } from '@/lib/studio/slug'
-import { checkCoverArt, checkFeedCompliance } from '@/lib/podcast/compliance'
+import { checkCoverArt, checkFeedCompliance, safetyComplianceChecks } from '@/lib/podcast/compliance'
+import { isReleasedStatus, releaseSensitiveChanged } from '@/lib/podcast/enterprise'
+import { planEpisodeMedia, removeStoredObjects } from '@/lib/podcast/private-media'
+import { recordPodcastAudit } from '@/lib/podcast/audit-log'
 import type { PodcastChapter } from '@/lib/studio/types'
 
 const ALLOWED = [
@@ -14,7 +18,7 @@ const ALLOWED = [
 
 export async function GET(request: Request) {
   try {
-    const { supabase } = await withStudioAdmin()
+    const { supabase } = await withStudioStaff()
     const topicId = new URL(request.url).searchParams.get('topic_id')
     let query = supabase.from('podcast_episodes').select('*').order('episode_number', { ascending: false, nullsFirst: false })
     if (topicId) query = query.eq('topic_id', topicId)
@@ -78,6 +82,12 @@ export async function POST(request: Request) {
       .select()
       .single()
     if (error) throw error
+    await recordPodcastAudit({
+      actorEmail: user.email,
+      action: 'episode.create',
+      episodeId: data.id,
+      summary: `Created “${data.title}”`,
+    })
     return NextResponse.json(data, { status: 201 })
   } catch (err) {
     return studioError(err)
@@ -86,7 +96,7 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const { supabase } = await withStudioAdmin()
+    const { user, supabase } = await withStudioAdmin()
     const body = await request.json() as Record<string, unknown>
     const id = String(body.id || '')
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
@@ -108,15 +118,31 @@ export async function PATCH(request: Request) {
     if (!Array.isArray(patch.ad_markers) && patch.ad_markers != null) delete patch.ad_markers
     const { data: current, error: currentError } = await supabase
       .from('podcast_episodes')
-      .select(
-        'title, audio_url, audio_mime, duration_seconds, file_size, cover_url, chapters, summary, published_at, status, scheduled_for',
-      )
+      .select('*')
       .eq('id', id)
       .single()
     if (currentError) throw currentError
     const nextStatus = String(patch.status ?? current.status)
+    const nextVisibility = String(patch.visibility ?? current.visibility ?? 'public')
+    const media = await planEpisodeMedia({
+      episodeId: id,
+      visibility: nextVisibility,
+      audioUrl: (patch.audio_url !== undefined ? patch.audio_url : current.audio_url) as string | null,
+      videoUrl: (patch.video_url !== undefined ? patch.video_url : current.video_url) as string | null,
+      approvedAudioUrl: current.guest_final_cut_audio_url as string | null,
+    })
+    if (media.error) {
+      await removeStoredObjects(media.deleteOnFailure)
+      return NextResponse.json({ error: media.error }, { status: 422 })
+    }
+    if (media.audioUrl !== current.audio_url) patch.audio_url = media.audioUrl
+    if (media.videoUrl !== current.video_url) patch.video_url = media.videoUrl
+    if (media.rebindApprovalFrom && current.guest_final_cut_audio_url === media.rebindApprovalFrom) {
+      patch.guest_final_cut_audio_url = media.audioUrl
+    }
     const nextScheduled = (patch.scheduled_for ?? current.scheduled_for) as string | null
     if (nextStatus === 'scheduled' && !nextScheduled) {
+      await removeStoredObjects(media.deleteOnFailure)
       return NextResponse.json({ error: 'Set scheduled_for before scheduling' }, { status: 400 })
     }
 
@@ -135,6 +161,7 @@ export async function PATCH(request: Request) {
       }
       const compliance = checkFeedCompliance(merged)
       if (!compliance.ok) {
+        await removeStoredObjects(media.deleteOnFailure)
         return NextResponse.json(
           {
             error: `Cannot publish — ${compliance.blockers.map((b) => b.detail || b.label).join('; ')}`,
@@ -147,6 +174,7 @@ export async function PATCH(request: Request) {
       if (merged.cover_url) {
         const art = await checkCoverArt(merged.cover_url)
         if (!art.ok) {
+          await removeStoredObjects(media.deleteOnFailure)
           return NextResponse.json(
             { error: `Cannot publish — ${art.detail || 'cover art does not meet Apple/Spotify requirements'}` },
             { status: 422 },
@@ -155,11 +183,36 @@ export async function PATCH(request: Request) {
       }
     }
 
+    const merged = { ...current, ...patch }
+    const enteringRelease = isReleasedStatus(nextStatus) && !isReleasedStatus(current.status)
+    const sensitive = releaseSensitiveChanged(current, merged)
+    if (enteringRelease || (isReleasedStatus(nextStatus) && sensitive)) {
+      const blockers = safetyComplianceChecks(merged).filter((check) => check.required && !check.ok)
+      if (blockers.length) {
+        await removeStoredObjects(media.deleteOnFailure)
+        return NextResponse.json(
+          { error: blockers.map((check) => check.fix || check.detail || check.label).join(' ') },
+          { status: 422 },
+        )
+      }
+    }
+
     if (nextStatus === 'published' && !patch.published_at) {
       patch.published_at = current.published_at || new Date().toISOString()
     }
     const { data, error } = await supabase.from('podcast_episodes').update(patch).eq('id', id).select().single()
-    if (error) throw error
+    if (error) {
+      await removeStoredObjects(media.deleteOnFailure)
+      throw error
+    }
+    await removeStoredObjects(media.deleteAfterSave)
+    await recordPodcastAudit({
+      actorEmail: user.email,
+      action: sensitive ? 'episode.sensitive_edit' : 'episode.update',
+      episodeId: id,
+      summary: `Updated “${data.title}” (${data.status})`,
+      detail: { status: data.status, visibility: data.visibility },
+    })
     return NextResponse.json(data)
   } catch (err) {
     return studioError(err)
@@ -168,11 +221,19 @@ export async function PATCH(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const user = await requireOwner()
     const { supabase } = await withStudioAdmin()
     const id = new URL(request.url).searchParams.get('id')
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+    const { data: existing } = await supabase.from('podcast_episodes').select('title').eq('id', id).maybeSingle()
     const { error } = await supabase.from('podcast_episodes').delete().eq('id', id)
     if (error) throw error
+    await recordPodcastAudit({
+      actorEmail: user.email,
+      action: 'episode.delete',
+      episodeId: id,
+      summary: `Deleted “${existing?.title || id}”`,
+    })
     return NextResponse.json({ success: true })
   } catch (err) {
     return studioError(err)

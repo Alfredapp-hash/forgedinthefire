@@ -9,7 +9,7 @@ type AdminUser = { id: string; email: string; role: string; created_at: string }
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<AdminUser[]>([])
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<'admin' | 'owner'>('admin')
+  const [role, setRole] = useState<'admin' | 'owner' | 'safeguarding'>('admin')
   const [error, setError] = useState<string | null>(null)
 
   function load() {
@@ -43,7 +43,7 @@ export default function AdminUsersPage() {
     <div className="max-w-2xl mx-auto space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-[#F6FAFC]">Admin Users</h1>
-        <p className="text-sm text-[#A9B8C6]">Manage who can access the admin portal (owner-only invites)</p>
+        <p className="text-sm text-[#A9B8C6]">Owners manage people. Admins produce the show. Safeguarding reviews guest sign-offs and cannot delete episodes.</p>
       </div>
 
       <div className="bg-[#151B22] rounded-xl border border-[#27313B] p-6 space-y-4">
@@ -51,9 +51,10 @@ export default function AdminUsersPage() {
         {error && <p className="text-sm text-[#8DEBFF]">{error}</p>}
         <div className="flex gap-2">
           <input type="email" placeholder="email@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className="flex-1 border rounded-lg px-3 py-2 text-sm" />
-          <select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'owner')} className="border rounded-lg px-2 text-sm">
+          <select value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'owner' | 'safeguarding')} className="border rounded-lg px-2 text-sm">
             <option value="admin">Admin</option>
             <option value="owner">Owner</option>
+            <option value="safeguarding">Safeguarding</option>
           </select>
           <Button onClick={handleAdd} disabled={!email}>Add</Button>
         </div>
