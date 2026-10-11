@@ -19,6 +19,8 @@ Landed in this branch and applied to ForgedDB (`mxjsbhldmovwpjcotmsd`) as `podca
 
 The public feed at `https://forgedinthefireohio.org/podcast/rss.xml` returns RSS with no enclosures yet, which matches zero published episodes. GitHub’s API did not allow this run to list Actions secrets, so confirm `CRON_SECRET` is set on the repository before relying on the hourly job.
 
+Follow-up on the same branch: a public episode announces its feed when staff press Publish now, not only when the hourly job releases it. A replaced public audio or video file announces again. Private and unlisted episodes do not. Listener country reads `x-vercel-ip-country`. Live-show setup instructions point at the Vercel project. `PODPING_TOKEN` is still waiting on Podcast Index; `WEBSUB_HUB` is already the public hub.
+
 Still a person, not this repository:
 
 - Submit `https://forgedinthefireohio.org/podcast/rss.xml` to Apple Podcasts and Spotify, and name someone on the Distribution tab.

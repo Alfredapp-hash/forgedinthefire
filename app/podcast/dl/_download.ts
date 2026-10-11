@@ -1,5 +1,5 @@
 import { guessApp, isReleased, podcastReadClient, verifySubscriberToken } from '@/lib/podcast'
-import { listenerHash, requestIp } from '@/lib/podcast/listener'
+import { listenerHash, requestCountry, requestIp } from '@/lib/podcast/listener'
 import { parsePrivateMediaRef } from '@/lib/podcast/enterprise'
 import { signedPrivateUrl } from '@/lib/podcast/private-media'
 import { createServiceClient } from '@/lib/supabase/service'
@@ -51,11 +51,7 @@ export async function handleDownload(request: Request, id: string, media: 'audio
   const ua = request.headers.get('user-agent') || ''
   const app = guessApp(ua)
   if (countable(request, app)) {
-    const country =
-      request.headers.get('x-country') ||
-      request.headers.get('x-nf-geo-country') ||
-      request.headers.get('cf-ipcountry') ||
-      null
+    const country = requestCountry(request)
     try {
       const writer = createServiceClient()
       await Promise.race([

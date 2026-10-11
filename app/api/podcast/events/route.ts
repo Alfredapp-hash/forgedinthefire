@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { guessApp, isReleased } from '@/lib/podcast'
-import { listenerHash, requestIp } from '@/lib/podcast/listener'
+import { listenerHash, requestCountry, requestIp } from '@/lib/podcast/listener'
 import { hashedKey, rateLimitHit } from '@/lib/security/rate-limit'
 import { createServiceClient } from '@/lib/supabase/service'
 
@@ -37,11 +37,7 @@ export async function POST(request: Request) {
     }
 
     const ua = request.headers.get('user-agent') || ''
-    const country =
-      request.headers.get('x-country') ||
-      request.headers.get('x-nf-geo-country') ||
-      request.headers.get('cf-ipcountry') ||
-      null
+    const country = requestCountry(request)
     const { error } = await supabase.from('podcast_analytics_events').insert({
       episode_id: episode.id,
       show_id: episode.show_id,

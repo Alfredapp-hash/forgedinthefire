@@ -1,5 +1,7 @@
 import 'server-only'
 
+import { feedsToAnnounce, type FeedSnapshot } from '@/lib/podcast/feed-announce'
+
 /**
  * Instant feed-update notification — PodPing + WebSub.
  *
@@ -112,4 +114,12 @@ export async function notifyFeedUpdate(feedUrl: string): Promise<FeedNotifyResul
     console.info('[notify-feeds] feed update announced', JSON.stringify(result))
   }
   return result
+}
+
+/** Ping each public feed whose enclosure just became available or was replaced. Never throws. */
+export async function announceEpisodeFeeds(before: FeedSnapshot | null, after: FeedSnapshot) {
+  const feeds = feedsToAnnounce(before, after)
+  await Promise.all(feeds.map((url) => notifyFeedUpdate(url).catch((err) => {
+    console.error('[notify-feeds] announce failed:', err instanceof Error ? err.message : err)
+  })))
 }

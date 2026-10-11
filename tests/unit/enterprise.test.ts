@@ -7,7 +7,8 @@ import {
   privateMediaRef,
   releaseSensitiveChanged,
 } from '@/lib/podcast/enterprise'
-import { listenerHash } from '@/lib/podcast/listener'
+import { feedsToAnnounce } from '@/lib/podcast/feed-announce'
+import { listenerHash, requestCountry, requestIp } from '@/lib/podcast/listener'
 import { isOwnerRole, isProducerRole, isStaffRole } from '@/lib/admin/roles'
 
 const publicAudio =
@@ -81,6 +82,51 @@ describe('listenerHash', () => {
     expect(hash).not.toContain('203')
     expect(hash).toBe(listenerHash('203.0.113.5', 'Podcasts/1', 'ep-1', '2026-10-11'))
     expect(hash).not.toBe(listenerHash('203.0.113.6', 'Podcasts/1', 'ep-1', '2026-10-11'))
+  })
+})
+
+describe('feedsToAnnounce', () => {
+  const audio = 'https://cdn.example.com/a.mp3'
+  const video = 'https://cdn.example.com/a.mp4'
+  const publicFeed = 'https://forgedinthefireohio.org/podcast/rss.xml'
+  const videoFeed = 'https://forgedinthefireohio.org/podcast/video.xml'
+
+  it('announces the public audio feed when a public episode is published', () => {
+    expect(feedsToAnnounce(
+      { status: 'scheduled', visibility: 'public', audio_url: audio },
+      { status: 'published', visibility: 'public', audio_url: audio },
+    )).toEqual([publicFeed])
+  })
+
+  it('announces the video feed only when a public video enclosure is new', () => {
+    expect(feedsToAnnounce(
+      { status: 'published', visibility: 'public', audio_url: audio, video_url: null },
+      { status: 'published', visibility: 'public', audio_url: audio, video_url: video },
+    )).toEqual([videoFeed])
+  })
+
+  it('stays quiet for a private release and for a title-only edit', () => {
+    expect(feedsToAnnounce(null, { status: 'published', visibility: 'private', audio_url: audio })).toEqual([])
+    expect(feedsToAnnounce(
+      { status: 'published', visibility: 'public', audio_url: audio },
+      { status: 'published', visibility: 'public', audio_url: audio },
+    )).toEqual([])
+  })
+})
+
+describe('requestCountry', () => {
+  function headers(map: Record<string, string>) {
+    return { headers: { get: (name: string) => map[name] ?? null } } as Request
+  }
+
+  it('reads the Vercel country and drops unknown codes', () => {
+    expect(requestCountry(headers({ 'x-vercel-ip-country': 'us' }))).toBe('US')
+    expect(requestCountry(headers({ 'x-vercel-ip-country': 'XX' }))).toBeNull()
+    expect(requestCountry(headers({}))).toBeNull()
+  })
+
+  it('prefers the Vercel client IP', () => {
+    expect(requestIp(headers({ 'x-vercel-forwarded-for': '203.0.113.9, 10.0.0.1' }))).toBe('203.0.113.9')
   })
 })
 

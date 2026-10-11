@@ -6,6 +6,7 @@ import { checkCoverArt, checkFeedCompliance, safetyComplianceChecks } from '@/li
 import { isReleasedStatus, releaseSensitiveChanged } from '@/lib/podcast/enterprise'
 import { planEpisodeMedia, removeStoredObjects } from '@/lib/podcast/private-media'
 import { recordPodcastAudit } from '@/lib/podcast/audit-log'
+import { announceEpisodeFeeds } from '@/lib/podcast/notify-feeds'
 import type { PodcastChapter } from '@/lib/studio/types'
 
 const ALLOWED = [
@@ -88,6 +89,7 @@ export async function POST(request: Request) {
       episodeId: data.id,
       summary: `Created “${data.title}”`,
     })
+    await announceEpisodeFeeds(null, data)
     return NextResponse.json(data, { status: 201 })
   } catch (err) {
     return studioError(err)
@@ -213,6 +215,7 @@ export async function PATCH(request: Request) {
       summary: `Updated “${data.title}” (${data.status})`,
       detail: { status: data.status, visibility: data.visibility },
     })
+    await announceEpisodeFeeds(current, data)
     return NextResponse.json(data)
   } catch (err) {
     return studioError(err)

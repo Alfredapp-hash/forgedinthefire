@@ -1467,7 +1467,7 @@ export function LiveControlRoom({ episodes = [] }: Props) {
                 <dd className="text-white">
                   {provider?.configured
                     ? `WHIP · ${provider.provider} · ${provider.host}`
-                    : 'WHIP — LIVE_WHIP_URL is not set (Netlify environment variables; see docs/podcast-live.md)'}
+                    : 'WHIP — LIVE_WHIP_URL is not set (Vercel environment variables; see docs/podcast-live.md)'}
                 </dd>
                 <dt>Bearer token</dt>
                 <dd className="text-white">{provider?.bearer ? 'set (LIVE_WHIP_BEARER)' : 'none'}</dd>
